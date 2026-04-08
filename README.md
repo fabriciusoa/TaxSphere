@@ -275,7 +275,7 @@ Logs salvos em `cron_execucoes` com status e mensagens de erro.
 
 ## 📂 Repositório
 
-Repositório: https://github.com/tmarocki/mentis.git
+Repositório: https://github.com/tmarocki/fmt_system.git
 
 ### 🌿 Branches
 
