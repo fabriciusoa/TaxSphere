@@ -30,13 +30,7 @@ import {
   ListItemIcon,
   ListItemText,
   Switch,
-  TablePagination,
-  Avatar,
-  Divider,
-  FormControlLabel,
-  Checkbox,
-  Card,
-  CardContent
+  TablePagination
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -44,16 +38,12 @@ import {
   LockOpen as UnlockIcon,
   CheckCircle as CheckCircleIcon,
   RadioButtonUnchecked as UncheckedIcon,
-  Search as SearchIcon,
-  CloudUpload as UploadIcon,
-  Delete as DeleteIcon,
-  Remove as RemoveIcon
+  Search as SearchIcon
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { ptBR } from 'date-fns/locale';
-import { ChromePicker } from 'react-color';
 import { usuariosService } from '../services/usuariosService';
 import { perfisService } from '../services/perfisService';
 import usuarioParametrosService from '../services/usuarioParametrosService';
@@ -100,11 +90,6 @@ interface DadosMedico {
   assinatura?: string;
 }
 
-interface DiaDisponibilidade {
-  ativo: boolean;
-  horarios: { tempo_inicio: string; tempo_fim: string }[];
-}
-
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -133,26 +118,6 @@ function a11yProps(index: number) {
     'aria-controls': `usuario-tabpanel-${index}`,
   };
 }
-
-// Estado padrão para disponibilidades
-const getDisponibilidadePadrao = (): Record<string, DiaDisponibilidade> => ({
-  'Segunda-feira': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '18:00' }] },
-  'Terça-feira': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '18:00' }] },
-  'Quarta-feira': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '18:00' }] },
-  'Quinta-feira': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '18:00' }] },
-  'Sexta-feira': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '18:00' }] },
-  'Sábado': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '12:00' }] },
-  'Domingo': { ativo: false, horarios: [{ tempo_inicio: '08:00', tempo_fim: '12:00' }] }
-});
-
-const CORES_PADRAO = {
-  cor_agendado: '#2196F3',
-  cor_confirmado: '#4CAF50',
-  cor_cancelado: '#F44336',
-  cor_realizado: '#9C27B0',
-  cor_faltou: '#FF9800',
-  cor_reagendado: '#00BCD4'
-};
 
 const UsuariosPage: React.FC = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
@@ -217,18 +182,6 @@ const UsuariosPage: React.FC = () => {
     permite_paciente_cancelar: true,
     tempo_cancelamento: 24
   });
-
-  // Cores do calendário
-  const [cores, setCores] = useState(CORES_PADRAO);
-
-  // Disponibilidades
-  const [disponibilidades, setDisponibilidades] = useState(getDisponibilidadePadrao());
-
-  // Logos
-  const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string>('');
-  const [assinaturaFile, setAssinaturaFile] = useState<File | null>(null);
-  const [assinaturaPreview, setAssinaturaPreview] = useState<string>('');
 
   // Requisitos da senha
   const requisitos = [
@@ -338,14 +291,7 @@ const UsuariosPage: React.FC = () => {
               telefone: dadosPerfil.dados_medico.telefone || '',
               logo: dadosPerfil.dados_medico.logo || '',
               assinatura: dadosPerfil.dados_medico.assinatura || ''
-            });
-
-            if (dadosPerfil.dados_medico.logo) {
-              setLogoPreview(`data:image/png;base64,${dadosPerfil.dados_medico.logo}`);
-            }
-            if (dadosPerfil.dados_medico.assinatura) {
-              setAssinaturaPreview(`data:image/png;base64,${dadosPerfil.dados_medico.assinatura}`);
-            }
+            });            
           }
 
           // Carregar parâmetros
@@ -363,15 +309,7 @@ const UsuariosPage: React.FC = () => {
                 permite_paciente_cancelar: params.permite_paciente_cancelar !== false,
                 tempo_cancelamento: params.tempo_cancelamento || 24
               });
-
-              setCores({
-                cor_agendado: params.cor_agendado || CORES_PADRAO.cor_agendado,
-                cor_confirmado: params.cor_confirmado || CORES_PADRAO.cor_confirmado,
-                cor_cancelado: params.cor_cancelado || CORES_PADRAO.cor_cancelado,
-                cor_realizado: params.cor_realizado || CORES_PADRAO.cor_realizado,
-                cor_faltou: params.cor_faltou || CORES_PADRAO.cor_faltou,
-                cor_reagendado: params.cor_reagendado || CORES_PADRAO.cor_reagendado
-              });
+            
             }
           } catch (error: any) {
             logger.error('Erro ao carregar parâmetros:', error);
@@ -423,12 +361,7 @@ const UsuariosPage: React.FC = () => {
       permite_paciente_cancelar: true,
       tempo_cancelamento: 24
     });
-    setCores(CORES_PADRAO);
-    setDisponibilidades(getDisponibilidadePadrao());
-    setLogoFile(null);
-    setLogoPreview('');
-    setAssinaturaFile(null);
-    setAssinaturaPreview('');
+   
   };
 
   const handleInputChange = (field: string, value: string) => {
@@ -449,105 +382,6 @@ const UsuariosPage: React.FC = () => {
     } else {
       setDadosMedico(prev => ({ ...prev, [name]: value }));
     }
-  };
-
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        setErro('Por favor, selecione um arquivo de imagem');
-        return;
-      }
-      if (file.size > 2 * 1024 * 1024) {
-        setErro('O arquivo deve ter no máximo 2MB');
-        return;
-      }
-      setLogoFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setLogoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleRemoverLogo = () => {
-    setLogoFile(null);
-    setLogoPreview('');
-    setDadosMedico(prev => ({ ...prev, logo: '' }));
-  };
-
-  const handleAssinaturaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        setErro('Por favor, selecione um arquivo de imagem para a assinatura');
-        return;
-      }
-      if (file.size > 2 * 1024 * 1024) {
-        setErro('O arquivo deve ter no máximo 2MB');
-        return;
-      }
-      setAssinaturaFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAssinaturaPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleRemoverAssinatura = () => {
-    setAssinaturaFile(null);
-    setAssinaturaPreview('');
-    setDadosMedico(prev => ({ ...prev, assinatura: '' }));
-  };
-
-  const handleParametrosChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
-    setParametros(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : (type === 'number' ? Number(value) : value)
-    }));
-  };
-
-  const handleDisponibilidadeToggle = (dia: string) => {
-    setDisponibilidades(prev => ({
-      ...prev,
-      [dia]: { ...prev[dia], ativo: !prev[dia].ativo }
-    }));
-  };
-
-  const handleDisponibilidadeChange = (dia: string, index: number, campo: 'tempo_inicio' | 'tempo_fim', valor: string) => {
-    setDisponibilidades(prev => ({
-      ...prev,
-      [dia]: {
-        ...prev[dia],
-        horarios: prev[dia].horarios.map((horario, idx) => 
-          idx === index ? { ...horario, [campo]: valor } : horario
-        )
-      }
-    }));
-  };
-
-  const adicionarHorario = (dia: string) => {
-    setDisponibilidades(prev => ({
-      ...prev,
-      [dia]: {
-        ...prev[dia],
-        horarios: [...prev[dia].horarios, { tempo_inicio: '08:00', tempo_fim: '18:00' }]
-      }
-    }));
-  };
-
-  const removerHorario = (dia: string, index: number) => {
-    setDisponibilidades(prev => ({
-      ...prev,
-      [dia]: {
-        ...prev[dia],
-        horarios: prev[dia].horarios.filter((_, idx) => idx !== index)
-      }
-    }));
   };
 
   const formatarCEP = (cep: string) => {
@@ -652,34 +486,7 @@ const UsuariosPage: React.FC = () => {
           ...dadosMedico,
           numero: dadosMedico.numero ? Number(dadosMedico.numero) : undefined
         };
-
-        // Adicionar logo se houver arquivo novo
-        if (logoFile) {
-          const reader = new FileReader();
-          const logoBase64 = await new Promise<string>((resolve, reject) => {
-            reader.onloadend = () => {
-              const base64 = (reader.result as string).split(',')[1];
-              resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(logoFile);
-          });
-          dados.dados_medico.logo = logoBase64;
-        }
-
-        // Adicionar assinatura se houver arquivo novo
-        if (assinaturaFile) {
-          const reader = new FileReader();
-          const assinaturaBase64 = await new Promise<string>((resolve, reject) => {
-            reader.onloadend = () => {
-              const base64 = (reader.result as string).split(',')[1];
-              resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(assinaturaFile);
-          });
-          dados.dados_medico.assinatura = assinaturaBase64;
-        }
+       
       }
 
       if (editingUsuario) {
@@ -688,12 +495,12 @@ const UsuariosPage: React.FC = () => {
         // Salvar parâmetros se for médico
         if (ehMedico) {
           try {
-            await usuarioParametrosService.atualizarPorUsuario(editingUsuario.id, { ...parametros, ...cores });
+            await usuarioParametrosService.atualizarPorUsuario(editingUsuario.id, { ...parametros });
           } catch (error: any) {
             logger.error('Erro ao atualizar parâmetros:', error);
             if (error.response?.status === 404) {
               try {
-                await usuarioParametrosService.criarParaUsuario(editingUsuario.id, { ...parametros, ...cores } as any);
+                await usuarioParametrosService.criarParaUsuario(editingUsuario.id, { ...parametros } as any);
               } catch (criarError: any) {
                 logger.error('Erro ao criar parâmetros:', criarError);
                 setErro(criarError.response?.data?.erro || criarError.response?.data?.error || 'Erro ao criar parâmetros');
@@ -959,9 +766,6 @@ const UsuariosPage: React.FC = () => {
                 <Tab label="Acesso" {...a11yProps(1)} />
                 {ehMedico && <Tab label="Dados Profissionais" {...a11yProps(2)} />}
                 {ehMedico && <Tab label="Endereço" {...a11yProps(3)} />}
-                {ehMedico && <Tab label="Parâmetros" {...a11yProps(4)} />}
-                {ehMedico && <Tab label="Disponibilidade" {...a11yProps(5)} />}
-                {ehMedico && <Tab label="Logos" {...a11yProps(6)} />}
               </Tabs>
             </Box>
 
@@ -1087,27 +891,6 @@ const UsuariosPage: React.FC = () => {
               <TabPanel value={tabValue} index={2}>
                 <Stack spacing={3}>
                   <Typography variant="h6">Dados Profissionais</Typography>
-                  
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField
-                      fullWidth
-                      label="Inscrição Profissional"
-                      name="inscricao"
-                      value={dadosMedico.inscricao}
-                      onChange={handleMedicoChange}
-                    />
-                    <TextField
-                      fullWidth
-                      label="Duração da Sessão"
-                      name="tempo_sessao"
-                      type="number"
-                      value={dadosMedico.tempo_sessao ?? ''}
-                      onChange={handleMedicoChange}
-                      inputProps={{ min: 1 }}
-                      helperText="Tempo em minutos"
-                    />
-                  </Stack>
-
                   <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                     <TextField
                       fullWidth
@@ -1219,338 +1002,6 @@ const UsuariosPage: React.FC = () => {
                       disabled={buscandoCEP}
                       inputProps={{ maxLength: 2, style: { textTransform: 'uppercase' } }}
                     />
-                  </Stack>
-                </Stack>
-              </TabPanel>
-            )}
-
-            {/* Aba 5: Parâmetros (apenas médicos) */}
-            {ehMedico && (
-              <TabPanel value={tabValue} index={4}>
-                <Stack spacing={3}>
-                  <Typography variant="h6">Configurações de Sessão</Typography>
-                  
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField
-                      fullWidth
-                      label="Duração da Sessão"
-                      name="duracao_sessao"
-                      type="number"
-                      value={parametros.duracao_sessao}
-                      onChange={handleParametrosChange}
-                      inputProps={{ min: 1 }}
-                      helperText="Minutos"
-                    />
-                    <TextField
-                      fullWidth
-                      label="Tempo entre Sessões"
-                      name="tempo_entre_sessao"
-                      type="number"
-                      value={parametros.tempo_entre_sessao}
-                      onChange={handleParametrosChange}
-                      inputProps={{ min: 0 }}
-                      helperText="Minutos"
-                    />
-                    <TextField
-                      fullWidth
-                      label="Tempo de Lembrete"
-                      name="tempo_lembrete"
-                      type="number"
-                      value={parametros.tempo_lembrete}
-                      onChange={handleParametrosChange}
-                      inputProps={{ min: 1 }}
-                      helperText="Horas antes"
-                    />
-                  </Stack>
-
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="h6">Notificações</Typography>
-
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={parametros.enviar_email}
-                          onChange={handleParametrosChange}
-                          name="enviar_email"
-                        />
-                      }
-                      label="Enviar E-mail"
-                    />
-                    <Box sx={{ flex: 1 }} />
-                  </Stack>
-
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="h6">Permissões do Paciente</Typography>
-
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={parametros.permite_paciente_remarcar}
-                          onChange={handleParametrosChange}
-                          name="permite_paciente_remarcar"
-                        />
-                      }
-                      label="Permitir Remarcação"
-                    />
-                    <TextField
-                      fullWidth
-                      label="Prazo para Remarcação"
-                      name="tempo_remarcacao"
-                      type="number"
-                      value={parametros.tempo_remarcacao}
-                      onChange={handleParametrosChange}
-                      disabled={!parametros.permite_paciente_remarcar}
-                      inputProps={{ min: 1 }}
-                      helperText="Horas de antecedência"
-                    />
-                    <Box sx={{ flex: 1 }} />
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={parametros.permite_paciente_cancelar}
-                          onChange={handleParametrosChange}
-                          name="permite_paciente_cancelar"
-                        />
-                      }
-                      label="Permitir Cancelamento"
-                    />
-                    <TextField
-                      fullWidth
-                      label="Prazo para Cancelamento"
-                      name="tempo_cancelamento"
-                      type="number"
-                      value={parametros.tempo_cancelamento}
-                      onChange={handleParametrosChange}
-                      disabled={!parametros.permite_paciente_cancelar}
-                      inputProps={{ min: 1 }}
-                      helperText="Horas de antecedência"
-                    />                  
-                  </Stack>
-
-                  <Divider sx={{ my: 3 }} />
-                  <Typography variant="h6" gutterBottom>Personalização do Calendário</Typography>
-                  <Typography variant="body2" color="text.secondary" paragraph>
-                    Personalize as cores dos agendamentos no calendário de acordo com o status
-                  </Typography>
-
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
-                    {Object.entries({
-                      cor_agendado: 'Agendado',
-                      cor_confirmado: 'Confirmado',
-                      cor_cancelado: 'Cancelado',
-                      cor_realizado: 'Realizado',
-                      cor_faltou: 'Faltou',
-                      cor_reagendado: 'Reagendado'
-                    }).map(([key, label]) => (
-                      <Card key={key} variant="outlined">
-                        <CardContent>
-                          <Typography variant="subtitle2" gutterBottom>{label}</Typography>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-                            <Box
-                              sx={{
-                                width: 40,
-                                height: 40,
-                                borderRadius: 1,
-                                backgroundColor: cores[key as keyof typeof cores],
-                                border: '1px solid',
-                                borderColor: 'divider'
-                              }}
-                            />
-                            <Typography variant="body2" color="text.secondary">
-                              {cores[key as keyof typeof cores]}
-                            </Typography>
-                          </Box>
-                          <ChromePicker
-                            color={cores[key as keyof typeof cores]}
-                            onChangeComplete={(color) => setCores(prev => ({ ...prev, [key]: color.hex }))}
-                            disableAlpha
-                          />
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </Box>
-
-                  <Box sx={{ mt: 2 }}>
-                    <Button
-                      variant="outlined"
-                      onClick={() => setCores(CORES_PADRAO)}
-                    >
-                      Restaurar Cores Padrão
-                    </Button>
-                  </Box>
-                </Stack>
-              </TabPanel>
-            )}
-
-            {/* Aba 6: Disponibilidade (apenas médicos) */}
-            {ehMedico && (
-              <TabPanel value={tabValue} index={5}>
-                <Stack spacing={3}>
-                  <Typography variant="h6">Horários de Atendimento</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Configure os dias e horários em que o profissional estará disponível para atendimentos
-                  </Typography>
-
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 3 }}>
-                    {Object.keys(disponibilidades).map((dia) => (
-                      <Card key={dia} variant="outlined">
-                        <CardContent>
-                          <Stack spacing={2}>
-                            <FormControlLabel
-                              control={
-                                <Checkbox
-                                  checked={disponibilidades[dia].ativo}
-                                  onChange={() => handleDisponibilidadeToggle(dia)}
-                                />
-                              }
-                              label={<Typography variant="subtitle1" fontWeight="medium">{dia}</Typography>}
-                            />
-                            
-                            {disponibilidades[dia].ativo && (
-                              <Stack spacing={2}>
-                                {disponibilidades[dia].horarios.map((horario, index) => (
-                                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} key={index} alignItems="center">
-                                    <TextField
-                                      size="small"
-                                      label="Início"
-                                      type="time"
-                                      value={horario.tempo_inicio}
-                                      onChange={(e) => handleDisponibilidadeChange(dia, index, 'tempo_inicio', e.target.value)}
-                                      InputLabelProps={{ shrink: true }}
-                                      sx={{ flex: 1 }}
-                                    />
-                                    <TextField
-                                      size="small"
-                                      label="Fim"
-                                      type="time"
-                                      value={horario.tempo_fim}
-                                      onChange={(e) => handleDisponibilidadeChange(dia, index, 'tempo_fim', e.target.value)}
-                                      InputLabelProps={{ shrink: true }}
-                                      sx={{ flex: 1 }}
-                                    />
-                                    <Stack direction="row" spacing={0.5}>
-                                      {index === disponibilidades[dia].horarios.length - 1 && (
-                                        <IconButton
-                                          size="small"
-                                          color="primary"
-                                          onClick={() => adicionarHorario(dia)}
-                                          title="Adicionar horário"
-                                        >
-                                          <AddIcon fontSize="small" />
-                                        </IconButton>
-                                      )}
-                                      {disponibilidades[dia].horarios.length > 1 && (
-                                        <IconButton
-                                          size="small"
-                                          color="error"
-                                          onClick={() => removerHorario(dia, index)}
-                                          title="Remover horário"
-                                        >
-                                          <RemoveIcon fontSize="small" />
-                                        </IconButton>
-                                      )}
-                                    </Stack>
-                                  </Stack>
-                                ))}
-                              </Stack>
-                            )}
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </Box>
-                </Stack>
-              </TabPanel>
-            )}
-
-            {/* Aba 7: Logos (apenas médicos) */}
-            {ehMedico && (
-              <TabPanel value={tabValue} index={6}>
-                <Stack spacing={3}>
-                  <Typography variant="h6">Logo e Assinatura</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Configure o logo e a assinatura que serão utilizados nos documentos gerados pelo sistema
-                  </Typography>
-
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={4} justifyContent="center" sx={{ mt: 3 }}>
-                    {/* Logo Upload */}
-                    <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
-                      <Typography variant="subtitle1" fontWeight="medium">Logo</Typography>
-                      <Avatar
-                        src={logoPreview}
-                        sx={{ width: 150, height: 150 }}
-                      />
-                      <Stack direction="row" spacing={2}>
-                        <Button
-                          component="label"
-                          variant="outlined"
-                          startIcon={<UploadIcon />}
-                          size="small"
-                        >
-                          {logoPreview ? 'Alterar' : 'Carregar'}
-                          <input
-                            type="file"
-                            hidden
-                            accept="image/*"
-                            onChange={handleLogoChange}
-                          />
-                        </Button>
-                        {logoPreview && (
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={handleRemoverLogo}
-                            title="Remover logo"
-                          >
-                            <DeleteIcon />
-                          </IconButton>
-                        )}
-                      </Stack>
-                      <Typography variant="caption" color="text.secondary">
-                        Formatos: PNG, JPG (máx. 2MB)
-                      </Typography>
-                    </Box>
-
-                    {/* Assinatura Upload */}
-                    <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
-                      <Typography variant="subtitle1" fontWeight="medium">Assinatura</Typography>
-                      <Avatar
-                        src={assinaturaPreview}
-                        sx={{ width: 300, height: 150, backgroundColor: '#f5f5f5' }}
-                        variant="square"
-                      />
-                      <Stack direction="row" spacing={2}>
-                        <Button
-                          component="label"
-                          variant="outlined"
-                          startIcon={<UploadIcon />}
-                          size="small"
-                        >
-                          {assinaturaPreview ? 'Alterar' : 'Carregar'}
-                          <input
-                            type="file"
-                            hidden
-                            accept="image/*"
-                            onChange={handleAssinaturaChange}
-                          />
-                        </Button>
-                        {assinaturaPreview && (
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={handleRemoverAssinatura}
-                            title="Remover assinatura"
-                          >
-                            <DeleteIcon />
-                          </IconButton>
-                        )}
-                      </Stack>
-                      <Typography variant="caption" color="text.secondary">
-                        Formatos: PNG, JPG (máx. 2MB)
-                      </Typography>
-                    </Box>
                   </Stack>
                 </Stack>
               </TabPanel>
