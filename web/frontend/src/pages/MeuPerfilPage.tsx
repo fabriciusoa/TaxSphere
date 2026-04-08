@@ -255,9 +255,6 @@ export default function MeuPerfilPage() {
           >
             <Tab label="Dados Pessoais/Profissionais" />
             {ehMedico && <Tab label="Endereço" />}
-            {ehMedico && <Tab label="Parâmetros" />}
-            {ehMedico && <Tab label="Disponibilidade" />}
-            {ehMedico && <Tab label="Logos" />}
           </Tabs>
         </Box>
 
@@ -311,27 +308,7 @@ export default function MeuPerfilPage() {
                   <Divider sx={{ my: 2 }} />
                   <Typography variant="h6">Dados Profissionais</Typography>
                   
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField
-                      fullWidth
-                      label="Inscrição Profissional"
-                      name="inscricao"
-                      value={dadosMedico.inscricao}
-                      onChange={handleMedicoChange}
-                    />
-                    <TextField
-                      fullWidth
-                      label="Duração da Sessão"
-                      name="tempo_sessao"
-                      type="number"
-                      value={dadosMedico.tempo_sessao ?? ''}
-                      onChange={handleMedicoChange}
-                      inputProps={{ min: 1 }}
-                      helperText="Tempo em minutos"
-                    />
-                  </Stack>
-
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                     <TextField
                       fullWidth
                       label="Nacionalidade"
