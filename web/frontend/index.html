@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>𝚿</text></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      SECURITY: Content Security Policy deve ser configurada via HTTP header
+      no servidor web em produção (nginx/apache/caddy). Não usar meta tag pois:
+      1. meta tag CSP não suporta nonce dinâmico (necessário para scripts inline do Vite)
+      2. Em build de produção não há scripts inline — todos são arquivos .js externos
+
+      Exemplo nginx (produção):
+      add_header Content-Security-Policy "
+        default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:;
+        font-src 'self' data:;
+        connect-src 'self';
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self'
+      ";
+    -->
+    <title>Fiscal&Tributário System</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

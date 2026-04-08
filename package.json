@@ -1,0 +1,27 @@
+{
+  "name": "fmt_system",
+  "version": "1.0.0",
+  "description": "Sistema Gestão Fiscal/Tributária",
+  "private": true,
+  "workspaces": [
+    "web/backend",
+    "web/frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=backend & npm run dev --workspace=frontend",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend"
+  },
+  "keywords": [
+    "nodejs",
+    "react",
+    "typescript",
+    "sqlite",
+    "jwt"
+  ],
+  "author": "",
+  "license": "ISC"
+}

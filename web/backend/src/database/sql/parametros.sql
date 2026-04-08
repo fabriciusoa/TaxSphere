@@ -1,0 +1,10 @@
+CREATE TABLE parametros (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	chave TEXT NOT NULL UNIQUE,
+	valor TEXT NOT NULL,
+	descricao TEXT,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_parametros_chave ON parametros(chave);

@@ -1,0 +1,189 @@
+export interface Usuario {
+  id: number;
+  nome: string;
+  email: string;
+  cpf: string;
+  perfil: string;
+  perfil_id: number;
+  status: string;
+  criado?: string | null;
+  dt_inativacao?: string | null;
+  dt_nascimento?: string | null;
+  dt_ativacao?: string | null;
+  ultimo_login?: string | null;
+  tentativas_login?: number;
+  dt_bloqueio?: string | null;
+}
+
+export interface Perfil {
+  id: number;
+  perfil: string;
+}
+
+export interface Parametro {
+  id: number;
+  chave: string;
+  valor: string;
+  descricao: string | null;
+  updated_at: string;
+}
+
+export interface LoginLog {
+  id: number;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  email_tentativa: string;
+  sucesso: 'sim' | 'nao';
+  ip_address: string | null;
+  user_agent: string | null;
+  motivo_falha: string | null;
+  timestamp: string;
+}
+
+export interface LoginResponse {
+  // token removido em SEC-04: agora é cookie httpOnly, não retornado no body
+  user: Usuario;
+}
+
+export interface LoginLogPaginado {
+  data: LoginLog[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export type PerfilEnum = 'ADMIN' | 'MEDICO' | 'GERENTE' | 'RELATORIO';
+
+// ============================================
+// TIPOS PARA SISTEMA DE CHAMADOS
+// ============================================
+
+// Tipos literais para enums
+export type StatusChamado = 
+  | 'Aberto' 
+  | 'Em Andamento' 
+  | 'Aguardando Resposta'
+  | 'Resolvido'
+  | 'Fechado'
+  | 'Cancelado';
+
+export type CategoriaChamado =
+  | 'Problema Técnico'
+  | 'Dúvida'
+  | 'Sugestão'
+  | 'Erro no Sistema'
+  | 'Solicitação de Funcionalidade';
+
+export type PrioridadeChamado = 
+  | 'Baixa'
+  | 'Normal'
+  | 'Alta'
+  | 'Urgente';
+
+// Interface principal de Chamado
+export interface Chamado {
+  id: number;
+  id_usuario: number;
+  titulo: string;
+  descricao: string;
+  categoria: CategoriaChamado;
+  prioridade: PrioridadeChamado;
+  status: StatusChamado;
+  id_usuario_atribuido: number | null;
+  criado_em: string;
+  atualizado_em: string;
+  fechado_em: string | null;
+  // Campos de JOIN
+  usuario_nome?: string;
+  usuario_email?: string;
+  atribuido_nome?: string;
+}
+
+// Interface de Comentário
+export interface ChamadoComentario {
+  id: number;
+  id_chamado: number;
+  id_usuario: number;
+  nome_usuario: string;
+  comentario: string;
+  criado_em: string;
+  // Campos de JOIN
+  usuario_nome?: string;
+  usuario_email?: string;
+  // Array de anexos (nested)
+  anexos?: ChamadoAnexo[];
+}
+
+// Interface de Anexo
+export interface ChamadoAnexo {
+  id: number;
+  id_chamado_comentario: number;
+  nome_arquivo: string;
+  tipo_arquivo: string;
+  tamanho_bytes: number;
+  // Retornados como base64 no JSON (padrão igual ao logo do MeuPerfil)
+  thumbnail_base64?: string | null;
+  preview_base64?: string | null;
+}
+
+// DTOs para criação e atualização
+export interface CriarChamadoDTO {
+  titulo: string;
+  descricao: string;
+  categoria: CategoriaChamado;
+  prioridade: PrioridadeChamado;
+}
+
+export interface AtualizarChamadoDTO {
+  titulo?: string;
+  descricao?: string;
+  categoria?: CategoriaChamado;
+  prioridade?: PrioridadeChamado;
+  status?: StatusChamado;
+  id_usuario_atribuido?: number | null;
+}
+
+export interface CriarComentarioDTO {
+  comentario: string;
+}
+
+// Interfaces para Dashboard/Estatísticas
+export interface EstatisticasChamados {
+  total_chamados: number;
+  abertos: number;
+  em_andamento: number;
+  resolvidos: number;
+  fechados: number;
+  tempo_medio_resolucao_horas: number | null;
+  criados_hoje: number;
+  resolvidos_hoje: number;
+}
+
+export interface ChamadoPorStatus {
+  status: StatusChamado;
+  total: number;
+}
+
+export interface ChamadoPorCategoria {
+  categoria: CategoriaChamado;
+  total: number;
+}
+
+export interface TopUsuarioChamados {
+  id: number;
+  nome: string;
+  email: string;
+  total_chamados: number;
+  abertos: number;
+  resolvidos: number;
+}
+
+export interface DashboardChamados {
+  estatisticas: EstatisticasChamados;
+  por_status: ChamadoPorStatus[];
+  por_categoria: ChamadoPorCategoria[];
+  top_usuarios: TopUsuarioChamados[];
+}
