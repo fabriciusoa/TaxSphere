@@ -35,7 +35,7 @@ export async function getStripeInstance(): Promise<Stripe> {
     stripeInstance = new Stripe(secretKey, {
       apiVersion: '2026-02-25.clover',
       appInfo: {
-        name: 'System',
+        name: 'MindTax',
         version: '1.0.0'
       }
     });

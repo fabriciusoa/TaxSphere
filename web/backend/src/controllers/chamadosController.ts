@@ -3,7 +3,6 @@ import { getOne, getAll, runQuery } from '../database/connection';
 import { AuthRequest, Chamado, ChamadoComentario, ChamadoAnexo, StatusChamado, CategoriaChamado, PrioridadeChamado, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, MAX_FILES_PER_COMMENT } from '../types';
 import { getCurrentTimestamp, formatToBrazilian } from '../utils/dateHelpers';
 import { processImage, isImage, formatBytes } from '../utils/imageProcessor';
-import { fileTypeFromBuffer } from 'file-type';
 import { getSMTPConfig, getBaseUrl, getParametro } from '../utils/parametrosHelper';
 import nodemailer from 'nodemailer';
 import { log } from '../utils/logger';
@@ -598,6 +597,7 @@ export const chamadosController = {
 					}
 
 					// Detectar tipo MIME real do arquivo
+					const { fileTypeFromBuffer } = await import('file-type');
 					const fileType = await fileTypeFromBuffer(file.buffer);
 					const mimeType = fileType?.mime || file.mimetype;
 

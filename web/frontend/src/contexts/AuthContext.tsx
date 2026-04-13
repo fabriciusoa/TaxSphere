@@ -23,7 +23,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 // Cache de dados do usuário em sessionStorage (não o token — apenas dados não-sensíveis)
 // Persiste no F5, mas é limpo ao fechar o browser. O token permanece seguro no cookie httpOnly.
-const USER_CACHE_KEY = 'fmtsystem_user';
+const USER_CACHE_KEY = 'MindTax_user';
 
 function getCachedUser(): AuthUser | null {
   try {

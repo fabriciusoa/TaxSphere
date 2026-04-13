@@ -14,14 +14,40 @@ import {
   ListItemIcon,
   ListItemText
 } from '@mui/material';
-import { 
+import {
   Lock as LockIcon,
   CheckCircle as CheckCircleIcon,
-  RadioButtonUnchecked as UncheckedIcon
+  RadioButtonUnchecked as UncheckedIcon,
 } from '@mui/icons-material';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { logger } from '../utils/logger';
+
+// Tokens Synchro
+const T = {
+  cyan:        '#00c8f0',
+  cyanGlow:    '0 4px 18px rgba(0,200,240,0.25)',
+  cyanHover:   '0 6px 22px rgba(0,200,240,0.38)',
+  textPrimary: '#1a2332',
+  textSecond:  '#64748b',
+  border:      'rgba(15, 30, 60, 0.10)',
+  surface:     '#FFFFFF',
+  inputBg:     '#F7F9FC',
+  navy:        '#0a1628',
+  cardShadow:  '0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)',
+};
+
+const inputSx = {
+  '& .MuiOutlinedInput-root': {
+    backgroundColor: T.inputBg,
+    borderRadius: '10px',
+    '& fieldset': { borderColor: 'rgba(15,30,60,0.11)' },
+    '&:hover fieldset': { borderColor: 'rgba(15,30,60,0.22)' },
+    '&.Mui-focused fieldset': { borderColor: T.cyan, borderWidth: 1.5 },
+  },
+  '& .MuiInputLabel-root': { color: T.textSecond, fontSize: '0.875rem' },
+  '& .MuiInputLabel-root.Mui-focused': { color: T.cyan },
+};
 
 export default function TrocarSenhaPage() {
   const navigate = useNavigate();
@@ -33,12 +59,11 @@ export default function TrocarSenhaPage() {
   const [erro, setErro] = useState('');
   const [sucesso, setSucesso] = useState('');
 
-  // Requisitos da senha
   const requisitos = [
-    { id: 'length', label: 'Mínimo 8 caracteres', test: (senha: string) => senha.length >= 8 },
-    { id: 'lowercase', label: 'Pelo menos 1 letra minúscula', test: (senha: string) => /[a-z]/.test(senha) },
-    { id: 'uppercase', label: 'Pelo menos 1 letra maiúscula', test: (senha: string) => /[A-Z]/.test(senha) },
-    { id: 'special', label: 'Pelo menos 1 caractere especial', test: (senha: string) => /[\W_]/.test(senha) }
+    { id: 'length',    label: 'Mínimo 8 caracteres',          test: (s: string) => s.length >= 8 },
+    { id: 'lowercase', label: 'Pelo menos 1 letra minúscula', test: (s: string) => /[a-z]/.test(s) },
+    { id: 'uppercase', label: 'Pelo menos 1 letra maiúscula', test: (s: string) => /[A-Z]/.test(s) },
+    { id: 'special',   label: 'Pelo menos 1 caractere especial', test: (s: string) => /[\W_]/.test(s) },
   ];
 
   const validarSenha = (senha: string) => {
@@ -55,22 +80,18 @@ export default function TrocarSenhaPage() {
     setErro('');
     setSucesso('');
 
-    // Validações
     if (!senhaAtual || !novaSenha || !confirmarSenha) {
       setErro('Todos os campos são obrigatórios');
       return;
     }
-
     if (novaSenha !== confirmarSenha) {
       setErro('A nova senha e a confirmação não coincidem');
       return;
     }
-
     if (senhaAtual === novaSenha) {
       setErro('A nova senha deve ser diferente da senha atual');
       return;
     }
-
     const errosValidacao = validarSenha(novaSenha);
     if (errosValidacao.length > 0) {
       setErro(`A senha deve ter: ${errosValidacao.join(', ')}`);
@@ -78,17 +99,10 @@ export default function TrocarSenhaPage() {
     }
 
     setLoading(true);
-
     try {
-      await api.put(`/usuarios/${user?.id}/senha`, {
-        senhaAtual,
-        novaSenha
-      });
-
+      await api.put(`/usuarios/${user?.id}/senha`, { senhaAtual, novaSenha });
       setSucesso('Senha alterada com sucesso!');
-      setTimeout(() => {
-        navigate('/dashboard');
-      }, 2000);
+      setTimeout(() => navigate('/dashboard'), 2000);
     } catch (error: any) {
       logger.error('Erro ao alterar senha', { error: error.message, userId: user?.id });
       setErro(error.response?.data?.message || 'Erro ao alterar senha');
@@ -97,114 +111,152 @@ export default function TrocarSenhaPage() {
     }
   };
 
+  const allOk = requisitos.every(r => r.test(novaSenha));
+
   return (
-    <Box sx={{ maxWidth: 600, mx: 'auto', mt: 4 }}>
-      <Card>
-        <CardContent sx={{ p: 4 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-            <LockIcon sx={{ fontSize: 40, mr: 2, color: 'primary.main' }} />
+    <Box sx={{ maxWidth: 560, mx: 'auto', mt: 2, fontFamily: '"Inter", system-ui, sans-serif' }}>
+      <Card elevation={0} sx={{
+        borderRadius: '16px',
+        border: `1px solid ${T.border}`,
+        boxShadow: T.cardShadow,
+        backgroundColor: T.surface,
+      }}>
+        <CardContent sx={{ p: { xs: 3, sm: 4 } }}>
+
+          {/* Header */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3.5 }}>
+            <Box sx={{
+              width: 44, height: 44, borderRadius: '12px',
+              backgroundColor: 'rgba(0,200,240,0.08)',
+              border: '1px solid rgba(0,200,240,0.18)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0,
+            }}>
+              <LockIcon sx={{ color: T.cyan, fontSize: 22 }} />
+            </Box>
             <Box>
-              <Typography variant="h5" component="h1">
+              <Typography sx={{
+                fontSize: '1.125rem', fontWeight: 700,
+                color: T.textPrimary, letterSpacing: '-0.02em',
+              }}>
                 Trocar Senha
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Altere sua senha de acesso
+              <Typography sx={{ fontSize: '0.8125rem', color: T.textSecond, mt: 0.25 }}>
+                Altere sua senha de acesso ao sistema
               </Typography>
             </Box>
           </Box>
 
           {erro && (
-            <Alert severity="error" sx={{ mb: 2 }}>
+            <Alert severity="error" sx={{ mb: 2.5, borderRadius: '10px', fontSize: '0.875rem' }}>
               {erro}
             </Alert>
           )}
-
           {sucesso && (
-            <Alert severity="success" sx={{ mb: 2 }}>
+            <Alert severity="success" sx={{ mb: 2.5, borderRadius: '10px', fontSize: '0.875rem' }}>
               {sucesso}
             </Alert>
           )}
 
-          <Box component="form" onSubmit={handleSubmit}>
+          <Box component="form" onSubmit={handleSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
               fullWidth
               type="password"
               label="Senha Atual"
               value={senhaAtual}
               onChange={(e) => setSenhaAtual(e.target.value)}
-              margin="normal"
               required
               disabled={loading}
               autoFocus
+              sx={inputSx}
             />
-
             <TextField
               fullWidth
               type="password"
               label="Nova Senha"
               value={novaSenha}
               onChange={(e) => setNovaSenha(e.target.value)}
-              margin="normal"
               required
               disabled={loading}
+              sx={inputSx}
             />
-
             <TextField
               fullWidth
               type="password"
               label="Confirmar Nova Senha"
               value={confirmarSenha}
               onChange={(e) => setConfirmarSenha(e.target.value)}
-              margin="normal"
               required
               disabled={loading}
+              sx={inputSx}
             />
 
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Requisitos da senha:
-              </Typography>
-              <List dense disablePadding>
-                {requisitos.map((req) => {
-                  const isSatisfeito = req.test(novaSenha);
-                  return (
-                    <ListItem key={req.id} disablePadding sx={{ py: 0.5 }}>
-                      <ListItemIcon sx={{ minWidth: 36 }}>
-                        {isSatisfeito ? (
-                          <CheckCircleIcon sx={{ fontSize: 20, color: 'success.main' }} />
-                        ) : (
-                          <UncheckedIcon sx={{ fontSize: 20, color: 'text.disabled' }} />
-                        )}
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={req.label}
-                        primaryTypographyProps={{
-                          variant: 'body2',
-                          color: isSatisfeito ? 'text.primary' : 'text.secondary'
-                        }}
-                      />
-                    </ListItem>
-                  );
-                })}
-              </List>
-            </Box>
+            {/* Requisitos */}
+            {novaSenha.length > 0 && (
+              <Box sx={{
+                p: 2, borderRadius: '10px',
+                backgroundColor: allOk ? 'rgba(102,187,106,0.06)' : 'rgba(15,30,60,0.03)',
+                border: `1px solid ${allOk ? 'rgba(102,187,106,0.22)' : 'rgba(15,30,60,0.08)'}`,
+              }}>
+                <Typography sx={{ fontSize: '0.8125rem', fontWeight: 600, color: T.textPrimary, mb: 1 }}>
+                  Requisitos da senha
+                </Typography>
+                <List dense disablePadding>
+                  {requisitos.map((req) => {
+                    const ok = req.test(novaSenha);
+                    return (
+                      <ListItem key={req.id} disablePadding sx={{ py: 0.25 }}>
+                        <ListItemIcon sx={{ minWidth: 28 }}>
+                          {ok
+                            ? <CheckCircleIcon sx={{ fontSize: 16, color: '#66BB6A' }} />
+                            : <UncheckedIcon sx={{ fontSize: 16, color: 'rgba(100,116,139,0.5)' }} />}
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={req.label}
+                          primaryTypographyProps={{
+                            fontSize: '0.8125rem',
+                            color: ok ? T.textPrimary : T.textSecond,
+                            fontWeight: ok ? 500 : 400,
+                          }}
+                        />
+                      </ListItem>
+                    );
+                  })}
+                </List>
+              </Box>
+            )}
 
-            <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
+            {/* Ações */}
+            <Box sx={{ display: 'flex', gap: 1.5, mt: 0.5 }}>
               <Button
-                variant="outlined"
                 fullWidth
+                variant="outlined"
                 onClick={() => navigate('/dashboard')}
                 disabled={loading}
+                sx={{
+                  height: 44, borderRadius: '10px',
+                  borderColor: 'rgba(15,30,60,0.18)',
+                  color: T.textSecond,
+                  textTransform: 'none', fontWeight: 600,
+                  '&:hover': { borderColor: 'rgba(15,30,60,0.35)', backgroundColor: 'rgba(15,30,60,0.03)' },
+                }}
               >
                 Cancelar
               </Button>
               <Button
                 type="submit"
-                variant="contained"
                 fullWidth
                 disabled={loading}
+                sx={{
+                  height: 44, borderRadius: '10px',
+                  backgroundColor: T.cyan, color: T.navy,
+                  fontWeight: 700, textTransform: 'none',
+                  boxShadow: T.cyanGlow,
+                  '&:hover': { backgroundColor: '#00b8e0', boxShadow: T.cyanHover },
+                  '&.Mui-disabled': { backgroundColor: 'rgba(0,200,240,0.35)', color: T.navy },
+                }}
               >
-                {loading ? <CircularProgress size={24} /> : 'Alterar Senha'}
+                {loading ? <CircularProgress size={20} sx={{ color: T.navy }} /> : 'Alterar Senha'}
               </Button>
             </Box>
           </Box>
