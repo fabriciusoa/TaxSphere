@@ -31,6 +31,8 @@ import {
   perdcompAlertasController,
 } from '../controllers/perdcompController';
 import { perdcompIAController } from '../controllers/perdcompIAController';
+import { ecacCertificadoController, ecacSincronizacaoController } from '../controllers/ecacController';
+import { dctfwebController } from '../controllers/dctfwebController';
 import { log } from '../utils/logger';
 
 const router = Router();
@@ -191,7 +193,7 @@ router.get('/health/cron', async (req, res) => {
       status: 'ok',
       timestamp: new Date().toISOString(),
       ultimas_execucoes: ultimasExecucoes,
-      estatisticas_24h: estatisticas
+      estatisticas_48h: estatisticas
     });
   } catch (error) {
     log.error(`Erro ao buscar estatísticas de cron jobs: ${error}`);
@@ -371,5 +373,40 @@ router.post('/perdcomp/ia/analisar', authenticateToken, perdcompIAController.ana
 router.post('/perdcomp/ia/sugerir', authenticateToken, perdcompIAController.sugerir);
 router.post('/perdcomp/ia/risco', authenticateToken, perdcompIAController.risco);
 router.post('/perdcomp/ia/chat', authenticateToken, perdcompIAController.chat);
+
+// ============ DCTF Web ============
+router.get('/dctfweb/dashboard', authenticateToken, dctfwebController.dashboard);
+router.get('/dctfweb/declaracoes', authenticateToken, dctfwebController.listar);
+router.get('/dctfweb/declaracoes/:id', authenticateToken, dctfwebController.buscarPorId);
+router.post('/dctfweb/declaracoes', authenticateToken, dctfwebController.criar);
+router.put('/dctfweb/declaracoes/:id', authenticateToken, dctfwebController.atualizar);
+router.delete('/dctfweb/declaracoes/:id', authenticateToken, dctfwebController.excluir);
+router.post('/dctfweb/declaracoes/:id/darf', authenticateToken, dctfwebController.gerarDarf);
+router.put('/dctfweb/declaracoes/:id/pago', authenticateToken, dctfwebController.marcarPago);
+
+// ============ eCAC - Certificados Digitais ============
+const uploadCert = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = file.originalname.toLowerCase();
+    if (ext.endsWith('.pfx') || ext.endsWith('.p12') ||
+        file.mimetype === 'application/x-pkcs12' || file.mimetype === 'application/octet-stream') {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos .pfx ou .p12 são aceitos'));
+    }
+  },
+});
+
+router.get('/ecac/certificados', authenticateToken, ecacCertificadoController.listar);
+router.post('/ecac/certificados', authenticateToken, uploadCert.single('certificado'), ecacCertificadoController.upload);
+router.post('/ecac/certificados/validar', authenticateToken, uploadCert.single('certificado'), ecacCertificadoController.validar);
+router.delete('/ecac/certificados/:id', authenticateToken, ecacCertificadoController.excluir);
+
+// eCAC - Sincronização
+router.post('/ecac/sincronizar', authenticateToken, ecacSincronizacaoController.sincronizar);
+router.get('/ecac/sincronizacoes/:id', authenticateToken, ecacSincronizacaoController.status);
+router.get('/ecac/sincronizacoes', authenticateToken, ecacSincronizacaoController.historico);
 
 export default router;

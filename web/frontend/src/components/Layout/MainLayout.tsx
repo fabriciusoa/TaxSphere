@@ -52,6 +52,7 @@ import {
   Description as DescriptionIcon,
   Calculate as CalculateIcon,
   SmartToy as SmartToyIcon,
+  CloudSync as CloudSyncIcon,
   SpaceDashboard as SpaceDashboardIcon,
 } from '@mui/icons-material';
 import { manutencaoService } from '../../services/manutencaoService';
@@ -203,7 +204,12 @@ export default function MainLayout({ children }: Props) {
         },
         { text: 'Recuperação PIS/COFINS', icon: <ReceiptIcon />, path: '/fiscal/pis-cofins', badge: emBreve },
         { text: 'MIT', icon: <GavelIcon />, path: '/fiscal/mit', badge: emBreve },
-        { text: 'DCTF Web', icon: <BarChartIcon />, path: '/fiscal/dctf-web', badge: emBreve },
+        { text: 'DCTF Web', icon: <BarChartIcon />, path: '/fiscal/dctf-web',
+          submenu: [
+            { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/dctf-web' },
+            { text: 'Declarações', icon: <DescriptionIcon />, path: '/fiscal/dctf-web/declaracoes' },
+          ],
+        },
         { text: 'Gestão de CNDs', icon: <VerifiedUserIcon />, path: '/fiscal/cnds', badge: emBreve },
         { text: 'Caixa Postal eCac', icon: <InboxIcon />, path: '/fiscal/ecac', badge: emBreve },
       ]
@@ -225,6 +231,7 @@ export default function MainLayout({ children }: Props) {
       icon: <SistemaIcon />,
       submenu: [
         { text: 'Empresas', icon: <BusinessIcon />, path: '/configuracoes/empresas' },
+        { text: 'Integração eCAC', icon: <CloudSyncIcon />, path: '/configuracoes/ecac' },
         { text: 'Meu Perfil', icon: <AccountCircleIcon />, path: '/meu-perfil' },
         { text: 'Trocar Senha', icon: <LockIcon />, path: '/trocar-senha' }
       ]
@@ -298,11 +305,11 @@ export default function MainLayout({ children }: Props) {
       }}>
         <Box
           component="img"
-          src="/logo-taxmind.png"
-          alt="TaxMind"
+          src="/logo-mindtax.png"
+          alt="MindTax"
           sx={{
             width: '100%',
-            maxHeight: 56,
+            maxHeight: 52,
             objectFit: 'contain',
           }}
         />
@@ -574,9 +581,11 @@ function getPageTitle(pathname: string): string {
     '/fiscal/perdcomp/pedidos/novo': 'PERD/Comp - Novo Pedido',
     '/fiscal/perdcomp/simulador': 'PERD/Comp - Simulador',
     '/fiscal/perdcomp/assistente': 'PERD/Comp - Assistente IA',
+    '/configuracoes/ecac': 'Integração eCAC',
     '/fiscal/pis-cofins': 'Recuperação PIS/COFINS',
     '/fiscal/mit': 'MIT',
-    '/fiscal/dctf-web': 'DCTF Web',
+    '/fiscal/dctf-web': 'DCTF Web - Painel',
+    '/fiscal/dctf-web/declaracoes': 'DCTF Web - Declarações',
     '/fiscal/cnds': 'Gestão de CNDs',
     '/fiscal/ecac': 'Caixa Postal eCac',
 

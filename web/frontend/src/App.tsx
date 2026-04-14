@@ -18,6 +18,7 @@ const AdmPlanosPage               = lazy(() => import('./pages/AdmPlanosPage'));
 const AdmAssinaturaPage           = lazy(() => import('./pages/AdmAssinaturaPage'));
 const AdmStripeMetricsPage        = lazy(() => import('./pages/AdmStripeMetricsPage'));
 const ManutencaoPage              = lazy(() => import('./pages/ManutencaoPage'));
+const NotificacoesPage            = lazy(() => import('./pages/NotificacoesAgendamentoPage'));
 const NotFoundPage                = lazy(() => import('./pages/NotFoundPage'));
 const ModuloEmBreve               = lazy(() => import('./pages/ModuloEmBrevePage'));
 
@@ -29,6 +30,9 @@ const PerdcompPedidosPage         = lazy(() => import('./pages/perdcomp/PedidosP
 const PerdcompNovoPedidoPage      = lazy(() => import('./pages/perdcomp/NovoPedidoPage'));
 const PerdcompSimuladorPage       = lazy(() => import('./pages/perdcomp/SimuladorPage'));
 const PerdcompAssistenteIAPage    = lazy(() => import('./pages/perdcomp/AssistenteIAPage'));
+const EcacIntegracaoPage          = lazy(() => import('./pages/perdcomp/EcacIntegracaoPage'));
+const DctfWebDashboardPage        = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
+const DctfWebDeclaracoesPage      = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
 
 // Fallback leve exibido enquanto o chunk da página é baixado (< 1 s em LAN/produção)
 function PageLoader() {
@@ -71,10 +75,13 @@ function App() {
                 <Route path="/fiscal/perdcomp/pedidos/novo" element={<PerdcompNovoPedidoPage />} />
                 <Route path="/fiscal/perdcomp/simulador" element={<PerdcompSimuladorPage />} />
                 <Route path="/fiscal/perdcomp/assistente" element={<PerdcompAssistenteIAPage />} />
+                <Route path="/configuracoes/ecac" element={<EcacIntegracaoPage />} />
 
                 <Route path="/fiscal/pis-cofins" element={<ModuloEmBreve />} />
                 <Route path="/fiscal/mit" element={<ModuloEmBreve />} />
-                <Route path="/fiscal/dctf-web" element={<ModuloEmBreve />} />
+                {/* DCTF Web */}
+                <Route path="/fiscal/dctf-web" element={<DctfWebDashboardPage />} />
+                <Route path="/fiscal/dctf-web/declaracoes" element={<DctfWebDeclaracoesPage />} />
                 <Route path="/fiscal/cnds" element={<ModuloEmBreve />} />
                 <Route path="/fiscal/ecac" element={<ModuloEmBreve />} />
 
@@ -89,12 +96,15 @@ function App() {
                 <Route path="/meu-perfil" element={<MeuPerfilPage />} />
 
                 {/* Administração */}
+                <Route path="/sistema/notificacoes" element={<NotificacoesPage />} />
                 <Route path="/sistema/usuarios" element={<UsuariosPage />} />
                 <Route path="/sistema/parametros" element={<ParametrosPage />} />
                 <Route path="/sistema/manutencao" element={<ManutencaoPage />} />
                 <Route path="/assinatura/planos" element={<AdmPlanosPage />} />
                 <Route path="/assinatura/assinaturas" element={<AdmAssinaturaPage />} />
                 <Route path="/assinatura/metricas-stripe" element={<AdmStripeMetricsPage />} />
+
+                <Route path="*" element={<NotFoundPage />} />
               </Route>
 
             <Route path="*" element={<NotFoundPage />} />

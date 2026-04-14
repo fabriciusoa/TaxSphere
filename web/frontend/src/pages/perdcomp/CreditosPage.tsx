@@ -3,8 +3,9 @@ import {
   Box, Typography, Button, TextField, Select, MenuItem, FormControl, InputLabel,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination,
   Paper, Chip, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-  CircularProgress, Alert, Tooltip, SelectChangeEvent,
+  CircularProgress, Alert, Tooltip,
 } from '@mui/material';
+import type { SelectChangeEvent } from '@mui/material/Select';
 import {
   Add as AddIcon,
   Edit as EditIcon,

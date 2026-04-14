@@ -23,19 +23,28 @@ const T = {
   cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 };
 
+function renderBoldSegments(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, j) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={j}>{part.slice(2, -2)}</strong>;
+    }
+    return <span key={j}>{part}</span>;
+  });
+}
+
 function formatAssistantContent(text: string) {
   const lines = text.split('\n');
   return lines.map((line, i) => {
-    const boldReplaced = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-
     if (/^[-•]\s/.test(line)) {
       return (
         <Typography
           key={i}
           component="li"
           sx={{ fontSize: '0.875rem', color: T.textPrimary, ml: 2, mb: 0.25 }}
-          dangerouslySetInnerHTML={{ __html: boldReplaced.replace(/^[-•]\s/, '') }}
-        />
+        >
+          {renderBoldSegments(line.replace(/^[-•]\s/, ''))}
+        </Typography>
       );
     }
 
@@ -45,8 +54,9 @@ function formatAssistantContent(text: string) {
       <Typography
         key={i}
         sx={{ fontSize: '0.875rem', color: T.textPrimary, mb: 0.25 }}
-        dangerouslySetInnerHTML={{ __html: boldReplaced }}
-      />
+      >
+        {renderBoldSegments(line)}
+      </Typography>
     );
   });
 }

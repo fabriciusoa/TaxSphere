@@ -95,10 +95,8 @@ export const stripePaymentController = {
         }
       );
 
-      res.status(500).json({ 
-        erro: 'Erro ao criar Setup Intent',
-        detalhes: error.message 
-      });
+      log.error(`Erro ao criar Setup Intent: ${error.message}`);
+      res.status(500).json({ erro: 'Erro ao criar Setup Intent' });
     }
   }
 };

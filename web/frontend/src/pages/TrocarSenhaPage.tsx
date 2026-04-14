@@ -98,9 +98,14 @@ export default function TrocarSenhaPage() {
       return;
     }
 
+    if (!user?.id) {
+      setErro('Sessão expirada. Faça login novamente.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await api.put(`/usuarios/${user?.id}/senha`, { senhaAtual, novaSenha });
+      await api.put(`/usuarios/${user.id}/senha`, { senhaAtual, novaSenha });
       setSucesso('Senha alterada com sucesso!');
       setTimeout(() => navigate('/dashboard'), 2000);
     } catch (error: any) {

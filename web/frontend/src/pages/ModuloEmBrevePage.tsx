@@ -4,10 +4,8 @@ import { useLocation } from 'react-router-dom';
 
 const moduleNames: Record<string, string> = {
   '/fiscal/classificacao-ncm': 'Classificação NCM',
-  '/fiscal/perdcomp': 'PERD/Comp',
   '/fiscal/pis-cofins': 'Recuperação PIS/COFINS',
   '/fiscal/mit': 'MIT',
-  '/fiscal/dctf-web': 'DCTF Web',
   '/fiscal/cnds': 'Gestão de CNDs',
   '/fiscal/ecac': 'Caixa Postal eCac',
 };

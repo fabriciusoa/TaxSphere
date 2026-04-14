@@ -25,6 +25,11 @@ export const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => 
     flushLogsAndExit(1);
   }
   log.info(`Conectado ao banco de dados SQLite: ${dbPath}`);
+
+  db.run('PRAGMA foreign_keys = ON', (fkErr) => {
+    if (fkErr) log.warn(`Falha ao ativar foreign_keys: ${fkErr.message}`);
+    else log.info('SQLite: PRAGMA foreign_keys = ON');
+  });
 });
 
 // Função helper para executar queries com Promise

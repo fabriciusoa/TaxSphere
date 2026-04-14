@@ -175,7 +175,7 @@ export const admAssinaturaController = {
       res.status(201).json(novaAssinatura);
     } catch (error: any) {
       log.error('Erro ao criar assinatura:', error);
-      res.status(500).json({ erro: 'Erro ao criar assinatura', detalhes: error.message });
+      res.status(500).json({ erro: 'Erro ao criar assinatura' });
     }
   },
 
@@ -264,7 +264,7 @@ export const admAssinaturaController = {
       res.json(assinaturaAtualizada);
     } catch (error: any) {
       log.error(`Erro ao atualizar assinatura: ${error.message}`);
-      res.status(500).json({ erro: 'Erro ao atualizar assinatura', detalhes: error.message });
+      res.status(500).json({ erro: 'Erro ao atualizar assinatura' });
     }
   },
 
@@ -306,7 +306,7 @@ export const admAssinaturaController = {
       res.json({ mensagem: 'Assinatura excluída com sucesso' });
     } catch (error: any) {
       log.error(`Erro ao excluir assinatura: ${error.message}`);
-      res.status(500).json({ erro: 'Erro ao excluir assinatura', detalhes: error.message });
+      res.status(500).json({ erro: 'Erro ao excluir assinatura' });
     }
   }
 };

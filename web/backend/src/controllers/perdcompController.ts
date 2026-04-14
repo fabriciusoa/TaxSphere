@@ -926,7 +926,10 @@ export const perdcompAlertasController = {
 
   marcarLido: async (req: AuthRequest, res: Response) => {
     try {
-      await runQuery('UPDATE perdcomp_alertas SET lido = 1 WHERE id = ? AND id_usuario = ?', [req.params.id, req.user!.id]);
+      const result = await runQuery('UPDATE perdcomp_alertas SET lido = 1 WHERE id = ? AND id_usuario = ?', [req.params.id, req.user!.id]);
+      if (result.changes === 0) {
+        return res.status(404).json({ error: 'Alerta não encontrado' });
+      }
       res.json({ message: 'Alerta marcado como lido' });
     } catch (error: any) {
       log.error(`Erro ao marcar alerta: ${error.message}`);

@@ -86,17 +86,31 @@ export default function NovoPedidoPage() {
 
   useEffect(() => {
     if (!selectedEmpresa) return;
-    setCreditosLoading(true);
-    perdcompService.creditos.listar({ id_empresa: selectedEmpresa.id, status: 'Disponível', limit: 200 })
-      .then(r => setCreditos(r.data))
-      .catch(err => logger.error('Erro ao carregar créditos', err))
-      .finally(() => setCreditosLoading(false));
+    let cancelled = false;
 
+    setCreditosLoading(true);
     setDebitosLoading(true);
-    perdcompService.debitos.listar({ id_empresa: selectedEmpresa.id, status: 'Pendente', limit: 200 })
-      .then(r => setDebitos(r.data))
-      .catch(err => logger.error('Erro ao carregar débitos', err))
-      .finally(() => setDebitosLoading(false));
+    setCreditosSelecionados(new Map());
+    setDebitosSelecionados(new Map());
+
+    Promise.all([
+      perdcompService.creditos.listar({ id_empresa: selectedEmpresa.id, status: 'Disponível', limit: 200 }),
+      perdcompService.debitos.listar({ id_empresa: selectedEmpresa.id, status: 'Pendente', limit: 200 }),
+    ]).then(([credRes, debRes]) => {
+      if (cancelled) return;
+      setCreditos(credRes.data);
+      setDebitos(debRes.data);
+    }).catch(err => {
+      if (cancelled) return;
+      logger.error('Erro ao carregar créditos/débitos', err);
+      setError('Erro ao carregar créditos ou débitos.');
+    }).finally(() => {
+      if (cancelled) return;
+      setCreditosLoading(false);
+      setDebitosLoading(false);
+    });
+
+    return () => { cancelled = true; };
   }, [selectedEmpresa]);
 
   const totalCreditos = useMemo(

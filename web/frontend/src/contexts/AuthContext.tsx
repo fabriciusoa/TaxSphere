@@ -49,10 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sessionStorage.setItem(USER_CACHE_KEY, JSON.stringify(data));
       })
       .catch((error: any) => {
-        logger.error('Erro ao validar sessão', { error });
-        // Sessão inválida ou expirada: limpar cache e estado
-        setUser(null);
-        sessionStorage.removeItem(USER_CACHE_KEY);
+        const status = error?.response?.status;
+        if (status === 401 || status === 403) {
+          logger.error('Sessão inválida ou expirada', { status });
+          setUser(null);
+          sessionStorage.removeItem(USER_CACHE_KEY);
+        } else {
+          logger.warn('Erro de rede ao validar sessão, mantendo cache', { error: error?.message });
+        }
       })
       .finally(() => setLoading(false));
   }, []);
