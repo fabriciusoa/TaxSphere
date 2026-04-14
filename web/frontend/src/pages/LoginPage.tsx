@@ -209,7 +209,7 @@ export default function LoginPage() {
             src="/imagens/logo.png"
             alt="MindTax"
             style={{
-              height: 190,
+              height: 360,
               objectFit: 'contain',
               display: 'block',
               margin: '0 auto',
