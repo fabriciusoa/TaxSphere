@@ -3,10 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import PrivateRoute from './components/PrivateRoute';
-// LoginPage permanece estático: necessário imediatamente na verificação inicial de auth
 import LoginPage from './pages/LoginPage';
 
-// Lazy loading: cada página vira um chunk separado, carregado só quando acessado pela 1ª vez
 const DashboardPage               = lazy(() => import('./pages/DashboardPage'));
 const TrocarSenhaPage             = lazy(() => import('./pages/TrocarSenhaPage'));
 const MeuPerfilPage               = lazy(() => import('./pages/MeuPerfilPage'));
@@ -21,6 +19,16 @@ const AdmAssinaturaPage           = lazy(() => import('./pages/AdmAssinaturaPage
 const AdmStripeMetricsPage        = lazy(() => import('./pages/AdmStripeMetricsPage'));
 const ManutencaoPage              = lazy(() => import('./pages/ManutencaoPage'));
 const NotFoundPage                = lazy(() => import('./pages/NotFoundPage'));
+const ModuloEmBreve               = lazy(() => import('./pages/ModuloEmBrevePage'));
+
+const PerdcompDashboardPage       = lazy(() => import('./pages/perdcomp/PerdcompDashboardPage'));
+const PerdcompEmpresasPage        = lazy(() => import('./pages/perdcomp/EmpresasPage'));
+const PerdcompCreditosPage        = lazy(() => import('./pages/perdcomp/CreditosPage'));
+const PerdcompDebitosPage         = lazy(() => import('./pages/perdcomp/DebitosPage'));
+const PerdcompPedidosPage         = lazy(() => import('./pages/perdcomp/PedidosPage'));
+const PerdcompNovoPedidoPage      = lazy(() => import('./pages/perdcomp/NovoPedidoPage'));
+const PerdcompSimuladorPage       = lazy(() => import('./pages/perdcomp/SimuladorPage'));
+const PerdcompAssistenteIAPage    = lazy(() => import('./pages/perdcomp/AssistenteIAPage'));
 
 // Fallback leve exibido enquanto o chunk da página é baixado (< 1 s em LAN/produção)
 function PageLoader() {
@@ -49,19 +57,44 @@ function App() {
               <Route path="/assinar" element={<AssinarPage />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-              <Route element={<PrivateRoute />}>              
+              <Route element={<PrivateRoute />}>
                 <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/trocar-senha" element={<TrocarSenhaPage />} />
-                <Route path="/meu-perfil" element={<MeuPerfilPage />} />
-                <Route path="/sistema/usuarios" element={<UsuariosPage />} />
-                <Route path="/sistema/parametros" element={<ParametrosPage />} />
+
+                {/* Soluções Fiscais */}
+                <Route path="/fiscal/classificacao-ncm" element={<ModuloEmBreve />} />
+
+                {/* PERD/Comp */}
+                <Route path="/fiscal/perdcomp" element={<PerdcompDashboardPage />} />
+                <Route path="/fiscal/perdcomp/creditos" element={<PerdcompCreditosPage />} />
+                <Route path="/fiscal/perdcomp/debitos" element={<PerdcompDebitosPage />} />
+                <Route path="/fiscal/perdcomp/pedidos" element={<PerdcompPedidosPage />} />
+                <Route path="/fiscal/perdcomp/pedidos/novo" element={<PerdcompNovoPedidoPage />} />
+                <Route path="/fiscal/perdcomp/simulador" element={<PerdcompSimuladorPage />} />
+                <Route path="/fiscal/perdcomp/assistente" element={<PerdcompAssistenteIAPage />} />
+
+                <Route path="/fiscal/pis-cofins" element={<ModuloEmBreve />} />
+                <Route path="/fiscal/mit" element={<ModuloEmBreve />} />
+                <Route path="/fiscal/dctf-web" element={<ModuloEmBreve />} />
+                <Route path="/fiscal/cnds" element={<ModuloEmBreve />} />
+                <Route path="/fiscal/ecac" element={<ModuloEmBreve />} />
+
+                {/* Suporte */}
                 <Route path="/suporte/chamado" element={<ChamadoPage />} />
                 <Route path="/suporte/relatorios" element={<ChamadosReportsPage />} />
                 <Route path="/suporte/manual" element={<ManualPage />} />
+
+                {/* Configurações */}
+                <Route path="/configuracoes/empresas" element={<PerdcompEmpresasPage />} />
+                <Route path="/trocar-senha" element={<TrocarSenhaPage />} />
+                <Route path="/meu-perfil" element={<MeuPerfilPage />} />
+
+                {/* Administração */}
+                <Route path="/sistema/usuarios" element={<UsuariosPage />} />
+                <Route path="/sistema/parametros" element={<ParametrosPage />} />
+                <Route path="/sistema/manutencao" element={<ManutencaoPage />} />
                 <Route path="/assinatura/planos" element={<AdmPlanosPage />} />
                 <Route path="/assinatura/assinaturas" element={<AdmAssinaturaPage />} />
                 <Route path="/assinatura/metricas-stripe" element={<AdmStripeMetricsPage />} />
-                <Route path="/sistema/manutencao" element={<ManutencaoPage />} />
               </Route>
 
             <Route path="*" element={<NotFoundPage />} />

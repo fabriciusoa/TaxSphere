@@ -151,7 +151,6 @@ export const perfilController = {
     try {
       const userId = req.user?.id;
 
-      // Buscar dados do usuário com a descrição do perfil
       const usuario = await getOne<any>(
         `SELECT u.id, u.nome, u.email, u.cpf, u.dt_nascimento, p.perfil as perfil
          FROM usuarios u
@@ -164,28 +163,7 @@ export const perfilController = {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
 
-      // Buscar dados complementares se for médico
-      const usuarioMedico = await getOne<any>(
-        'SELECT * FROM usuario_medico WHERE id_usuario = ?',
-        [userId]
-      );
-
-      // Converter logo de Buffer para base64 se existir
-      let dadosMedico = null;
-      if (usuarioMedico) {
-        dadosMedico = { ...usuarioMedico };
-        if (dadosMedico.logo && Buffer.isBuffer(dadosMedico.logo)) {
-          dadosMedico.logo = dadosMedico.logo.toString('base64');
-        }
-        if (dadosMedico.assinatura && Buffer.isBuffer(dadosMedico.assinatura)) {
-          dadosMedico.assinatura = dadosMedico.assinatura.toString('base64');
-        }        
-      }
-
-      res.json({
-        ...usuario,
-        dados_medico: dadosMedico
-      });
+      res.json(usuario);
     } catch (error: any) {
       log.error(`Erro ao buscar perfil: ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -197,7 +175,6 @@ export const perfilController = {
     try {
       const { userId } = req.params;
 
-      // Buscar dados do usuário com a descrição do perfil
       const usuario = await getOne<any>(
         `SELECT u.id, u.nome, u.email, u.cpf, u.dt_nascimento, p.perfil as perfil
          FROM usuarios u
@@ -210,28 +187,7 @@ export const perfilController = {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
 
-      // Buscar dados complementares se for médico
-      const usuarioMedico = await getOne<any>(
-        'SELECT * FROM usuario_medico WHERE id_usuario = ?',
-        [userId]
-      );
-
-      // Converter logo de Buffer para base64 se existir
-      let dadosMedico = null;
-      if (usuarioMedico) {
-        dadosMedico = { ...usuarioMedico };
-        if (dadosMedico.logo && Buffer.isBuffer(dadosMedico.logo)) {
-          dadosMedico.logo = dadosMedico.logo.toString('base64');
-        }
-        if (dadosMedico.assinatura && Buffer.isBuffer(dadosMedico.assinatura)) {
-          dadosMedico.assinatura = dadosMedico.assinatura.toString('base64');
-        }        
-      }
-
-      res.json({
-        ...usuario,
-        dados_medico: dadosMedico
-      });
+      res.json(usuario);
     } catch (error: any) {
       log.error(`Erro ao buscar perfil do usuário: ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -242,116 +198,13 @@ export const perfilController = {
   atualizarMeuPerfil: async (req: AuthRequest, res: Response) => {
     try {
       const userId = req.user?.id;
-      const {
-        nome,
-        email,
-        cpf,
-        dt_nascimento,
-        dados_medico
-      } = req.body;
+      const { nome, email, cpf, dt_nascimento } = req.body;
 
-      const agora = getCurrentTimestamp();
-
-      // Atualizar dados básicos do usuário
       await runQuery(
-        `UPDATE usuarios SET
-          nome = ?, email = ?, cpf = ?, dt_nascimento = ?
-        WHERE id = ?`,
+        `UPDATE usuarios SET nome = ?, email = ?, cpf = ?, dt_nascimento = ? WHERE id = ?`,
         [nome, email, cpf, dt_nascimento || null, userId]
       );
 
-      // Se houver dados_medico, atualizar ou inserir
-      if (dados_medico) {
-        const usuarioMedicoExistente = await getOne<any>(
-          'SELECT id FROM usuario_medico WHERE id_usuario = ?',
-          [userId]
-        );
-
-          if (usuarioMedicoExistente) {
-            // Preparar logo se enviado
-          let logoBuffer = null;
-          if (dados_medico.logo) {
-            logoBuffer = Buffer.from(dados_medico.logo, 'base64');
-          }
-
-            // Preparar assinatura se enviado          
-          let assinaturaBuffer = null;
-          if (dados_medico.assinatura) {
-            assinaturaBuffer = Buffer.from(dados_medico.assinatura, 'base64');
-          }
-
-          // Atualizar dados existentes
-          await runQuery(
-            `UPDATE usuario_medico SET
-              especialidade = ?, inscricao = ?, tempo_sessao = ?, endereco = ?, numero = ?,
-              complemento = ?, bairro = ?, cidade = ?, uf = ?, cep = ?,
-              nacionalidade = ?, estado_civil = ?, telefone = ?, logo = ?, assinatura = ?, atualizado_em = ?
-            WHERE id_usuario = ?`,
-            [
-              dados_medico.especialidade || null,
-              dados_medico.inscricao || null,
-              dados_medico.tempo_sessao || null,
-              dados_medico.endereco || null,
-              dados_medico.numero || null,
-              dados_medico.complemento || null,
-              dados_medico.bairro || null,
-              dados_medico.cidade || null,
-              dados_medico.uf || null,
-              dados_medico.cep || null,
-              dados_medico.nacionalidade || null,
-              dados_medico.estado_civil || null,
-              dados_medico.telefone || null,
-              logoBuffer,
-              assinaturaBuffer,
-              agora,
-              userId
-            ]
-          );
-        } else {
-          // Preparar logo se enviado
-          let logoBuffer = null;
-          if (dados_medico.logo) {
-            logoBuffer = Buffer.from(dados_medico.logo, 'base64');
-          }
-          
-          // Preparar assinatura se enviado
-          let assinaturaBuffer = null;
-          if (dados_medico.assinatura) {
-            assinaturaBuffer = Buffer.from(dados_medico.assinatura, 'base64');
-          }
-
-          // Inserir novos dados
-          await runQuery(
-            `INSERT INTO usuario_medico (
-              id_usuario, especialidade, inscricao, tempo_sessao, endereco, numero,
-              complemento, bairro, cidade, uf, cep,
-              nacionalidade, estado_civil, telefone, logo, assinatura, criado_em, atualizado_em
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              userId,
-              dados_medico.especialidade || null,
-              dados_medico.inscricao || null,
-              dados_medico.tempo_sessao || null,
-              dados_medico.endereco || null,
-              dados_medico.numero || null,
-              dados_medico.complemento || null,
-              dados_medico.bairro || null,
-              dados_medico.cidade || null,
-              dados_medico.uf || null,
-              dados_medico.cep || null,
-              dados_medico.nacionalidade || null,
-              dados_medico.estado_civil || null,
-              dados_medico.telefone || null,
-              logoBuffer,
-              assinaturaBuffer,
-              agora,
-              agora
-            ]
-          );
-        }
-      }
-
-      // Buscar dados atualizados com a descrição do perfil
       const usuario = await getOne<any>(
         `SELECT u.id, u.nome, u.email, u.cpf, u.dt_nascimento, p.perfil as perfil
          FROM usuarios u
@@ -360,17 +213,9 @@ export const perfilController = {
         [userId]
       );
 
-      const usuarioMedico = await getOne<any>(
-        'SELECT * FROM usuario_medico WHERE id_usuario = ?',
-        [userId]
-      );
-
       res.json({
         message: 'Perfil atualizado com sucesso',
-        usuario: {
-          ...usuario,
-          dados_medico: usuarioMedico || null
-        }
+        usuario
       });
     } catch (error: any) {
       log.error(`Erro ao atualizar perfil: ${error.message}`);

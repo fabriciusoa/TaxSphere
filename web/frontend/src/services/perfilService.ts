@@ -1,23 +1,5 @@
 import api from './api';
 
-export interface DadosMedico {
-  especialidade?: number;
-  inscricao?: string;
-  tempo_sessao?: number;
-  endereco?: string;
-  numero?: number;
-  complemento?: string;
-  bairro?: string;
-  cidade?: string;
-  uf?: string;
-  cep?: string;
-  nacionalidade?: string;
-  estado_civil?: string;
-  telefone?: string;
-  logo?: string;
-  assinatura?: string;
-}
-
 export interface PerfilUsuario {
   id: number;
   nome: string;
@@ -25,7 +7,6 @@ export interface PerfilUsuario {
   cpf: string;
   perfil: string;
   dt_nascimento?: string;
-  dados_medico?: DadosMedico | null;
 }
 
 export interface AtualizarPerfilDTO {
@@ -33,7 +14,6 @@ export interface AtualizarPerfilDTO {
   email: string;
   cpf: string;
   dt_nascimento?: string;
-  dados_medico?: DadosMedico;
 }
 
 const perfilService = {

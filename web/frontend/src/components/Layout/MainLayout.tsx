@@ -15,7 +15,8 @@ import {
   Collapse,
   Avatar,
   Menu,
-  MenuItem
+  MenuItem,
+  Chip
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -36,7 +37,22 @@ import {
   SupervisorAccount as SupervisorAccountIcon,
   CorporateFare as CorporateFareIcon,
   SensorOccupied as SensorOccupiedIcon,
-  Build as BuildIcon
+  Build as BuildIcon,
+  Category as CategoryIcon,
+  AccountBalance as AccountBalanceIcon,
+  Receipt as ReceiptIcon,
+  RequestQuote as RequestQuoteIcon,
+  VerifiedUser as VerifiedUserIcon,
+  Inbox as InboxIcon,
+  BarChart as BarChartIcon,
+  Gavel as GavelIcon,
+  Business as BusinessIcon,
+  AttachMoney as AttachMoneyIcon,
+  MoneyOff as MoneyOffIcon,
+  Description as DescriptionIcon,
+  Calculate as CalculateIcon,
+  SmartToy as SmartToyIcon,
+  SpaceDashboard as SpaceDashboardIcon,
 } from '@mui/icons-material';
 import { manutencaoService } from '../../services/manutencaoService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -44,7 +60,6 @@ import { logger } from '../../utils/logger';
 
 const drawerWidth = 264;
 
-// Design tokens — Synchro
 const S = {
   navy:          '#0a1628',
   navyMid:       '#0d1f3c',
@@ -79,7 +94,6 @@ export default function MainLayout({ children }: Props) {
 
   const isAdmin = user?.perfil === 'ADMIN';
 
-  // Polling a cada 15 minutos: força logout se manutenção entrar em execução
   useEffect(() => {
     if (isAdmin) return;
 
@@ -99,6 +113,29 @@ export default function MainLayout({ children }: Props) {
     const interval = setInterval(verificarManutencao, 15 * 60 * 1000);
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const path = location.pathname;
+    const toOpen: Record<string, boolean> = {};
+    menuItems.forEach((item: any) => {
+      if (item.submenu) {
+        const active = item.submenu.some((sub: any) =>
+          path === sub.path || (sub.submenu && sub.submenu.some((d: any) => path === d.path))
+        );
+        if (active) {
+          toOpen[item.text] = true;
+          item.submenu.forEach((sub: any) => {
+            if (sub.submenu && sub.submenu.some((d: any) => path === d.path)) {
+              toOpen[sub.text] = true;
+            }
+          });
+        }
+      }
+    });
+    if (Object.keys(toOpen).length > 0) {
+      setOpenMenus(prev => ({ ...prev, ...toOpen }));
+    }
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
 
@@ -132,8 +169,47 @@ export default function MainLayout({ children }: Props) {
     navigate('/meu-perfil');
   };
 
+  // Badge "Em breve" para módulos ainda não implementados
+  const emBreve = (
+    <Chip
+      label="Em breve"
+      size="small"
+      sx={{
+        ml: 'auto', height: 18, fontSize: '0.6rem', fontWeight: 600,
+        backgroundColor: 'rgba(255,255,255,0.08)', color: S.white40,
+        border: '1px solid rgba(255,255,255,0.12)',
+      }}
+    />
+  );
+
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
+
+    // Módulos Fiscais — core do MindTax
+    {
+      text: 'Soluções Fiscais',
+      icon: <AccountBalanceIcon />,
+      submenu: [
+        { text: 'Classificação NCM', icon: <CategoryIcon />, path: '/fiscal/classificacao-ncm', badge: emBreve },
+        { text: 'PERD/Comp', icon: <RequestQuoteIcon />, path: '/fiscal/perdcomp',
+          submenu: [
+            { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/perdcomp' },
+            { text: 'Créditos', icon: <AttachMoneyIcon />, path: '/fiscal/perdcomp/creditos' },
+            { text: 'Débitos', icon: <MoneyOffIcon />, path: '/fiscal/perdcomp/debitos' },
+            { text: 'Pedidos', icon: <DescriptionIcon />, path: '/fiscal/perdcomp/pedidos' },
+            { text: 'Simulador', icon: <CalculateIcon />, path: '/fiscal/perdcomp/simulador' },
+            { text: 'Assistente IA', icon: <SmartToyIcon />, path: '/fiscal/perdcomp/assistente' },
+          ],
+        },
+        { text: 'Recuperação PIS/COFINS', icon: <ReceiptIcon />, path: '/fiscal/pis-cofins', badge: emBreve },
+        { text: 'MIT', icon: <GavelIcon />, path: '/fiscal/mit', badge: emBreve },
+        { text: 'DCTF Web', icon: <BarChartIcon />, path: '/fiscal/dctf-web', badge: emBreve },
+        { text: 'Gestão de CNDs', icon: <VerifiedUserIcon />, path: '/fiscal/cnds', badge: emBreve },
+        { text: 'Caixa Postal eCac', icon: <InboxIcon />, path: '/fiscal/ecac', badge: emBreve },
+      ]
+    },
+
+    // Suporte
     {
       text: 'Suporte',
       icon: <HelpCenterIcon />,
@@ -142,14 +218,19 @@ export default function MainLayout({ children }: Props) {
         { text: 'Manual', icon: <MenuBookIcon />, path: '/suporte/manual' },
       ]
     },
+
+    // Configurações do usuário
     {
       text: 'Configurações',
       icon: <SistemaIcon />,
       submenu: [
+        { text: 'Empresas', icon: <BusinessIcon />, path: '/configuracoes/empresas' },
         { text: 'Meu Perfil', icon: <AccountCircleIcon />, path: '/meu-perfil' },
         { text: 'Trocar Senha', icon: <LockIcon />, path: '/trocar-senha' }
       ]
     },
+
+    // Administração (apenas ADMIN)
     ...(isAdmin ? [
       {
         text: 'Administração',
@@ -168,7 +249,6 @@ export default function MainLayout({ children }: Props) {
     ] : [])
   ];
 
-  // sx compartilhado para item de menu raiz
   const itemRootSx = (isSelected: boolean) => ({
     borderRadius: '8px',
     mx: 1,
@@ -184,7 +264,6 @@ export default function MainLayout({ children }: Props) {
     },
   });
 
-  // sx para subitem
   const subItemSx = (isSelected: boolean) => ({
     pl: 5.5,
     borderRadius: '8px',
@@ -201,32 +280,32 @@ export default function MainLayout({ children }: Props) {
     },
   });
 
+  const isGroupActive = (submenu: any[]): boolean =>
+    submenu.some((sub: any) =>
+      location.pathname === sub.path || (sub.submenu && isGroupActive(sub.submenu))
+    );
+
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: S.navy }}>
 
       {/* Logo / Brand */}
       <Box sx={{
-        px: 3, py: 2.5,
-        display: 'flex', alignItems: 'center', gap: 1.5,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: `1px solid ${S.dividerSide}`,
-        minHeight: 64,
+        py: 1.5,
+        px: 2,
+        backgroundColor: S.navy,
       }}>
-        <Box sx={{
-          width: 32, height: 32, borderRadius: '8px',
-          backgroundColor: S.cyanDim,
-          border: `1px solid ${S.cyanBorder}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
-        }}>
-          <Box component="span" sx={{ color: S.cyan, fontSize: '0.9rem', fontWeight: 700, lineHeight: 1 }}>M</Box>
-        </Box>
-        <Typography sx={{
-          fontFamily: '"Inter", system-ui, sans-serif',
-          fontSize: '1rem', fontWeight: 700, letterSpacing: '-0.02em',
-          color: S.white, lineHeight: 1,
-        }}>
-          Mind<Box component="span" sx={{ color: S.cyan }}>Tax</Box>
-        </Typography>
+        <Box
+          component="img"
+          src="/logo-taxmind.png"
+          alt="TaxMind"
+          sx={{
+            width: '100%',
+            maxHeight: 56,
+            objectFit: 'contain',
+          }}
+        />
       </Box>
 
       {/* Menu principal */}
@@ -241,7 +320,7 @@ export default function MainLayout({ children }: Props) {
               <Box key={item.text}>
                 <ListItemButton
                   onClick={() => handleMenuClick(item.text)}
-                  sx={itemRootSx(false)}
+                  sx={itemRootSx(isGroupActive(item.submenu))}
                 >
                   <ListItemIcon>{item.icon}</ListItemIcon>
                   <ListItemText
@@ -254,20 +333,48 @@ export default function MainLayout({ children }: Props) {
                 </ListItemButton>
                 <Collapse in={openMenus[item.text]} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    {item.submenu.map((subItem) => (
-                      <ListItemButton
-                        key={subItem.path}
-                        selected={location.pathname === subItem.path}
-                        onClick={() => handleNavigate(subItem.path)}
-                        sx={subItemSx(location.pathname === subItem.path)}
-                      >
-                        <ListItemIcon sx={{ fontSize: '1rem' }}>{subItem.icon}</ListItemIcon>
-                        <ListItemText
-                          primary={subItem.text}
-                          primaryTypographyProps={{ fontSize: '0.8125rem', fontWeight: 400 }}
-                        />
-                      </ListItemButton>
-                    ))}
+                    {item.submenu.map((subItem: any) =>
+                      subItem.submenu ? (
+                        <Box key={subItem.text}>
+                          <ListItemButton
+                            onClick={() => handleMenuClick(subItem.text)}
+                            sx={subItemSx(isGroupActive(subItem.submenu))}
+                          >
+                            <ListItemIcon sx={{ fontSize: '1rem' }}>{subItem.icon}</ListItemIcon>
+                            <ListItemText primary={subItem.text} primaryTypographyProps={{ fontSize: '0.8125rem', fontWeight: 500 }} />
+                            {openMenus[subItem.text]
+                              ? <ExpandLess sx={{ color: S.white40, fontSize: 16 }} />
+                              : <ExpandMore sx={{ color: S.white40, fontSize: 16 }} />}
+                          </ListItemButton>
+                          <Collapse in={openMenus[subItem.text]} timeout="auto" unmountOnExit>
+                            <List component="div" disablePadding>
+                              {subItem.submenu.map((deepItem: any) => (
+                                <ListItemButton
+                                  key={deepItem.path}
+                                  selected={location.pathname === deepItem.path}
+                                  onClick={() => handleNavigate(deepItem.path)}
+                                  sx={{ ...subItemSx(location.pathname === deepItem.path), pl: 8 }}
+                                >
+                                  <ListItemIcon sx={{ fontSize: '0.85rem', minWidth: 28 }}>{deepItem.icon}</ListItemIcon>
+                                  <ListItemText primary={deepItem.text} primaryTypographyProps={{ fontSize: '0.75rem', fontWeight: 400 }} />
+                                </ListItemButton>
+                              ))}
+                            </List>
+                          </Collapse>
+                        </Box>
+                      ) : (
+                        <ListItemButton
+                          key={subItem.path}
+                          selected={location.pathname === subItem.path}
+                          onClick={() => handleNavigate(subItem.path)}
+                          sx={subItemSx(location.pathname === subItem.path)}
+                        >
+                          <ListItemIcon sx={{ fontSize: '1rem' }}>{subItem.icon}</ListItemIcon>
+                          <ListItemText primary={subItem.text} primaryTypographyProps={{ fontSize: '0.8125rem', fontWeight: 400 }} />
+                          {subItem.badge && subItem.badge}
+                        </ListItemButton>
+                      )
+                    )}
                   </List>
                 </Collapse>
               </Box>
@@ -339,7 +446,6 @@ export default function MainLayout({ children }: Props) {
             <MenuIcon />
           </IconButton>
 
-          {/* Breadcrumb / título da página atual */}
           <Box sx={{ flex: 1 }}>
             <Typography sx={{
               fontFamily: '"Inter", system-ui, sans-serif',
@@ -350,7 +456,6 @@ export default function MainLayout({ children }: Props) {
             </Typography>
           </Box>
 
-          {/* Ações do usuário */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Box sx={{ textAlign: 'right', display: { xs: 'none', sm: 'block' } }}>
               <Typography sx={{ fontSize: '0.8125rem', fontWeight: 600, color: S.textPrimary, lineHeight: 1.2 }}>
@@ -387,12 +492,10 @@ export default function MainLayout({ children }: Props) {
               }
             }}
           >
-            {(user?.perfil === 'MEDICO' || user?.perfil === 'ADMIN') && (
-              <MenuItem onClick={handleMeuPerfil} sx={{ fontSize: '0.875rem', gap: 1.5 }}>
-                <AccountCircleIcon fontSize="small" sx={{ color: S.textSecond }} />
-                Meu Perfil
-              </MenuItem>
-            )}
+            <MenuItem onClick={handleMeuPerfil} sx={{ fontSize: '0.875rem', gap: 1.5 }}>
+              <AccountCircleIcon fontSize="small" sx={{ color: S.textSecond }} />
+              Meu Perfil
+            </MenuItem>
             <MenuItem onClick={handleChangePassword} sx={{ fontSize: '0.875rem', gap: 1.5 }}>
               <LockIcon fontSize="small" sx={{ color: S.textSecond }} />
               Trocar a senha
@@ -458,15 +561,36 @@ export default function MainLayout({ children }: Props) {
   );
 }
 
-// Título da página baseado na rota
 function getPageTitle(pathname: string): string {
   const map: Record<string, string> = {
     '/dashboard': 'Dashboard',
+
+    // Soluções Fiscais
+    '/fiscal/classificacao-ncm': 'Classificação NCM',
+    '/fiscal/perdcomp': 'PERD/Comp - Painel',
+    '/fiscal/perdcomp/creditos': 'PERD/Comp - Créditos',
+    '/fiscal/perdcomp/debitos': 'PERD/Comp - Débitos',
+    '/fiscal/perdcomp/pedidos': 'PERD/Comp - Pedidos',
+    '/fiscal/perdcomp/pedidos/novo': 'PERD/Comp - Novo Pedido',
+    '/fiscal/perdcomp/simulador': 'PERD/Comp - Simulador',
+    '/fiscal/perdcomp/assistente': 'PERD/Comp - Assistente IA',
+    '/fiscal/pis-cofins': 'Recuperação PIS/COFINS',
+    '/fiscal/mit': 'MIT',
+    '/fiscal/dctf-web': 'DCTF Web',
+    '/fiscal/cnds': 'Gestão de CNDs',
+    '/fiscal/ecac': 'Caixa Postal eCac',
+
+    // Suporte
     '/suporte/chamado': 'Chamados',
     '/suporte/manual': 'Manual',
     '/suporte/relatorios': 'Relatórios de Chamados',
+
+    // Configurações
+    '/configuracoes/empresas': 'Gestão de Empresas',
     '/meu-perfil': 'Meu Perfil',
     '/trocar-senha': 'Trocar Senha',
+
+    // Administração
     '/assinatura/planos': 'Planos do Sistema',
     '/assinatura/assinaturas': 'Assinaturas',
     '/assinatura/metricas-stripe': 'Métricas Stripe',

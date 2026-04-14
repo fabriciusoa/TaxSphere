@@ -25,6 +25,12 @@ import { stripeSubscriptionController } from '../controllers/stripeSubscriptionC
 import { stripeMetricsController } from '../controllers/stripeMetricsController';
 import { manutencaoController } from '../controllers/manutencaoController';
 import { frontendLogController } from '../controllers/frontendLogController';
+import {
+  perdcompEmpresasController, perdcompCreditosController, perdcompDebitosController,
+  perdcompPedidosController, perdcompDashboardController, perdcompSimuladorController,
+  perdcompAlertasController,
+} from '../controllers/perdcompController';
+import { perdcompIAController } from '../controllers/perdcompIAController';
 import { log } from '../utils/logger';
 
 const router = Router();
@@ -320,5 +326,50 @@ router.get('/manutencoes', authenticateToken, requireAdmin, manutencaoController
 router.post('/manutencoes', authenticateToken, requireAdmin, manutencaoController.criar);
 router.put('/manutencoes/:id', authenticateToken, requireAdmin, manutencaoController.atualizar);
 router.delete('/manutencoes/:id', authenticateToken, requireAdmin, manutencaoController.excluir);
+
+// ============ PERD/Comp ============
+
+// Empresas (uso comum para todos os módulos)
+router.get('/perdcomp/empresas', authenticateToken, perdcompEmpresasController.listar);
+router.get('/perdcomp/empresas/cnpj/:cnpj', authenticateToken, perdcompEmpresasController.buscarCNPJ);
+router.get('/perdcomp/empresas/:id', authenticateToken, perdcompEmpresasController.buscarPorId);
+router.post('/perdcomp/empresas', authenticateToken, perdcompEmpresasController.criar);
+router.put('/perdcomp/empresas/:id', authenticateToken, perdcompEmpresasController.atualizar);
+router.delete('/perdcomp/empresas/:id', authenticateToken, perdcompEmpresasController.excluir);
+
+// Créditos
+router.get('/perdcomp/creditos', authenticateToken, perdcompCreditosController.listar);
+router.get('/perdcomp/creditos/:id', authenticateToken, perdcompCreditosController.buscarPorId);
+router.post('/perdcomp/creditos', authenticateToken, perdcompCreditosController.criar);
+router.put('/perdcomp/creditos/:id', authenticateToken, perdcompCreditosController.atualizar);
+router.delete('/perdcomp/creditos/:id', authenticateToken, perdcompCreditosController.excluir);
+router.post('/perdcomp/creditos/atualizar-selic', authenticateToken, perdcompCreditosController.atualizarSelic);
+
+// Débitos
+router.get('/perdcomp/debitos', authenticateToken, perdcompDebitosController.listar);
+router.get('/perdcomp/debitos/:id', authenticateToken, perdcompDebitosController.buscarPorId);
+router.post('/perdcomp/debitos', authenticateToken, perdcompDebitosController.criar);
+router.put('/perdcomp/debitos/:id', authenticateToken, perdcompDebitosController.atualizar);
+router.delete('/perdcomp/debitos/:id', authenticateToken, perdcompDebitosController.excluir);
+
+// Pedidos
+router.get('/perdcomp/pedidos', authenticateToken, perdcompPedidosController.listar);
+router.get('/perdcomp/pedidos/:id', authenticateToken, perdcompPedidosController.buscarPorId);
+router.post('/perdcomp/pedidos', authenticateToken, perdcompPedidosController.criar);
+router.put('/perdcomp/pedidos/:id/status', authenticateToken, perdcompPedidosController.atualizarStatus);
+router.delete('/perdcomp/pedidos/:id', authenticateToken, perdcompPedidosController.excluir);
+
+// Dashboard, Simulador, Alertas
+router.get('/perdcomp/dashboard', authenticateToken, perdcompDashboardController.obter);
+router.post('/perdcomp/simulador', authenticateToken, perdcompSimuladorController.simular);
+router.get('/perdcomp/alertas', authenticateToken, perdcompAlertasController.listar);
+router.put('/perdcomp/alertas/:id/lido', authenticateToken, perdcompAlertasController.marcarLido);
+router.post('/perdcomp/alertas/gerar', authenticateToken, perdcompAlertasController.gerarAlertas);
+
+// IA
+router.post('/perdcomp/ia/analisar', authenticateToken, perdcompIAController.analisar);
+router.post('/perdcomp/ia/sugerir', authenticateToken, perdcompIAController.sugerir);
+router.post('/perdcomp/ia/risco', authenticateToken, perdcompIAController.risco);
+router.post('/perdcomp/ia/chat', authenticateToken, perdcompIAController.chat);
 
 export default router;

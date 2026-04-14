@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS perdcomp_pedidos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id_empresa INTEGER NOT NULL,
+  id_usuario_criador INTEGER NOT NULL,
+  numero_processo TEXT,
+  tipo_pedido TEXT NOT NULL CHECK(tipo_pedido IN ('Restituição', 'Ressarcimento', 'Reembolso', 'Compensação')),
+  status TEXT NOT NULL DEFAULT 'Rascunho' CHECK(status IN ('Rascunho', 'Transmitido', 'Em Análise', 'Deferido', 'Deferido Parcialmente', 'Indeferido', 'Não Homologado', 'Cancelado', 'Homologado')),
+  valor_total_credito REAL NOT NULL DEFAULT 0,
+  valor_total_debito REAL NOT NULL DEFAULT 0,
+  dt_transmissao TEXT,
+  dt_ciencia TEXT,
+  dt_prazo_manifestacao TEXT,
+  dt_decisao TEXT,
+  motivo_indeferimento TEXT,
+  observacoes TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (id_empresa) REFERENCES perdcomp_empresas(id),
+  FOREIGN KEY (id_usuario_criador) REFERENCES usuarios(id)
+);
