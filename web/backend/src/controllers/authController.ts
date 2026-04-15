@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { getOne, runQuery } from '../database/connection';
+import { getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { Usuario, Parametro, AuthRequest, JWTPayload } from '../types';
 import { loginSchema } from '../validators/schemas';
 import { getCurrentTimestamp, fromISO8601, addMinutes, isBefore } from '../utils/dateHelpers';
@@ -19,7 +19,7 @@ export const authController = {
 
     try {
       const usuario = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE email = ?',
+        'SELECT * FROM usuarios WHERE email = $1',
         [email]
      );
 
@@ -58,7 +58,7 @@ export const authController = {
         return res.status(400).json({ error: 'A senha não atende aos critérios de segurança' });
       }
 
-      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE email = ?', [email]);
+      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE email = $1', [email]);
       if (!usuario) {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
@@ -72,7 +72,7 @@ export const authController = {
       }
 
       const hash = await bcrypt.hash(newPassword, 10);
-      await runQuery('UPDATE usuarios SET senha = ?, tentativas_login = 0, dt_bloqueio = NULL WHERE id = ?', [hash, usuario!.id]);
+      await runQuery('UPDATE usuarios SET senha = $1, tentativas_login = 0, dt_bloqueio = NULL WHERE id = $2', [hash, usuario!.id]);
 
       return res.status(200).json({ message: 'Senha alterada com sucesso' });
     } catch (error: any) {
@@ -99,15 +99,15 @@ export const authController = {
 
       // Buscar parâmetros
       const limiteTentativas = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = ?',
+        'SELECT * FROM parametros WHERE chave = $1',
         ['limite_tentativas_login']
       );
       const tempoBloqueio = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = ?',
+        'SELECT * FROM parametros WHERE chave = $1',
         ['tempo_bloqueio_minutos']
       );
       const tempoSessao = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = ?',
+        'SELECT * FROM parametros WHERE chave = $1',
         ['tempo_sessao_horas']
       );
 
@@ -117,7 +117,7 @@ export const authController = {
 
       // Buscar usuário
       const usuario = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE email = ?',
+        'SELECT * FROM usuarios WHERE email = $1',
         [email]
       );
 
@@ -131,7 +131,7 @@ export const authController = {
         // Registrar tentativa falha - usuário não encontrado
         await runQuery(
           `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [null, email, 'nao', ip, userAgent, 'usuario_nao_encontrado', getCurrentTimestamp()]
         );
         // Rastrear falha por IP (detecção de credential stuffing)
@@ -143,7 +143,7 @@ export const authController = {
       if (usuario.status.toLowerCase() !== 'ativo') {
         await runQuery(
           `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [usuario.id, email, 'nao', ip, userAgent, 'conta_inativa', getCurrentTimestamp()]
         );
         return res.status(403).json({ error: 'Conta inativa' });
@@ -158,7 +158,7 @@ export const authController = {
         if (isBefore(agora, dataExpiracao)) {
           await runQuery(
             `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [usuario.id, email, 'nao', ip, userAgent, 'conta_bloqueada', getCurrentTimestamp()]
           );
 
@@ -171,7 +171,7 @@ export const authController = {
         } else {
           // Bloqueio expirou, resetar
           await runQuery(
-            'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL WHERE id = ?',
+            'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL WHERE id = $1',
             [usuario.id]
           );
         }
@@ -186,16 +186,25 @@ export const authController = {
 
         if (novasTentativas >= limite) {
           // Bloquear conta
-          await runQuery(
-            'UPDATE usuarios SET tentativas_login = ?, dt_bloqueio = ? WHERE id = ?',
-            [novasTentativas, getCurrentTimestamp(), usuario.id]
-          );
+          const txClient = await beginTransaction();
+          try {
+            await runQuery(
+              'UPDATE usuarios SET tentativas_login = $1, dt_bloqueio = $2 WHERE id = $3',
+              [novasTentativas, getCurrentTimestamp(), usuario.id],
+              txClient
+            );
 
-          await runQuery(
-            `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [usuario.id, email, 'nao', ip, userAgent, 'senha_invalida_bloqueio', getCurrentTimestamp()]
-          );
+            await runQuery(
+              `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [usuario.id, email, 'nao', ip, userAgent, 'senha_invalida_bloqueio', getCurrentTimestamp()],
+              txClient
+            );
+            await commitTransaction(txClient);
+          } catch (txErr) {
+            await rollbackTransaction(txClient);
+            throw txErr;
+          }
           if (ip) recordLoginFailure(ip);
           log.error(`Conta bloqueada: ${email}, IP: ${ip}, User-Agent: ${userAgent}, limite de tentativas excedido`);
 
@@ -206,13 +215,13 @@ export const authController = {
         } else {
           // Apenas incrementar tentativas
           await runQuery(
-            'UPDATE usuarios SET tentativas_login = ? WHERE id = ?',
+            'UPDATE usuarios SET tentativas_login = $1 WHERE id = $2',
             [novasTentativas, usuario.id]
           );
 
           await runQuery(
             `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [usuario.id, email, 'nao', ip, userAgent, 'senha_invalida', getCurrentTimestamp()]
           );
           if (ip) recordLoginFailure(ip);
@@ -228,7 +237,7 @@ export const authController = {
 
       // Buscar nome do perfil (antes de qualquer atualização no banco)
       const perfil = await getOne<{ perfil: string }>(
-        'SELECT perfil FROM perfil WHERE id = ?',
+        'SELECT perfil FROM perfil WHERE id = $1',
         [usuario.perfil]
       );
 
@@ -254,19 +263,28 @@ export const authController = {
       }
 
       // Login bem-sucedido - resetar tentativas e atualizar último login
-      await runQuery(
-        'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL, ultimo_login = ? WHERE id = ?',
-        [getCurrentTimestamp(), usuario.id]
-      );
-      // Resetar histórico de falhas do IP (comportamento legítimo confirmado)
-      if (ip) resetLoginFailures(ip);
+      const txClient = await beginTransaction();
+      try {
+        await runQuery(
+          'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL, ultimo_login = $1 WHERE id = $2',
+          [getCurrentTimestamp(), usuario.id],
+          txClient
+        );
+        // Resetar histórico de falhas do IP (comportamento legítimo confirmado)
+        if (ip) resetLoginFailures(ip);
 
-      // Registrar login bem-sucedido
-      await runQuery(
-        `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [usuario.id, email, 'sim', ip, userAgent, null, getCurrentTimestamp()]
-      );
+        // Registrar login bem-sucedido
+        await runQuery(
+          `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [usuario.id, email, 'sim', ip, userAgent, null, getCurrentTimestamp()],
+          txClient
+        );
+        await commitTransaction(txClient);
+      } catch (txErr) {
+        await rollbackTransaction(txClient);
+        throw txErr;
+      }
 
       // Gerar JWT
       const payload: JWTPayload = {
@@ -318,7 +336,7 @@ export const authController = {
 
       // Buscar usuário no banco
       const usuario = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE id = ?',
+        'SELECT * FROM usuarios WHERE id = $1',
         [req.user.id]
       );
 
@@ -334,7 +352,7 @@ export const authController = {
       // Verificar se conta está bloqueada
       if (usuario.dt_bloqueio) {
         const tempoBloqueio = await getOne<Parametro>(
-          'SELECT * FROM parametros WHERE chave = ?',
+          'SELECT * FROM parametros WHERE chave = $1',
           ['tempo_bloqueio_minutos']
         );
         const bloqueioMinutos = parseInt(tempoBloqueio?.valor || '30');
@@ -349,14 +367,14 @@ export const authController = {
 
       // Buscar tempo de sessão
       const tempoSessao = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = ?',
+        'SELECT * FROM parametros WHERE chave = $1',
         ['tempo_sessao_horas']
       );
       const sessaoHoras = parseInt(tempoSessao?.valor || '8');
 
       // Buscar nome do perfil
       const perfil = await getOne<{ perfil: string }>(
-        'SELECT perfil FROM perfil WHERE id = ?',
+        'SELECT perfil FROM perfil WHERE id = $1',
         [usuario.perfil]
       );
 
@@ -397,7 +415,7 @@ export const authController = {
 
       // LOWER(status) = 'ativo' para compatibilidade com 'Ativo' e 'ativo' no banco
       const usuario = await getOne<Usuario>(
-        'SELECT id, nome, email, cpf, perfil, status FROM usuarios WHERE id = ? AND LOWER(status) = ?',
+        'SELECT id, nome, email, cpf, perfil, status FROM usuarios WHERE id = $1 AND LOWER(status) = $2',
         [req.user.id, 'ativo']
       );
 
@@ -413,7 +431,7 @@ export const authController = {
       }
 
       const perfil = await getOne<{ perfil: string }>(
-        'SELECT perfil FROM perfil WHERE id = ?',
+        'SELECT perfil FROM perfil WHERE id = $1',
         [usuario.perfil]
       );
 

@@ -53,14 +53,14 @@ Responda sempre em português do Brasil, de forma clara, objetiva e com referên
 export const perdcompIAService = {
   async analisarOportunidades(idEmpresa: number): Promise<string> {
     const creditos = await getAll<any>(
-      `SELECT tipo_credito, origem_credito, SUM(saldo_disponivel) as saldo, COUNT(*) as qtde, MIN(dt_vencimento_prescricao) as proxima_prescricao FROM perdcomp_creditos WHERE id_empresa = ? AND status IN ('Disponível','Parcialmente Utilizado') GROUP BY tipo_credito, origem_credito`,
+      `SELECT tipo_credito, origem_credito, SUM(saldo_disponivel) as saldo, COUNT(*) as qtde, MIN(dt_vencimento_prescricao) as proxima_prescricao FROM perdcomp_creditos WHERE id_empresa = $1 AND status IN ('Disponível','Parcialmente Utilizado') GROUP BY tipo_credito, origem_credito`,
       [idEmpresa]
     );
     const debitos = await getAll<any>(
-      `SELECT tipo_tributo, SUM(saldo_devedor) as saldo, COUNT(*) as qtde FROM perdcomp_debitos WHERE id_empresa = ? AND status IN ('Pendente','Parcialmente Compensado') GROUP BY tipo_tributo`,
+      `SELECT tipo_tributo, SUM(saldo_devedor) as saldo, COUNT(*) as qtde FROM perdcomp_debitos WHERE id_empresa = $1 AND status IN ('Pendente','Parcialmente Compensado') GROUP BY tipo_tributo`,
       [idEmpresa]
     );
-    const empresa = await getOne<any>('SELECT razao_social, regime_tributario FROM perdcomp_empresas WHERE id = ?', [idEmpresa]);
+    const empresa = await getOne<any>('SELECT razao_social, regime_tributario FROM perdcomp_empresas WHERE id = $1', [idEmpresa]);
 
     const contexto = `
 Empresa: ${empresa?.razao_social || 'N/A'} (Regime: ${empresa?.regime_tributario || 'N/A'})
@@ -79,14 +79,14 @@ ${debitos.map((d: any) => `- ${d.tipo_tributo}: ${d.qtde} débitos, saldo total 
 
   async sugerirEstrategia(idEmpresa: number): Promise<string> {
     const creditos = await getAll<any>(
-      `SELECT * FROM perdcomp_creditos WHERE id_empresa = ? AND status IN ('Disponível','Parcialmente Utilizado') ORDER BY dt_vencimento_prescricao`,
+      `SELECT * FROM perdcomp_creditos WHERE id_empresa = $1 AND status IN ('Disponível','Parcialmente Utilizado') ORDER BY dt_vencimento_prescricao`,
       [idEmpresa]
     );
     const debitos = await getAll<any>(
-      `SELECT * FROM perdcomp_debitos WHERE id_empresa = ? AND status IN ('Pendente','Parcialmente Compensado') ORDER BY dt_vencimento`,
+      `SELECT * FROM perdcomp_debitos WHERE id_empresa = $1 AND status IN ('Pendente','Parcialmente Compensado') ORDER BY dt_vencimento`,
       [idEmpresa]
     );
-    const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = ?', [idEmpresa]);
+    const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [idEmpresa]);
 
     const contexto = `
 Empresa: ${empresa?.razao_social} (${empresa?.regime_tributario})
@@ -105,13 +105,13 @@ ${debitos.slice(0, 20).map((d: any) => `- #${d.id} ${d.tipo_tributo} ${d.periodo
 
   async avaliarRisco(idPedido: number): Promise<string> {
     const pedido = await getOne<any>(
-      `SELECT p.*, e.razao_social, e.regime_tributario FROM perdcomp_pedidos p JOIN perdcomp_empresas e ON e.id = p.id_empresa WHERE p.id = ?`,
+      `SELECT p.*, e.razao_social, e.regime_tributario FROM perdcomp_pedidos p JOIN perdcomp_empresas e ON e.id = p.id_empresa WHERE p.id = $1`,
       [idPedido]
     );
     if (!pedido) return 'Pedido não encontrado.';
 
     const itens = await getAll<any>(
-      `SELECT pi.*, c.tipo_credito, c.origem_credito, c.valor_original, c.dt_pagamento_original, c.dt_vencimento_prescricao, d.tipo_tributo FROM perdcomp_pedido_itens pi LEFT JOIN perdcomp_creditos c ON c.id = pi.id_credito LEFT JOIN perdcomp_debitos d ON d.id = pi.id_debito WHERE pi.id_pedido = ?`,
+      `SELECT pi.*, c.tipo_credito, c.origem_credito, c.valor_original, c.dt_pagamento_original, c.dt_vencimento_prescricao, d.tipo_tributo FROM perdcomp_pedido_itens pi LEFT JOIN perdcomp_creditos c ON c.id = pi.id_credito LEFT JOIN perdcomp_debitos d ON d.id = pi.id_debito WHERE pi.id_pedido = $1`,
       [idPedido]
     );
 
@@ -136,7 +136,7 @@ ${itens.map((i: any) => {
   },
 
   async chat(idEmpresa: number, mensagem: string, historico: { role: string; content: string }[]): Promise<string> {
-    const empresa = await getOne<any>('SELECT razao_social, regime_tributario, cnpj FROM perdcomp_empresas WHERE id = ?', [idEmpresa]);
+    const empresa = await getOne<any>('SELECT razao_social, regime_tributario, cnpj FROM perdcomp_empresas WHERE id = $1', [idEmpresa]);
 
     const messages: ChatMessage[] = [
       { role: 'system', content: `${SYSTEM_PROMPT}\n\nContexto: Você está auxiliando a empresa ${empresa?.razao_social || 'N/A'} (CNPJ: ${empresa?.cnpj || 'N/A'}, Regime: ${empresa?.regime_tributario || 'N/A'}).` },

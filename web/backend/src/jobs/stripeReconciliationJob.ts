@@ -78,9 +78,9 @@ export function startStripeReconciliationJob() {
           if (statusEsperado !== assinatura.status) {
             await runQuery(
               `UPDATE adm_assinatura
-               SET status = ?,
-                   dt_alteracao = datetime('now')
-               WHERE id = ?`,
+               SET status = $1,
+                   dt_alteracao = NOW()
+               WHERE id = $2`,
               [statusEsperado, assinatura.id]
             );
 
@@ -126,7 +126,7 @@ async function registrarExecucao(
     await runQuery(
       `INSERT INTO cron_execucoes 
        (nome_job, executado_em, sucesso, duracao_ms, registros_processados, erro)
-       VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+       VALUES ($1, NOW(), $2, $3, $4, $5)`,
       [nome, sucesso ? 1 : 0, duracaoMs, registrosProcessados, erro || null]
     );
   } catch (error: any) {

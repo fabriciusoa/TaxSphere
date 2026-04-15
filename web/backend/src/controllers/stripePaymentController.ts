@@ -27,7 +27,7 @@ export const stripePaymentController = {
       }>(
         `SELECT id, nome, email, stripe_customer_id, dt_excluido 
          FROM adm_assinatura 
-         WHERE id = ?`,
+         WHERE id = $1`,
         [assinatura_id]
       );
 

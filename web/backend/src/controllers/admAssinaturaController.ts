@@ -118,7 +118,8 @@ export const admAssinaturaController = {
           nome, email, cpf, id_adm_plano, dt_criacao, status,
           dt_nascimento, dt_demonstracao, cep, telefone,
           endereco, numero, complemento, bairro, cidade, uf
-        ) VALUES (?, ?, ?, ?, datetime('now'), 'DEMONSTRACAO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ($1, $2, $3, $4, NOW(), 'DEMONSTRACAO', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING id
       `, [
         data.nome,
         data.email,
@@ -136,7 +137,7 @@ export const admAssinaturaController = {
         data.uf
       ]);
 
-      const assinaturaId = result.lastID;
+      const assinaturaId = result.id;
       let stripeCustomerId: string | null = null;
 
       // Tentar criar Customer no Stripe

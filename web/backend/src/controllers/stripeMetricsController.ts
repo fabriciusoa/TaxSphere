@@ -24,7 +24,7 @@ export const stripeMetricsController = {
             2
           ) as taxa_conversao
          FROM adm_assinatura
-         WHERE dt_criacao >= datetime('now', '-30 days')
+         WHERE dt_criacao >= NOW() - INTERVAL '30 days'
            AND dt_excluido IS NULL`
       );
 
@@ -34,14 +34,14 @@ export const stripeMetricsController = {
       }>(
         `SELECT 
           AVG(
-            (julianday(audit.dt_criacao) - julianday(assin.dt_criacao)) * 24 * 60
+            EXTRACT(EPOCH FROM (audit.dt_criacao - assin.dt_criacao)) / 60
           ) as tempo_medio_minutos
          FROM adm_assinatura assin
          INNER JOIN adm_stripe_audit_log audit 
            ON assin.id = audit.id_assinatura 
            AND audit.evento_tipo = 'subscription_created'
            AND audit.status = 'success'
-         WHERE assin.dt_criacao >= datetime('now', '-30 days')
+         WHERE assin.dt_criacao >= NOW() - INTERVAL '30 days'
            AND assin.stripe_subscription_id IS NOT NULL`
       );
 
@@ -57,7 +57,7 @@ export const stripeMetricsController = {
           MAX(dt_criacao) as ultima_ocorrencia
          FROM adm_stripe_audit_log
          WHERE status = 'error'
-           AND dt_criacao >= datetime('now', '-30 days')
+           AND dt_criacao >= NOW() - INTERVAL '30 days'
            AND erro_mensagem IS NOT NULL
          GROUP BY erro_mensagem
          ORDER BY total_ocorrencias DESC
@@ -101,7 +101,7 @@ export const stripeMetricsController = {
       }>(
         `SELECT COUNT(*) as total_abandonadas
          FROM adm_assinatura
-         WHERE dt_criacao < datetime('now', '-24 hours')
+         WHERE dt_criacao < NOW() - INTERVAL '24 hours'
            AND stripe_subscription_id IS NULL
            AND dt_excluido IS NULL`
       );
@@ -112,7 +112,7 @@ export const stripeMetricsController = {
       }>(
         `SELECT COUNT(*) as total_expirando
          FROM adm_assinatura
-         WHERE dt_demonstracao BETWEEN datetime('now') AND datetime('now', '+3 days')
+         WHERE dt_demonstracao BETWEEN NOW() AND NOW() + INTERVAL '3 days'
            AND stripe_subscription_id IS NULL
            AND dt_excluido IS NULL
            AND status != 'INADIMPLENTE'`
@@ -127,7 +127,7 @@ export const stripeMetricsController = {
           tipo,
           COUNT(*) as total
          FROM adm_stripe_webhook_events
-         WHERE processado_em >= datetime('now', '-7 days')
+         WHERE processado_em >= NOW() - INTERVAL '7 days'
          GROUP BY tipo
          ORDER BY total DESC
          LIMIT 10`
@@ -144,7 +144,7 @@ export const stripeMetricsController = {
           COUNT(*) as total_criadas,
           SUM(CASE WHEN stripe_subscription_id IS NOT NULL THEN 1 ELSE 0 END) as total_convertidas
          FROM adm_assinatura
-         WHERE dt_criacao >= datetime('now', '-30 days')
+         WHERE dt_criacao >= NOW() - INTERVAL '30 days'
            AND dt_excluido IS NULL
          GROUP BY DATE(dt_criacao)
          ORDER BY data DESC`

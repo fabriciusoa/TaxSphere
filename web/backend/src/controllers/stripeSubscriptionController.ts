@@ -38,7 +38,7 @@ export const stripeSubscriptionController = {
           p.descricao as plano_descricao, p.id_price_stripe
          FROM adm_assinatura a
          INNER JOIN adm_planos p ON a.id_adm_plano = p.id
-         WHERE a.id = ?`,
+         WHERE a.id = $1`,
         [assinatura_id]
       );
 
@@ -114,9 +114,9 @@ export const stripeSubscriptionController = {
       // 4. Atualizar banco de dados
       await runQuery(
         `UPDATE adm_assinatura 
-         SET stripe_subscription_id = ?,
-             stripe_payment_method_id = ?
-         WHERE id = ?`,
+         SET stripe_subscription_id = $1,
+             stripe_payment_method_id = $2
+         WHERE id = $3`,
         [subscriptionId, payment_method_id, assinatura.id]
       );
 

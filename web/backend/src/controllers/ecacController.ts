@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { getOne, getAll, runQuery } from '../database/connection';
+import { getOne, getAll, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { AuthRequest } from '../types';
 import { certificadoService } from '../services/certificadoService';
 import { EcacService } from '../services/ecacService';
@@ -38,7 +38,7 @@ export const ecacCertificadoController = {
       if (!id_empresa) return res.status(400).json({ error: 'Empresa é obrigatória' });
       if (!senha_certificado) return res.status(400).json({ error: 'Senha do certificado é obrigatória' });
 
-      const empresa = await getOne<any>('SELECT id, cnpj, razao_social FROM perdcomp_empresas WHERE id = ?', [id_empresa]);
+      const empresa = await getOne<any>('SELECT id, cnpj, razao_social FROM perdcomp_empresas WHERE id = $1', [id_empresa]);
       if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
 
       const validation = await certificadoService.validatePfx(file.buffer, senha_certificado);
@@ -48,29 +48,41 @@ export const ecacCertificadoController = {
 
       const { encrypted, iv } = certificadoService.encrypt(file.buffer);
 
-      await runQuery(
-        'UPDATE certificados_digitais SET ativo = 0 WHERE id_empresa = ?',
-        [id_empresa]
-      );
+      const txClient = await beginTransaction();
+      let lastID: number;
+      try {
+        await runQuery(
+          'UPDATE certificados_digitais SET ativo = 0 WHERE id_empresa = $1',
+          [id_empresa],
+          txClient
+        );
 
-      const { lastID } = await runQuery(
-        `INSERT INTO certificados_digitais
-         (id_empresa, nome_arquivo, tipo, pfx_encrypted, iv, cn, emissor, serial_number, validade_de, validade_ate)
-         VALUES (?, ?, 'A1', ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id_empresa,
-          file.originalname,
-          encrypted,
-          iv,
-          validation.info?.cn || '',
-          validation.info?.emissor || '',
-          validation.info?.serialNumber || '',
-          validation.info?.validadeDe || '',
-          validation.info?.validadeAte || '',
-        ]
-      );
+        const { id: certId } = await runQuery(
+          `INSERT INTO certificados_digitais
+           (id_empresa, nome_arquivo, tipo, pfx_encrypted, iv, cn, emissor, serial_number, validade_de, validade_ate)
+           VALUES ($1, $2, 'A1', $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id`,
+          [
+            id_empresa,
+            file.originalname,
+            encrypted,
+            iv,
+            validation.info?.cn || '',
+            validation.info?.emissor || '',
+            validation.info?.serialNumber || '',
+            validation.info?.validadeDe || '',
+            validation.info?.validadeAte || '',
+          ],
+          txClient
+        );
+        await commitTransaction(txClient);
+        lastID = certId;
+      } catch (txErr) {
+        await rollbackTransaction(txClient);
+        throw txErr;
+      }
 
-      const cert = await getOne<any>('SELECT id, id_empresa, nome_arquivo, tipo, cn, emissor, validade_de, validade_ate, ativo, criado_em FROM certificados_digitais WHERE id = ?', [lastID]);
+      const cert = await getOne<any>('SELECT id, id_empresa, nome_arquivo, tipo, cn, emissor, validade_de, validade_ate, ativo, criado_em FROM certificados_digitais WHERE id = $1', [lastID]);
 
       log.info(`Certificado ${file.originalname} cadastrado para empresa ${empresa.razao_social} (${empresa.cnpj})`);
 
@@ -108,10 +120,10 @@ export const ecacCertificadoController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
-      const cert = await getOne<any>('SELECT id FROM certificados_digitais WHERE id = ?', [req.params.id]);
+      const cert = await getOne<any>('SELECT id FROM certificados_digitais WHERE id = $1', [req.params.id]);
       if (!cert) return res.status(404).json({ error: 'Certificado não encontrado' });
 
-      await runQuery('DELETE FROM certificados_digitais WHERE id = ?', [req.params.id]);
+      await runQuery('DELETE FROM certificados_digitais WHERE id = $1', [req.params.id]);
       res.json({ message: 'Certificado excluído' });
     } catch (error: any) {
       log.error(`Erro ao excluir certificado: ${error.message}`);
@@ -138,11 +150,11 @@ export const ecacSincronizacaoController = {
         return res.status(400).json({ error: `Tipo inválido. Use: ${tiposValidos.join(', ')}` });
       }
 
-      const empresa = await getOne<any>('SELECT id, cnpj, razao_social FROM perdcomp_empresas WHERE id = ?', [id_empresa]);
+      const empresa = await getOne<any>('SELECT id, cnpj, razao_social FROM perdcomp_empresas WHERE id = $1', [id_empresa]);
       if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
 
       const cert = await getOne<any>(
-        'SELECT * FROM certificados_digitais WHERE id_empresa = ? AND ativo = 1',
+        'SELECT * FROM certificados_digitais WHERE id_empresa = $1 AND ativo = 1',
         [id_empresa]
       );
       if (!cert) return res.status(404).json({ error: 'Nenhum certificado digital ativo para esta empresa. Faça o upload do certificado primeiro.' });
@@ -151,9 +163,10 @@ export const ecacSincronizacaoController = {
         return res.status(409).json({ error: 'Sincronização já em andamento para esta empresa' });
       }
 
-      const { lastID: syncId } = await runQuery(
+      const { id: syncId } = await runQuery(
         `INSERT INTO ecac_sincronizacoes (id_empresa, id_certificado, id_usuario, tipo, status, iniciado_em)
-         VALUES (?, ?, ?, ?, 'em_andamento', datetime('now'))`,
+         VALUES ($1, $2, $3, $4, 'em_andamento', NOW())
+         RETURNING id`,
         [id_empresa, cert.id, req.user!.id, tipo || 'completa']
       );
 
@@ -168,7 +181,7 @@ export const ecacSincronizacaoController = {
 
           const ecac = new EcacService((msg, pct) => {
             runQuery(
-              `UPDATE ecac_sincronizacoes SET detalhes = ? WHERE id = ?`,
+              `UPDATE ecac_sincronizacoes SET detalhes = $1 WHERE id = $2`,
               [JSON.stringify({ progresso: pct, mensagem: msg }), syncId]
             ).catch(() => {});
           });
@@ -177,7 +190,7 @@ export const ecacSincronizacaoController = {
 
           if (!result.success) {
             await runQuery(
-              `UPDATE ecac_sincronizacoes SET status = 'erro', erro_mensagem = ?, concluido_em = datetime('now') WHERE id = ?`,
+              `UPDATE ecac_sincronizacoes SET status = 'erro', erro_mensagem = $1, concluido_em = NOW() WHERE id = $2`,
               [result.errors.join('; '), syncId]
             );
             return;
@@ -192,15 +205,15 @@ export const ecacSincronizacaoController = {
             try {
               const existe = await getOne<any>(
                 `SELECT id FROM dctfweb_declaracoes
-                 WHERE id_empresa = ? AND categoria = ? AND periodo_apuracao = ?`,
+                 WHERE id_empresa = $1 AND categoria = $2 AND periodo_apuracao = $3`,
                 [id_empresa, decl.categoria, decl.periodo_apuracao]
               );
               if (existe) {
                 await runQuery(
                   `UPDATE dctfweb_declaracoes
-                   SET situacao = ?, debito_apurado = ?, saldo_pagar = ?,
-                       data_transmissao = ?, atualizado_em = datetime('now')
-                   WHERE id = ?`,
+                   SET situacao = $1, debito_apurado = $2, saldo_pagar = $3,
+                       data_transmissao = $4, atualizado_em = NOW()
+                   WHERE id = $5`,
                   [decl.situacao || 'Ativa', decl.debito_apurado, decl.saldo_pagar,
                    decl.data_transmissao || null, existe.id]
                 );
@@ -209,7 +222,7 @@ export const ecacSincronizacaoController = {
                   `INSERT INTO dctfweb_declaracoes
                    (id_empresa, categoria, periodo_apuracao, situacao, debito_apurado,
                     saldo_pagar, data_transmissao, origem, observacoes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'eCAC', ?)`,
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, 'eCAC', $8)`,
                   [id_empresa, decl.categoria, decl.periodo_apuracao,
                    decl.situacao || 'Ativa', decl.debito_apurado, decl.saldo_pagar,
                    decl.data_transmissao || null,
@@ -226,7 +239,7 @@ export const ecacSincronizacaoController = {
             try {
               const existe = await getOne<any>(
                 `SELECT id FROM perdcomp_creditos
-                 WHERE id_empresa = ? AND tipo_credito = ? AND periodo_apuracao = ? AND valor_original = ?`,
+                 WHERE id_empresa = $1 AND tipo_credito = $2 AND periodo_apuracao = $3 AND valor_original = $4`,
                 [id_empresa, credito.tipo_credito, credito.periodo_apuracao, credito.valor_original]
               );
               if (existe) { ignorados++; continue; }
@@ -235,7 +248,7 @@ export const ecacSincronizacaoController = {
                 `INSERT INTO perdcomp_creditos
                  (id_empresa, tipo_credito, origem_credito, periodo_apuracao, codigo_receita,
                   valor_original, valor_atualizado, saldo_disponivel, dt_pagamento_original, observacoes)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
                 [
                   id_empresa, credito.tipo_credito, credito.origem_credito,
                   credito.periodo_apuracao, credito.codigo_receita,
@@ -254,7 +267,7 @@ export const ecacSincronizacaoController = {
             try {
               const existe = await getOne<any>(
                 `SELECT id FROM perdcomp_debitos
-                 WHERE id_empresa = ? AND tipo_tributo = ? AND periodo_apuracao = ? AND valor_principal = ?`,
+                 WHERE id_empresa = $1 AND tipo_tributo = $2 AND periodo_apuracao = $3 AND valor_principal = $4`,
                 [id_empresa, debito.tipo_tributo, debito.periodo_apuracao, debito.valor_principal]
               );
               if (existe) { ignorados++; continue; }
@@ -266,7 +279,7 @@ export const ecacSincronizacaoController = {
                  (id_empresa, tipo_tributo, codigo_receita, periodo_apuracao,
                   valor_principal, valor_multa, valor_juros, valor_total,
                   saldo_devedor, dt_vencimento, observacoes)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
                 [
                   id_empresa, debito.tipo_tributo, debito.codigo_receita,
                   debito.periodo_apuracao, debito.valor_principal,
@@ -283,10 +296,10 @@ export const ecacSincronizacaoController = {
 
           await runQuery(
             `UPDATE ecac_sincronizacoes
-             SET status = 'concluido', creditos_importados = ?, debitos_importados = ?,
-                 registros_ignorados = ?, concluido_em = datetime('now'),
-                 detalhes = ?
-             WHERE id = ?`,
+             SET status = 'concluido', creditos_importados = $1, debitos_importados = $2,
+                 registros_ignorados = $3, concluido_em = NOW(),
+                 detalhes = $4
+             WHERE id = $5`,
             [
               creditosImportados, debitosImportados, ignorados,
               JSON.stringify({
@@ -305,7 +318,7 @@ export const ecacSincronizacaoController = {
         } catch (err: any) {
           log.error(`[eCAC] Sync ${syncId} falhou: ${err.message}`);
           await runQuery(
-            `UPDATE ecac_sincronizacoes SET status = 'erro', erro_mensagem = ?, concluido_em = datetime('now') WHERE id = ?`,
+            `UPDATE ecac_sincronizacoes SET status = 'erro', erro_mensagem = $1, concluido_em = NOW() WHERE id = $2`,
             [err.message, syncId]
           ).catch(() => {});
         } finally {
@@ -324,7 +337,7 @@ export const ecacSincronizacaoController = {
         `SELECT s.*, e.razao_social, e.cnpj
          FROM ecac_sincronizacoes s
          JOIN perdcomp_empresas e ON e.id = s.id_empresa
-         WHERE s.id = ?`,
+         WHERE s.id = $1`,
         [req.params.id]
       );
       if (!sync) return res.status(404).json({ error: 'Sincronização não encontrada' });
@@ -342,8 +355,9 @@ export const ecacSincronizacaoController = {
   historico: async (req: AuthRequest, res: Response) => {
     try {
       const { id_empresa } = req.query;
-      const where = id_empresa ? 'WHERE s.id_empresa = ?' : '';
-      const params = id_empresa ? [id_empresa] : [];
+      const params: any[] = [];
+      let whereClause = '';
+      if (id_empresa) { params.push(id_empresa); whereClause = `WHERE s.id_empresa = $${params.length}`; }
 
       const syncs = await getAll<any>(
         `SELECT s.id, s.id_empresa, s.tipo, s.status,
@@ -352,7 +366,7 @@ export const ecacSincronizacaoController = {
                 e.razao_social, e.cnpj
          FROM ecac_sincronizacoes s
          JOIN perdcomp_empresas e ON e.id = s.id_empresa
-         ${where}
+         ${whereClause}
          ORDER BY s.criado_em DESC
          LIMIT 50`,
         params

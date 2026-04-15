@@ -25,7 +25,7 @@ export const perfilController = {
   buscarPorId: async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
-      const perfil = await getOne<Perfil>('SELECT * FROM perfil WHERE id = ?', [id]);
+      const perfil = await getOne<Perfil>('SELECT * FROM perfil WHERE id = $1', [id]);
 
       if (!perfil) {
         return res.status(404).json({ error: 'Perfil não encontrado' });
@@ -50,17 +50,17 @@ export const perfilController = {
 
       // Verificar se perfil já existe
       const perfilExiste = await getOne<Perfil>(
-        'SELECT * FROM perfil WHERE perfil = ?',
+        'SELECT * FROM perfil WHERE perfil = $1',
         [perfil]
       );
       if (perfilExiste) {
         return res.status(400).json({ error: 'Perfil já cadastrado' });
       }
 
-      await runQuery('INSERT INTO perfil (perfil) VALUES (?)', [perfil]);
+      await runQuery('INSERT INTO perfil (perfil) VALUES ($1)', [perfil]);
 
       const perfilCriado = await getOne<Perfil>(
-        'SELECT * FROM perfil WHERE perfil = ?',
+        'SELECT * FROM perfil WHERE perfil = $1',
         [perfil]
       );
 
@@ -84,24 +84,24 @@ export const perfilController = {
       const { perfil } = resultado.data;
 
       // Verificar se perfil existe
-      const perfilExiste = await getOne<Perfil>('SELECT * FROM perfil WHERE id = ?', [id]);
+      const perfilExiste = await getOne<Perfil>('SELECT * FROM perfil WHERE id = $1', [id]);
       if (!perfilExiste) {
         return res.status(404).json({ error: 'Perfil não encontrado' });
       }
 
       // Verificar se novo nome já existe
       const nomeExiste = await getOne<Perfil>(
-        'SELECT * FROM perfil WHERE perfil = ? AND id != ?',
+        'SELECT * FROM perfil WHERE perfil = $1 AND id != $2',
         [perfil, id]
       );
       if (nomeExiste) {
         return res.status(400).json({ error: 'Nome de perfil já cadastrado' });
       }
 
-      await runQuery('UPDATE perfil SET perfil = ? WHERE id = ?', [perfil, id]);
+      await runQuery('UPDATE perfil SET perfil = $1 WHERE id = $2', [perfil, id]);
 
       const perfilAtualizado = await getOne<Perfil>(
-        'SELECT * FROM perfil WHERE id = ?',
+        'SELECT * FROM perfil WHERE id = $1',
         [id]
       );
 
@@ -117,14 +117,14 @@ export const perfilController = {
     try {
       const { id } = req.params;
 
-      const perfil = await getOne<Perfil>('SELECT * FROM perfil WHERE id = ?', [id]);
+      const perfil = await getOne<Perfil>('SELECT * FROM perfil WHERE id = $1', [id]);
       if (!perfil) {
         return res.status(404).json({ error: 'Perfil não encontrado' });
       }
 
       // Verificar se há usuários com este perfil
       const usuariosComPerfil = await getOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM usuarios WHERE perfil = ?',
+        'SELECT COUNT(*) as count FROM usuarios WHERE perfil = $1',
         [id]
       );
 
@@ -134,7 +134,7 @@ export const perfilController = {
         });
       }
 
-      await runQuery('DELETE FROM perfil WHERE id = ?', [id]);
+      await runQuery('DELETE FROM perfil WHERE id = $1', [id]);
 
       res.json({ message: 'Perfil deletado com sucesso' });
     } catch (error: any) {
@@ -155,7 +155,7 @@ export const perfilController = {
         `SELECT u.id, u.nome, u.email, u.cpf, u.dt_nascimento, p.perfil as perfil
          FROM usuarios u
          LEFT JOIN perfil p ON u.perfil = p.id
-         WHERE u.id = ?`,
+         WHERE u.id = $1`,
         [userId]
       );
 
@@ -179,7 +179,7 @@ export const perfilController = {
         `SELECT u.id, u.nome, u.email, u.cpf, u.dt_nascimento, p.perfil as perfil
          FROM usuarios u
          LEFT JOIN perfil p ON u.perfil = p.id
-         WHERE u.id = ?`,
+         WHERE u.id = $1`,
         [userId]
       );
 
@@ -201,7 +201,7 @@ export const perfilController = {
       const { nome, email, cpf, dt_nascimento } = req.body;
 
       await runQuery(
-        `UPDATE usuarios SET nome = ?, email = ?, cpf = ?, dt_nascimento = ? WHERE id = ?`,
+        `UPDATE usuarios SET nome = $1, email = $2, cpf = $3, dt_nascimento = $4 WHERE id = $5`,
         [nome, email, cpf, dt_nascimento || null, userId]
       );
 
@@ -209,7 +209,7 @@ export const perfilController = {
         `SELECT u.id, u.nome, u.email, u.cpf, u.dt_nascimento, p.perfil as perfil
          FROM usuarios u
          LEFT JOIN perfil p ON u.perfil = p.id
-         WHERE u.id = ?`,
+         WHERE u.id = $1`,
         [userId]
       );
 

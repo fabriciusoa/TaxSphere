@@ -25,23 +25,23 @@ export const loginLogController = {
       const params: any[] = [];
 
       if (sucesso) {
-        sql += ' AND ll.sucesso = ?';
         params.push(sucesso);
+        sql += ` AND ll.sucesso = $${params.length}`;
       }
 
       if (data_inicio) {
-        sql += ' AND ll.timestamp >= ?';
         params.push(data_inicio);
+        sql += ` AND ll.timestamp >= $${params.length}`;
       }
 
       if (data_fim) {
-        sql += ' AND ll.timestamp <= ?';
         params.push(data_fim);
+        sql += ` AND ll.timestamp <= $${params.length}`;
       }
 
       if (usuario_id) {
-        sql += ' AND ll.usuario_id = ?';
         params.push(usuario_id);
+        sql += ` AND ll.usuario_id = $${params.length}`;
       }
 
       // Contar total
@@ -53,8 +53,10 @@ export const loginLogController = {
       const total = countResult[0]?.total || 0;
 
       // Buscar dados com paginação
-      sql += ' ORDER BY ll.timestamp DESC LIMIT ? OFFSET ?';
-      params.push(limit, offset);
+      params.push(limit);
+      sql += ` ORDER BY ll.timestamp DESC LIMIT $${params.length}`;
+      params.push(offset);
+      sql += ` OFFSET $${params.length}`;
 
       const logs = await getAll<any>(sql, params);
 

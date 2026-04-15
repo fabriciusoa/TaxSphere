@@ -34,7 +34,7 @@ export async function getParametro(chave: string, useCache: boolean = true): Pro
 
     // Busca no banco de dados
     const row = await getOne<ParametroRow>(
-      'SELECT * FROM parametros WHERE chave = ? LIMIT 1',
+      'SELECT * FROM parametros WHERE chave = $1 LIMIT 1',
       [chave]
     );
 
@@ -88,7 +88,7 @@ export async function getParametros(chaves: string[], useCache: boolean = true):
     }
 
     // Busca no banco as chaves que não estavam no cache
-    const placeholders = chavesParaBuscar.map(() => '?').join(',');
+    const placeholders = chavesParaBuscar.map((_, i) => `$${i + 1}`).join(',');
     const rows = await getAll<ParametroRow>(
       `SELECT * FROM parametros WHERE chave IN (${placeholders})`,
       chavesParaBuscar

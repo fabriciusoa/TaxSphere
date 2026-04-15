@@ -31,13 +31,13 @@ export const selicService = {
         const taxa = parseFloat(item.valor);
 
         const existe = await getOne<SelicTaxa>(
-          'SELECT id FROM perdcomp_selic_taxas WHERE mes_referencia = ?',
+          'SELECT id FROM perdcomp_selic_taxas WHERE mes_referencia = $1',
           [mesRef]
         );
 
         if (!existe) {
           await runQuery(
-            'INSERT INTO perdcomp_selic_taxas (mes_referencia, taxa_mensal) VALUES (?, ?)',
+            'INSERT INTO perdcomp_selic_taxas (mes_referencia, taxa_mensal) VALUES ($1, $2)',
             [mesRef, taxa]
           );
           inseridos++;
@@ -64,7 +64,7 @@ export const selicService = {
     const mesFim = `${dtFim.getFullYear()}-${String(dtFim.getMonth() + 1).padStart(2, '0')}`;
 
     const taxas = await getAll<SelicTaxa>(
-      'SELECT taxa_mensal FROM perdcomp_selic_taxas WHERE mes_referencia >= ? AND mes_referencia <= ? ORDER BY mes_referencia',
+      'SELECT taxa_mensal FROM perdcomp_selic_taxas WHERE mes_referencia >= $1 AND mes_referencia <= $2 ORDER BY mes_referencia',
       [mesInicio, mesFim]
     );
 
@@ -86,8 +86,8 @@ export const selicService = {
     let sql = `SELECT id, valor_original, dt_pagamento_original FROM perdcomp_creditos WHERE status IN ('Disponível', 'Parcialmente Utilizado')`;
     const params: any[] = [];
     if (idEmpresa) {
-      sql += ' AND id_empresa = ?';
       params.push(idEmpresa);
+      sql += ` AND id_empresa = $${params.length}`;
     }
 
     const creditos = await getAll<{ id: number; valor_original: number; dt_pagamento_original: string }>(sql, params);
@@ -102,7 +102,7 @@ export const selicService = {
         const selicValor = valorAtualizado - c.valor_original;
 
         await runQuery(
-          `UPDATE perdcomp_creditos SET valor_atualizado = ?, valor_selic_acumulado = ?, saldo_disponivel = saldo_disponivel + (? - valor_selic_acumulado), atualizado_em = datetime('now') WHERE id = ?`,
+          `UPDATE perdcomp_creditos SET valor_atualizado = $1, valor_selic_acumulado = $2, saldo_disponivel = saldo_disponivel + ($3 - valor_selic_acumulado), atualizado_em = NOW() WHERE id = $4`,
           [valorAtualizado, selicValor, selicValor, c.id]
         );
         atualizados++;
@@ -116,7 +116,7 @@ export const selicService = {
 
   async obterTaxas(limite: number = 24): Promise<SelicTaxa[]> {
     return getAll<SelicTaxa>(
-      'SELECT * FROM perdcomp_selic_taxas ORDER BY mes_referencia DESC LIMIT ?',
+      'SELECT * FROM perdcomp_selic_taxas ORDER BY mes_referencia DESC LIMIT $1',
       [limite]
     );
   },

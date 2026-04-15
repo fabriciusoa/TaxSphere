@@ -51,7 +51,7 @@ export async function logStripeAction(data: AuditLogData): Promise<void> {
         usuario_id,
         ip_origem,
         metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         id_assinatura || null,
         evento_tipo,

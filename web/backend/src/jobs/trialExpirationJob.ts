@@ -26,7 +26,7 @@ export function startTrialExpirationJob() {
       }>(
         `SELECT id, nome, email, dt_demonstracao, status
          FROM adm_assinatura
-         WHERE dt_demonstracao < datetime('now')
+         WHERE dt_demonstracao < NOW()
            AND stripe_subscription_id IS NULL
            AND dt_excluido IS NULL
            AND status != 'INADIMPLENTE'`
@@ -49,9 +49,9 @@ export function startTrialExpirationJob() {
           await runQuery(
             `UPDATE adm_assinatura
              SET status = 'INADIMPLENTE',
-                 dt_bloqueio = datetime('now'),
-                 dt_alteracao = datetime('now')
-             WHERE id = ?`,
+                 dt_bloqueio = NOW(),
+                 dt_alteracao = NOW()
+             WHERE id = $1`,
             [assinatura.id]
           );
 
@@ -94,7 +94,7 @@ async function registrarExecucao(
     await runQuery(
       `INSERT INTO cron_execucoes 
        (nome_job, executado_em, sucesso, duracao_ms, registros_processados, erro)
-       VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+       VALUES ($1, NOW(), $2, $3, $4, $5)`,
       [nome, sucesso ? 1 : 0, duracaoMs, registrosProcessados, erro || null]
     );
   } catch (error: any) {

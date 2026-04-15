@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { getOne, runQuery } from '../database/connection';
+import { getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { AuthRequest, EmailTemplate } from '../types';
 import { getCurrentTimestamp } from '../utils/dateHelpers';
 import { emailTemplateSchema } from '../validators/schemas';
@@ -73,7 +73,7 @@ export const emailTemplatesController = {
       try {
         // Tentar buscar template personalizado do banco
         const template = await getOne<EmailTemplate>(
-          'SELECT * FROM email_templates WHERE id_usuario = ?',
+          'SELECT * FROM email_templates WHERE id_usuario = $1',
           [userId]
         );
 
@@ -150,49 +150,54 @@ export const emailTemplatesController = {
 
       // Verificar se já existe template para o usuário
       const templateExistente = await getOne<EmailTemplate>(
-        'SELECT id FROM email_templates WHERE id_usuario = ?',
+        'SELECT id FROM email_templates WHERE id_usuario = $1',
         [userId]
       );
 
       const now = getCurrentTimestamp();
 
+      const txClient = await beginTransaction();
+      try {
       if (templateExistente) {
         // UPDATE
         const campos: string[] = [];
         const valores: any[] = [];
 
         if (assuntoConfirmacao !== undefined) {
-          campos.push('assunto_confirmacao = ?');
           valores.push(assuntoConfirmacao);
+          campos.push(`assunto_confirmacao = $${valores.length}`);
         }
         if (templateTextoConfirmacao !== undefined) {
-          campos.push('template_texto_confirmacao = ?');
           valores.push(templateTextoConfirmacao);
+          campos.push(`template_texto_confirmacao = $${valores.length}`);
         }
         if (assuntoLembrete !== undefined) {
-          campos.push('assunto_lembrete = ?');
           valores.push(assuntoLembrete);
+          campos.push(`assunto_lembrete = $${valores.length}`);
         }
         if (templateTextoLembrete !== undefined) {
-          campos.push('template_texto_lembrete = ?');
           valores.push(templateTextoLembrete);
+          campos.push(`template_texto_lembrete = $${valores.length}`);
         }
         if (assinatura !== undefined) {
-          campos.push('assinatura = ?');
           valores.push(assinatura);
+          campos.push(`assinatura = $${valores.length}`);
         }
 
         if (campos.length === 0) {
+          await rollbackTransaction(txClient);
           return res.status(400).json({ error: 'Nenhum campo para atualizar' });
         }
 
-        campos.push('atualizado_em = ?');
         valores.push(now);
+        campos.push(`atualizado_em = $${valores.length}`);
         valores.push(userId);
+        const whereIdx = valores.length;
 
         await runQuery(
-          `UPDATE email_templates SET ${campos.join(', ')} WHERE id_usuario = ?`,
-          valores
+          `UPDATE email_templates SET ${campos.join(', ')} WHERE id_usuario = $${whereIdx}`,
+          valores,
+          txClient
         );
 
       } else {
@@ -202,7 +207,7 @@ export const emailTemplatesController = {
             id_usuario, assunto_confirmacao, template_texto_confirmacao,
             assunto_lembrete, template_texto_lembrete, assinatura,
             criado_em, atualizado_em
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             userId,
             assuntoConfirmacao || null,
@@ -212,13 +217,19 @@ export const emailTemplatesController = {
             assinatura || null,
             now,
             now
-          ]
+          ],
+          txClient
         );
+      }
+      await commitTransaction(txClient);
+      } catch (txErr) {
+        await rollbackTransaction(txClient);
+        throw txErr;
       }
 
       // Buscar template atualizado para retornar
       const templateAtualizado = await getOne<EmailTemplate>(
-        'SELECT * FROM email_templates WHERE id_usuario = ?',
+        'SELECT * FROM email_templates WHERE id_usuario = $1',
         [userId]
       );
 

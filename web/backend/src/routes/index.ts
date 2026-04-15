@@ -186,7 +186,7 @@ router.get('/health/cron', async (req, res) => {
         SUM(CASE WHEN sucesso = 0 THEN 1 ELSE 0 END) as total_falhas,
         AVG(duracao_ms) as duracao_media_ms
        FROM cron_execucoes 
-       WHERE executado_em >= datetime('now', '-48 hours')`
+       WHERE executado_em >= NOW() - INTERVAL '48 hours'`
     );
 
     res.json({

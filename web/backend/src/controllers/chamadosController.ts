@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { getOne, getAll, runQuery } from '../database/connection';
+import { getOne, getAll, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { AuthRequest, Chamado, ChamadoComentario, ChamadoAnexo, StatusChamado, CategoriaChamado, PrioridadeChamado, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, MAX_FILES_PER_COMMENT } from '../types';
 import { getCurrentTimestamp, formatToBrazilian } from '../utils/dateHelpers';
 import { processImage, isImage, formatBytes } from '../utils/imageProcessor';
@@ -21,7 +21,7 @@ async function enviarEmailNotificacaoChamado(
       SELECT c.*, u.email, u.nome as nome_usuario
       FROM chamado c
       INNER JOIN usuarios u ON c.id_usuario = u.id
-      WHERE c.id = ?
+      WHERE c.id = $1
     `, [idChamado]);
 
 		if (!chamado || !chamado.email) {
@@ -108,7 +108,7 @@ Equipe de Suporte - Sistema Mentis`;
               id_usuario, tipo_notificacao, status, destinatario, assunto, mensagem, enviado_em,
               entregue_em, erro_falha, contador_tentativas, maximo_tentativas, criado_em,
               atualizado_em, tipo, id_externo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			[
 				chamado.id_usuario,
 				'Chamado',
@@ -152,30 +152,33 @@ export const chamadosController = {
 
 			// Se não for ADMIN, filtrar apenas chamados do usuário
 			if (userPerfilId !== 1) {
-				whereConditions.push('c.id_usuario = ?');
 				params.push(userId);
+				whereConditions.push(`c.id_usuario = $${params.length}`);
 			}
 
 			// Filtros
 			if (status) {
-				whereConditions.push('c.status = ?');
 				params.push(status);
+				whereConditions.push(`c.status = $${params.length}`);
 			}
 
 			if (categoria) {
-				whereConditions.push('c.categoria = ?');
 				params.push(categoria);
+				whereConditions.push(`c.categoria = $${params.length}`);
 			}
 
 			if (prioridade) {
-				whereConditions.push('c.prioridade = ?');
 				params.push(prioridade);
+				whereConditions.push(`c.prioridade = $${params.length}`);
 			}
 
 			if (busca) {
-				whereConditions.push('(c.titulo LIKE ? OR c.descricao LIKE ?)');
 				const buscaParam = `%${busca}%`;
-				params.push(buscaParam, buscaParam);
+				params.push(buscaParam);
+				const p1 = params.length;
+				params.push(buscaParam);
+				const p2 = params.length;
+				whereConditions.push(`(c.titulo LIKE $${p1} OR c.descricao LIKE $${p2})`);
 			}
 
 			const whereClause = whereConditions.join(' AND ');
@@ -191,6 +194,10 @@ export const chamadosController = {
 
 			// Query com paginação
 			const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
+			params.push(parseInt(limit as string));
+			const limitIdx = params.length;
+			params.push(offset);
+			const offsetIdx = params.length;
 			const sql = `
         SELECT 
           c.*,
@@ -211,10 +218,9 @@ export const chamadosController = {
             WHEN 'Cancelado' THEN 6
           END,
           c.criado_em DESC
-        LIMIT ? OFFSET ?
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `;
 
-			params.push(parseInt(limit as string), offset);
 			const data = await getAll<Chamado>(sql, params);
 
 			res.json({ data, total, page: parseInt(page as string), limit: parseInt(limit as string) });
@@ -242,7 +248,7 @@ export const chamadosController = {
         FROM chamado c
         INNER JOIN usuarios u ON c.id_usuario = u.id
         LEFT JOIN usuarios ua ON c.id_usuario_atribuido = ua.id
-        WHERE c.id = ?
+        WHERE c.id = $1
       `;
 
 			const chamado = await getOne<Chamado>(sql, [id]);
@@ -281,7 +287,8 @@ export const chamadosController = {
         INSERT INTO chamado (
           id_usuario, titulo, descricao, categoria, prioridade, status,
           criado_em, atualizado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id
       `;
 
 			const result = await runQuery(sql, [
@@ -296,7 +303,7 @@ export const chamadosController = {
 			]);
 
 			res.status(201).json({
-				id: result.lastID,
+				id: result.id,
 				message: 'Chamado criado com sucesso'
 			});
 		} catch (error: any) {
@@ -316,7 +323,7 @@ export const chamadosController = {
 			const userPerfilId = req.user?.perfil_id;
 
 			// Buscar chamado atual
-			const chamadoAtual = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamadoAtual = await getOne<Chamado>('SELECT * FROM chamado WHERE id = $1', [id]);
 
 			if (!chamadoAtual) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
@@ -332,47 +339,48 @@ export const chamadosController = {
 			const params: any[] = [];
 
 			if (titulo !== undefined) {
-				updates.push('titulo = ?');
 				params.push(titulo);
+				updates.push(`titulo = $${params.length}`);
 			}
 
 			if (descricao !== undefined) {
-				updates.push('descricao = ?');
 				params.push(descricao);
+				updates.push(`descricao = $${params.length}`);
 			}
 
 			if (categoria !== undefined) {
-				updates.push('categoria = ?');
 				params.push(categoria);
+				updates.push(`categoria = $${params.length}`);
 			}
 
 			if (prioridade !== undefined) {
-				updates.push('prioridade = ?');
 				params.push(prioridade);
+				updates.push(`prioridade = $${params.length}`);
 			}
 
 			if (status !== undefined) {
-				updates.push('status = ?');
 				params.push(status);
+				updates.push(`status = $${params.length}`);
 
 				// Se foi resolvido ou fechado, atualizar data
 				if (status === 'Resolvido' || status === 'Fechado') {
-					updates.push('fechado_em = ?');
 					params.push(agora);
+					updates.push(`fechado_em = $${params.length}`);
 				}
 			}
 
 			if (id_usuario_atribuido !== undefined) {
-				updates.push('id_usuario_atribuido = ?');
 				params.push(id_usuario_atribuido);
+				updates.push(`id_usuario_atribuido = $${params.length}`);
 			}
 
-			updates.push('atualizado_em = ?');
 			params.push(agora);
+			updates.push(`atualizado_em = $${params.length}`);
 
 			params.push(id);
+			const idIdx = params.length;
 
-			const sql = `UPDATE chamado SET ${updates.join(', ')} WHERE id = ?`;
+			const sql = `UPDATE chamado SET ${updates.join(', ')} WHERE id = $${idIdx}`;
 			await runQuery(sql, params);
 
 			// Enviar email se status mudou e é admin mudando
@@ -401,7 +409,7 @@ export const chamadosController = {
 			const userPerfilId = req.user?.perfil_id;
 
 			// Buscar chamado
-			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = $1', [id]);
 
 			if (!chamado) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
@@ -413,9 +421,9 @@ export const chamadosController = {
 			}
 
 			// Deletar comentários e anexos associados
-			await runQuery('DELETE FROM chamados_anexos WHERE id_chamado_comentario IN (SELECT id FROM chamado_comentario WHERE id_chamado = ?)', [id]);
-			await runQuery('DELETE FROM chamado_comentario WHERE id_chamado = ?', [id]);
-			await runQuery('DELETE FROM chamado WHERE id = ?', [id]);
+			await runQuery('DELETE FROM chamados_anexos WHERE id_chamado_comentario IN (SELECT id FROM chamado_comentario WHERE id_chamado = $1)', [id]);
+			await runQuery('DELETE FROM chamado_comentario WHERE id_chamado = $1', [id]);
+			await runQuery('DELETE FROM chamado WHERE id = $1', [id]);
 
 			res.json({ message: 'Chamado deletado com sucesso' });
 		} catch (error: any) {
@@ -434,7 +442,7 @@ export const chamadosController = {
 			const userPerfilId = req.user?.perfil_id;
 
 			// Verificar se usuário tem permissão para ver este chamado
-			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = $1', [id]);
 			if (!chamado) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
 			}
@@ -455,7 +463,7 @@ export const chamadosController = {
           u.email as usuario_email
         FROM chamado_comentario cc
         INNER JOIN usuarios u ON cc.id_usuario = u.id
-        WHERE cc.id_chamado = ?
+        WHERE cc.id_chamado = $1
         ORDER BY cc.criado_em ASC
       `;
 
@@ -467,7 +475,7 @@ export const chamadosController = {
           SELECT id, id_chamado_comentario, nome_arquivo, tipo_arquivo, tamanho_bytes,
                  anexo_thumbnail, anexo
           FROM chamados_anexos
-          WHERE id_chamado_comentario = ?
+          WHERE id_chamado_comentario = $1
           ORDER BY id ASC
         `;
 				const anexosRaw = await getAll<any>(anexosSql, [comentario.id]);
@@ -505,7 +513,7 @@ export const chamadosController = {
 			}
 
 			// Verificar se chamado existe
-			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = $1', [id]);
 			if (!chamado) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
 			}
@@ -519,13 +527,22 @@ export const chamadosController = {
 
 			const sql = `
         INSERT INTO chamado_comentario (id_chamado, id_usuario, comentario, criado_em)
-        VALUES (?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
       `;
 
-			const result = await runQuery(sql, [id, userId, comentario, agora]);
-
-			// Atualizar data de atualização do chamado
-			await runQuery('UPDATE chamado SET atualizado_em = ? WHERE id = ?', [agora, id]);
+			const txClient = await beginTransaction();
+			let commentId: number;
+			try {
+				const result = await runQuery(sql, [id, userId, comentario, agora], txClient);
+				commentId = result.id;
+				// Atualizar data de atualização do chamado
+				await runQuery('UPDATE chamado SET atualizado_em = $1 WHERE id = $2', [agora, id], txClient);
+				await commitTransaction(txClient);
+			} catch (txErr) {
+				await rollbackTransaction(txClient);
+				throw txErr;
+			}
 
 			// Enviar email se for admin comentando
 			if (userPerfilId === 1 && chamado.id_usuario !== userId) {
@@ -537,7 +554,7 @@ export const chamadosController = {
 			}
 
 			res.status(201).json({
-				id: result.lastID,
+				id: commentId!,
 				message: 'Comentário adicionado com sucesso'
 			});
 		} catch (error: any) {
@@ -573,7 +590,7 @@ export const chamadosController = {
 
 			// Verificar se comentário existe
 			const comentario = await getOne<ChamadoComentario>(
-				'SELECT * FROM chamado_comentario WHERE id = ?',
+				'SELECT * FROM chamado_comentario WHERE id = $1',
 				[idComentario]
 			);
 
@@ -639,7 +656,7 @@ export const chamadosController = {
               nome_arquivo,
               tipo_arquivo,
               tamanho_bytes
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
           `;
 
 					await runQuery(sql, [
@@ -697,7 +714,7 @@ export const chamadosController = {
 			const userId = req.user?.id;
 
 			const anexo = await getOne<any>(
-				'SELECT * FROM chamados_anexos WHERE id = ?',
+				'SELECT * FROM chamados_anexos WHERE id = $1',
 				[id]
 			);
 
@@ -752,20 +769,20 @@ export const chamadosController = {
           AVG(
             CASE 
               WHEN status IN ('Resolvido', 'Fechado') AND fechado_em IS NOT NULL
-              THEN CAST((julianday(fechado_em) - julianday(criado_em)) * 24 AS INTEGER)
+              THEN EXTRACT(EPOCH FROM (fechado_em::timestamp - criado_em::timestamp)) / 3600
             END
           ) as tempo_medio_resolucao_horas,
-          SUM(CASE WHEN date(criado_em) = date('now') THEN 1 ELSE 0 END) as criados_hoje,
-          SUM(CASE WHEN date(fechado_em) = date('now') THEN 1 ELSE 0 END) as resolvidos_hoje
+          SUM(CASE WHEN criado_em::date = CURRENT_DATE THEN 1 ELSE 0 END) as criados_hoje,
+          SUM(CASE WHEN fechado_em::date = CURRENT_DATE THEN 1 ELSE 0 END) as resolvidos_hoje
         FROM chamado
-        WHERE criado_em >= date('now', '-30 days')
+        WHERE criado_em >= CURRENT_DATE - INTERVAL '30 days'
       `);
 
 			// 2. Por status
 			const porStatus = await getAll<any>(`
         SELECT status, COUNT(*) as total
         FROM chamado
-        WHERE criado_em >= date('now', '-30 days')
+        WHERE criado_em >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY status
       `);
 
@@ -773,7 +790,7 @@ export const chamadosController = {
 			const porCategoria = await getAll<any>(`
         SELECT categoria, COUNT(*) as total
         FROM chamado
-        WHERE criado_em >= date('now', '-30 days')
+        WHERE criado_em >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY categoria
         ORDER BY total DESC
       `);
@@ -788,7 +805,7 @@ export const chamadosController = {
           SUM(CASE WHEN c.status IN ('Resolvido', 'Fechado') THEN 1 ELSE 0 END) as resolvidos
         FROM chamado c
         INNER JOIN usuarios u ON c.id_usuario = u.id
-        WHERE c.criado_em >= date('now', '-30 days')
+        WHERE c.criado_em >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY u.id, u.nome, u.email
         ORDER BY total_chamados DESC
         LIMIT 10
@@ -822,7 +839,7 @@ export const chamadosController = {
           SUM(CASE WHEN status = 'Resolvido' THEN 1 ELSE 0 END) as resolvidos,
           SUM(CASE WHEN status = 'Fechado' THEN 1 ELSE 0 END) as fechados
         FROM chamado
-        WHERE id_usuario = ?
+        WHERE id_usuario = $1
       `, [userId]);
 
 			res.json(estatisticas || {});

@@ -52,7 +52,7 @@ async function syncPendingCustomers() {
                 });
 
                 await runQuery(
-                    'UPDATE adm_assinatura SET stripe_customer_id = ? WHERE id = ?',
+                    'UPDATE adm_assinatura SET stripe_customer_id = $1 WHERE id = $2',
                     [customerId, assinatura.id]
                 );
 
@@ -81,7 +81,7 @@ async function registrarExecucao(
         await runQuery(
             `INSERT INTO cron_execucoes 
        (nome_job, executado_em, sucesso, duracao_ms, registros_processados, erro)
-       VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+       VALUES ($1, NOW(), $2, $3, $4, $5)`,
             [nome, sucesso ? 1 : 0, duracaoMs, registrosProcessados, erro || null]
         );
     } catch (error: any) {

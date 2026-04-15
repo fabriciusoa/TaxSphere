@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getAll, getOne, runQuery } from '../database/connection';
+import { getAll, getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { AuthRequest } from '../types';
 import log from '../utils/logger';
 import { createProduct, createNewPrice, updateProduct, archiveProduct } from '../services/stripeProductService';
@@ -42,7 +42,7 @@ export const admPlanosController = {
         const itens = await getAll<PlanoItem>(
           `SELECT id, id_adm_plano, descricao, ativo, dt_inclusao, dt_exclusao
            FROM adm_plano_itens
-           WHERE id_adm_plano = ?
+           WHERE id_adm_plano = $1
            ORDER BY id ASC`,
           [plano.id]
         );
@@ -66,7 +66,7 @@ export const admPlanosController = {
       const plano = await getOne<Plano>(
         `SELECT id, descricao, valor, ativo, dt_inclusao, dt_alteracao 
          FROM adm_planos 
-         WHERE id = ?`,
+         WHERE id = $1`,
         [id]
       );
 
@@ -78,7 +78,7 @@ export const admPlanosController = {
       const itens = await getAll<PlanoItem>(
         `SELECT id, id_adm_plano, descricao, ativo, dt_inclusao, dt_exclusao
          FROM adm_plano_itens
-         WHERE id_adm_plano = ? AND dt_exclusao IS NULL
+         WHERE id_adm_plano = $1 AND dt_exclusao IS NULL
          ORDER BY id ASC`,
         [id]
       );
@@ -114,7 +114,7 @@ export const admPlanosController = {
 
       // Verificar se já existe plano com mesma descrição
       const existente = await getOne<{ id: number }>(
-        'SELECT id FROM adm_planos WHERE LOWER(descricao) = LOWER(?)',
+        'SELECT id FROM adm_planos WHERE LOWER(descricao) = LOWER($1)',
         [descricao.trim()]
       );
 
@@ -124,13 +124,36 @@ export const admPlanosController = {
 
       // INSERT no banco SEM IDs Stripe (serão preenchidos depois)
       const dtInclusao = new Date().toISOString();
-      const resultPlano = await runQuery(
-        `INSERT INTO adm_planos (descricao, valor, ativo, dt_inclusao) 
-         VALUES (?, ?, ?, ?)`,
-        [descricao.trim(), valor, ativo, dtInclusao]
-      );
+      const txClient = await beginTransaction();
+      let planoId: number;
+      try {
+        const resultPlano = await runQuery(
+          `INSERT INTO adm_planos (descricao, valor, ativo, dt_inclusao) 
+           VALUES ($1, $2, $3, $4)
+           RETURNING id`,
+          [descricao.trim(), valor, ativo, dtInclusao],
+          txClient
+        );
+        planoId = resultPlano.id;
 
-      const planoId = resultPlano.lastID;
+        // Inserir itens do plano (se houver) dentro da mesma transacão
+        if (Array.isArray(itens) && itens.length > 0) {
+          for (const item of itens) {
+            if (item.descricao && item.descricao.trim().length > 0) {
+              await runQuery(
+                `INSERT INTO adm_plano_itens (id_adm_plano, descricao, ativo, dt_inclusao) 
+                 VALUES ($1, $2, $3, $4)`,
+                [planoId, item.descricao.trim(), item.ativo || 'S', dtInclusao],
+                txClient
+              );
+            }
+          }
+        }
+        await commitTransaction(txClient);
+      } catch (txErr) {
+        await rollbackTransaction(txClient);
+        throw txErr;
+      }
       let stripeProductId: string | null = null;
       let stripePriceId: string | null = null;
 
@@ -147,8 +170,8 @@ export const admPlanosController = {
         // Atualizar banco com IDs Stripe
         await runQuery(
           `UPDATE adm_planos 
-           SET id_product_stripe = ?, id_price_stripe = ? 
-           WHERE id = ?`,
+           SET id_product_stripe = $1, id_price_stripe = $2 
+           WHERE id = $3`,
           [stripeProductId, stripePriceId, planoId]
         );
 
@@ -157,7 +180,7 @@ export const admPlanosController = {
         // Falha ao criar no Stripe - reverter insert
         log.error(`Erro ao criar produto no Stripe para plano ${planoId}: ${stripeError.message}`);
         
-        await runQuery('DELETE FROM adm_planos WHERE id = ?', [planoId]);
+        await runQuery('DELETE FROM adm_planos WHERE id = $1', [planoId]);
         
         return res.status(500).json({
           error: 'Erro ao criar produto no Stripe. Plano não foi salvo.',
@@ -165,24 +188,11 @@ export const admPlanosController = {
         });
       }
 
-      // Inserir itens do plano (se houver)
-      if (Array.isArray(itens) && itens.length > 0) {
-        for (const item of itens) {
-          if (item.descricao && item.descricao.trim().length > 0) {
-            await runQuery(
-              `INSERT INTO adm_plano_itens (id_adm_plano, descricao, ativo, dt_inclusao) 
-               VALUES (?, ?, ?, ?)`,
-              [planoId, item.descricao.trim(), item.ativo || 'S', dtInclusao]
-            );
-          }
-        }
-      }
-
       // Buscar plano criado com itens
       const planoCompleto = await getOne<Plano>(
         `SELECT id, descricao, valor, ativo, dt_inclusao, dt_alteracao,
                 id_product_stripe, id_price_stripe
-         FROM adm_planos WHERE id = ?`,
+         FROM adm_planos WHERE id = $1`,
         [planoId]
       );
 
@@ -190,7 +200,7 @@ export const admPlanosController = {
         const itensCriados = await getAll<PlanoItem>(
           `SELECT id, id_adm_plano, descricao, ativo, dt_inclusao, dt_exclusao
            FROM adm_plano_itens
-           WHERE id_adm_plano = ? AND dt_exclusao IS NULL`,
+           WHERE id_adm_plano = $1 AND dt_exclusao IS NULL`,
           [planoId]
         );
         planoCompleto.itens = itensCriados;
@@ -224,7 +234,7 @@ export const admPlanosController = {
         id_price_stripe: string | null;
       }>(
         `SELECT id, ativo, dt_inclusao, valor, id_product_stripe, id_price_stripe 
-         FROM adm_planos WHERE id = ?`,
+         FROM adm_planos WHERE id = $1`,
         [id]
       );
 
@@ -247,7 +257,7 @@ export const admPlanosController = {
 
       // Verificar se já existe outro plano com mesma descrição
       const duplicado = await getOne<{ id: number }>(
-        'SELECT id FROM adm_planos WHERE LOWER(descricao) = LOWER(?) AND id != ?',
+        'SELECT id FROM adm_planos WHERE LOWER(descricao) = LOWER($1) AND id != $2',
         [descricao.trim(), id]
       );
 
@@ -288,38 +298,47 @@ export const admPlanosController = {
         }
       }
 
-      // Atualizar plano no banco
+      // Atualizar plano + itens atomicamente
       const dtAlteracao = new Date().toISOString();
-      await runQuery(
-        `UPDATE adm_planos 
-         SET descricao = ?, valor = ?, ativo = ?, dt_alteracao = ?,
-             id_price_stripe = ?
-         WHERE id = ?`,
-        [descricao.trim(), valor, ativo, dtAlteracao, novoStripePriceId, id]
-      );
+      const txClient = await beginTransaction();
+      try {
+        await runQuery(
+          `UPDATE adm_planos 
+           SET descricao = $1, valor = $2, ativo = $3, dt_alteracao = $4,
+               id_price_stripe = $5
+           WHERE id = $6`,
+          [descricao.trim(), valor, ativo, dtAlteracao, novoStripePriceId, id],
+          txClient
+        );
 
-      // Deletar todos os itens atuais
-      await runQuery(`DELETE FROM adm_plano_itens WHERE id_adm_plano = ?`, [id]);
+        // Deletar todos os itens atuais
+        await runQuery(`DELETE FROM adm_plano_itens WHERE id_adm_plano = $1`, [id], txClient);
 
-      // Inserir novos itens
-      if (Array.isArray(itens) && itens.length > 0) {
-        for (const item of itens) {
-          if (item.descricao && item.descricao.trim().length > 0) {
-            const itemAtivo = ativo === 'N' ? 'N' : (item.ativo || 'S');
-            await runQuery(
-              `INSERT INTO adm_plano_itens (id_adm_plano, descricao, ativo, dt_inclusao) 
-               VALUES (?, ?, ?, ?)`,
-              [id, item.descricao.trim(), itemAtivo, planoExistente.dt_inclusao]
-            );
+        // Inserir novos itens
+        if (Array.isArray(itens) && itens.length > 0) {
+          for (const item of itens) {
+            if (item.descricao && item.descricao.trim().length > 0) {
+              const itemAtivo = ativo === 'N' ? 'N' : (item.ativo || 'S');
+              await runQuery(
+                `INSERT INTO adm_plano_itens (id_adm_plano, descricao, ativo, dt_inclusao) 
+                 VALUES ($1, $2, $3, $4)`,
+                [id, item.descricao.trim(), itemAtivo, planoExistente.dt_inclusao],
+                txClient
+              );
+            }
           }
         }
+        await commitTransaction(txClient);
+      } catch (txErr) {
+        await rollbackTransaction(txClient);
+        throw txErr;
       }
 
       // Buscar plano atualizado com itens
       const planoAtualizado = await getOne<Plano>(
         `SELECT id, descricao, valor, ativo, dt_inclusao, dt_alteracao,
                 id_product_stripe, id_price_stripe
-         FROM adm_planos WHERE id = ?`,
+         FROM adm_planos WHERE id = $1`,
         [id]
       );
 
@@ -327,7 +346,7 @@ export const admPlanosController = {
         const itensAtualizados = await getAll<PlanoItem>(
           `SELECT id, id_adm_plano, descricao, ativo, dt_inclusao, dt_exclusao
            FROM adm_plano_itens
-           WHERE id_adm_plano = ?`,
+           WHERE id_adm_plano = $1`,
           [id]
         );
         planoAtualizado.itens = itensAtualizados;
@@ -355,7 +374,7 @@ export const admPlanosController = {
         id: number;
         id_product_stripe: string | null;
       }>(
-        'SELECT id, id_product_stripe FROM adm_planos WHERE id = ?',
+        'SELECT id, id_product_stripe FROM adm_planos WHERE id = $1',
         [id]
       );
 
@@ -379,16 +398,16 @@ export const admPlanosController = {
       // Soft delete dos itens
       await runQuery(
         `UPDATE adm_plano_itens 
-         SET dt_exclusao = ?
-         WHERE id_adm_plano = ? AND dt_exclusao IS NULL`,
+         SET dt_exclusao = $1
+         WHERE id_adm_plano = $2 AND dt_exclusao IS NULL`,
         [dtExclusao, id]
       );
 
       // Soft delete do plano (marcar como inativo)
       await runQuery(
         `UPDATE adm_planos 
-         SET ativo = 'N', dt_alteracao = ?
-         WHERE id = ?`,
+         SET ativo = 'N', dt_alteracao = $1
+         WHERE id = $2`,
         [dtExclusao, id]
       );
 
@@ -416,7 +435,7 @@ export const admPlanosController = {
         const itens = await getAll<PlanoItem>(
           `SELECT id, id_adm_plano, descricao, ativo, dt_inclusao, dt_exclusao
            FROM adm_plano_itens
-           WHERE id_adm_plano = ? AND ativo = 'S' AND dt_exclusao IS NULL
+           WHERE id_adm_plano = $1 AND ativo = 'S' AND dt_exclusao IS NULL
            ORDER BY id ASC`,
           [plano.id]
         );

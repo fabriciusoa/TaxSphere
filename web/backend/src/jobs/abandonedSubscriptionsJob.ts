@@ -27,7 +27,7 @@ export function startAbandonedSubscriptionsJob() {
       }>(
         `SELECT id, nome, email, stripe_customer_id, dt_criacao
          FROM adm_assinatura
-         WHERE dt_criacao < datetime('now', '-24 hours')
+         WHERE dt_criacao < NOW() - INTERVAL '24 hours'
            AND stripe_subscription_id IS NULL
            AND dt_excluido IS NULL`
       );
@@ -87,7 +87,7 @@ async function registrarExecucao(
     await runQuery(
       `INSERT INTO cron_execucoes 
        (nome_job, executado_em, sucesso, duracao_ms, registros_processados, erro)
-       VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+       VALUES ($1, NOW(), $2, $3, $4, $5)`,
       [nome, sucesso ? 1 : 0, duracaoMs, registrosProcessados, erro || null]
     );
   } catch (error: any) {

@@ -45,13 +45,14 @@ export const manutencaoController = {
       const now = getCurrentTimestamp();
       const result = await runQuery(
         `INSERT INTO manutencoes (descricao, dt_inicio, dt_fim, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
         [descricao, dt_inicio, dt_fim || null, statusFinal, now, now]
       );
 
       const novaManutencao = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = ?',
-        [result.lastID]
+        'SELECT * FROM manutencoes WHERE id = $1',
+        [result.id]
       );
 
       res.status(201).json(novaManutencao);
@@ -72,7 +73,7 @@ export const manutencaoController = {
       const { descricao, dt_inicio, dt_fim, status } = parse.data;
 
       const manutencao = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = ? AND dt_excluido_em IS NULL',
+        'SELECT * FROM manutencoes WHERE id = $1 AND dt_excluido_em IS NULL',
         [id]
       );
 
@@ -82,8 +83,8 @@ export const manutencaoController = {
 
       await runQuery(
         `UPDATE manutencoes
-         SET descricao = ?, dt_inicio = ?, dt_fim = ?, status = ?, updated_at = ?
-         WHERE id = ?`,
+         SET descricao = $1, dt_inicio = $2, dt_fim = $3, status = $4, updated_at = $5
+         WHERE id = $6`,
         [
           descricao   !== undefined ? descricao   : manutencao.descricao,
           dt_inicio   !== undefined ? dt_inicio   : manutencao.dt_inicio,
@@ -95,7 +96,7 @@ export const manutencaoController = {
       );
 
       const atualizada = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = ?',
+        'SELECT * FROM manutencoes WHERE id = $1',
         [id]
       );
 
@@ -111,7 +112,7 @@ export const manutencaoController = {
       const { id } = req.params;
 
       const manutencao = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = ? AND dt_excluido_em IS NULL',
+        'SELECT * FROM manutencoes WHERE id = $1 AND dt_excluido_em IS NULL',
         [id]
       );
 
@@ -121,7 +122,7 @@ export const manutencaoController = {
 
       const now = getCurrentTimestamp();
       await runQuery(
-        'UPDATE manutencoes SET dt_excluido_em = ?, updated_at = ? WHERE id = ?',
+        'UPDATE manutencoes SET dt_excluido_em = $1, updated_at = $2 WHERE id = $3',
         [now, now, id]
       );
 
@@ -139,7 +140,7 @@ export const manutencaoController = {
          WHERE dt_excluido_em IS NULL
            AND (
              status = 'em_execucao'
-             OR (status = 'planejada' AND dt_inicio <= datetime('now', '+5 days'))
+             OR (status = 'planejada' AND dt_inicio <= NOW() + INTERVAL '5 days')
            )
          ORDER BY dt_inicio ASC`
       );

@@ -113,7 +113,7 @@ export async function deleteAbandonedSubscription(assinatura: {
 
     // 2. DELETE físico no banco
     await runQuery(
-      'DELETE FROM adm_assinatura WHERE id = ?',
+      'DELETE FROM adm_assinatura WHERE id = $1',
       [assinatura.id]
     );
 

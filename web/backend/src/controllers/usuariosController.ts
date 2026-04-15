@@ -23,23 +23,24 @@ export const usuariosController = {
       const params: any[] = [];
 
       if (status) {
-        sql += ' AND u.status = ?';
         params.push(status);
+        sql += ` AND u.status = $${params.length}`;
       }
 
       if (busca) {
-        sql += ` AND (LOWER(u.nome) LIKE LOWER(?) OR LOWER(u.email) LIKE LOWER(?) OR u.cpf LIKE ?)`;
         params.push(`%${busca}%`, `%${busca}%`, `%${busca}%`);
+        const n = params.length;
+        sql += ` AND (LOWER(u.nome) LIKE LOWER($${n-2}) OR LOWER(u.email) LIKE LOWER($${n-1}) OR u.cpf LIKE $${n})`;
       }
 
       // Filtro por data de criação
       if (data_criacao_inicio) {
-        sql += ' AND DATE(u.criado) >= DATE(?)';
         params.push(data_criacao_inicio);
+        sql += ` AND DATE(u.criado) >= DATE($${params.length})`;
       }
       if (data_criacao_fim) {
-        sql += ' AND DATE(u.criado) <= DATE(?)';
         params.push(data_criacao_fim);
+        sql += ` AND DATE(u.criado) <= DATE($${params.length})`;
       }
 
       // Query para contar total
@@ -47,8 +48,9 @@ export const usuariosController = {
       const countResult = await getOne<{ total: number }>(countSql, params);
       const totalRecords = countResult?.total || 0;
 
-      sql += ' ORDER BY u.nome LIMIT ? OFFSET ?';
       params.push(Number(limit), offset);
+      const pagLen = params.length;
+      sql += ` ORDER BY u.nome LIMIT $${pagLen - 1} OFFSET $${pagLen}`;
 
       const usuarios = await getAll<any>(sql, params);
 
@@ -91,7 +93,7 @@ export const usuariosController = {
         `SELECT u.*, p.perfil as perfil_nome
          FROM usuarios u
          LEFT JOIN perfil p ON u.perfil = p.id
-         WHERE u.id = ?`,
+         WHERE u.id = $1`,
         [id]
       );
 
@@ -136,7 +138,7 @@ export const usuariosController = {
 
       // Verificar se email já existe
       const emailExiste = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE email = ?',
+        'SELECT * FROM usuarios WHERE email = $1',
         [email]
       );
       if (emailExiste) {
@@ -145,7 +147,7 @@ export const usuariosController = {
 
       // Verificar se CPF já existe
       const cpfExiste = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE cpf = ?',
+        'SELECT * FROM usuarios WHERE cpf = $1',
         [cpf]
       );
       if (cpfExiste) {
@@ -153,7 +155,7 @@ export const usuariosController = {
       }
 
       // Verificar se perfil existe
-      const perfilExiste = await getOne('SELECT * FROM perfil WHERE id = ?', [perfil_id]);
+      const perfilExiste = await getOne('SELECT * FROM perfil WHERE id = $1', [perfil_id]);
       if (!perfilExiste) {
         return res.status(400).json({ error: 'Perfil inválido' });
       }
@@ -165,7 +167,7 @@ export const usuariosController = {
       const agora = getCurrentTimestamp();
       await runQuery(
         `INSERT INTO usuarios (nome, email, cpf, senha, perfil, status, criado, dt_ativacao, dt_nascimento, tentativas_login)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [nome, email, cpf, senhaHash, perfil_id, 'Ativo', agora, agora, dt_nascimento || null, 0]
       );
 
@@ -174,7 +176,7 @@ export const usuariosController = {
         `SELECT u.*, p.perfil as perfil_nome
          FROM usuarios u
          LEFT JOIN perfil p ON u.perfil = p.id
-         WHERE u.email = ?`,
+         WHERE u.email = $1`,
         [email]
       );
 
@@ -206,7 +208,7 @@ export const usuariosController = {
       }
 
       // Verificar se usuário existe
-      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE id = ?', [id]);
+      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE id = $1', [id]);
       if (!usuario) {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
@@ -215,68 +217,68 @@ export const usuariosController = {
       const valores: any[] = [];
 
       if (resultado.data.nome) {
-        campos.push('nome = ?');
         valores.push(resultado.data.nome);
+        campos.push(`nome = $${valores.length}`);
       }
       if (resultado.data.senha) {
         const senhaHash = await bcrypt.hash(resultado.data.senha, 10);
-        campos.push('senha = ?');
         valores.push(senhaHash);
+        campos.push(`senha = $${valores.length}`);
       }
       if (resultado.data.email) {
         // Verificar se email já existe em outro usuário
         const emailExiste = await getOne<Usuario>(
-          'SELECT * FROM usuarios WHERE email = ? AND id != ?',
+          'SELECT * FROM usuarios WHERE email = $1 AND id != $2',
           [resultado.data.email, id]
         );
         if (emailExiste) {
           return res.status(400).json({ error: 'Email já cadastrado' });
         }
-        campos.push('email = ?');
         valores.push(resultado.data.email);
+        campos.push(`email = $${valores.length}`);
       }
       if (resultado.data.cpf) {
         // Verificar se CPF já existe em outro usuário
         const cpfExiste = await getOne<Usuario>(
-          'SELECT * FROM usuarios WHERE cpf = ? AND id != ?',
+          'SELECT * FROM usuarios WHERE cpf = $1 AND id != $2',
           [resultado.data.cpf, id]
         );
         if (cpfExiste) {
           return res.status(400).json({ error: 'CPF já cadastrado' });
         }
-        campos.push('cpf = ?');
         valores.push(resultado.data.cpf);
+        campos.push(`cpf = $${valores.length}`);
       }
       if (resultado.data.perfil_id) {
         // Verificar se perfil existe
-        const perfilExiste = await getOne('SELECT * FROM perfil WHERE id = ?', [resultado.data.perfil_id]);
+        const perfilExiste = await getOne('SELECT * FROM perfil WHERE id = $1', [resultado.data.perfil_id]);
         if (!perfilExiste) {
           return res.status(400).json({ error: 'Perfil inválido, verifique o ID do perfil' });
         }
-        campos.push('perfil = ?');
         valores.push(resultado.data.perfil_id);
+        campos.push(`perfil = $${valores.length}`);
       }
       if (resultado.data.status) {
-        campos.push('status = ?');
         valores.push(resultado.data.status);
+        campos.push(`status = $${valores.length}`);
 
         if (resultado.data.status === 'Inativo') {
-          campos.push('dt_inativacao = ?');
           valores.push(getCurrentTimestamp());
+          campos.push(`dt_inativacao = $${valores.length}`);
         } else if (resultado.data.status === 'Ativo') {
-          campos.push('dt_inativacao = ?');
           valores.push(null);
-          campos.push('dt_ativacao = ?');
+          campos.push(`dt_inativacao = $${valores.length}`);
           valores.push(getCurrentTimestamp());
+          campos.push(`dt_ativacao = $${valores.length}`);
         }
       }
       if (resultado.data.dt_inativacao !== undefined) {
-        campos.push('dt_inativacao = ?');
         valores.push(resultado.data.dt_inativacao);
+        campos.push(`dt_inativacao = $${valores.length}`);
       }
       if (resultado.data.dt_nascimento !== undefined) {
-        campos.push('dt_nascimento = ?');
         valores.push(resultado.data.dt_nascimento);
+        campos.push(`dt_nascimento = $${valores.length}`);
       }
 
       if (campos.length === 0) {
@@ -285,7 +287,7 @@ export const usuariosController = {
 
       valores.push(id);
       await runQuery(
-        `UPDATE usuarios SET ${campos.join(', ')} WHERE id = ?`,
+        `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length}`,
         valores
       );
 
@@ -294,7 +296,7 @@ export const usuariosController = {
         `SELECT u.*, p.perfil as perfil_nome
          FROM usuarios u
          LEFT JOIN perfil p ON u.perfil = p.id
-         WHERE u.id = ?`,
+         WHERE u.id = $1`,
         [id]
       );
 
@@ -321,13 +323,13 @@ export const usuariosController = {
     try {
       const { id } = req.params;
 
-      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE id = ?', [id]);
+      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE id = $1', [id]);
       if (!usuario) {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
 
       await runQuery(
-        'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL WHERE id = ?',
+        'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL WHERE id = $1',
         [id]
       );
 
@@ -343,13 +345,13 @@ export const usuariosController = {
     try {
       const { id } = req.params;
 
-      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE id = ?', [id]);
+      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE id = $1', [id]);
       if (!usuario) {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
 
       await runQuery(
-        'UPDATE usuarios SET status = ?, dt_inativacao = ? WHERE id = ?',
+        'UPDATE usuarios SET status = $1, dt_inativacao = $2 WHERE id = $3',
         ['inativo', getCurrentTimestamp(), id]
       );
 

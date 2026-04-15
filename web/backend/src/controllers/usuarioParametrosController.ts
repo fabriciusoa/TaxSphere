@@ -15,7 +15,7 @@ export const usuarioParametrosController = {
       }
 
       const parametros = await getOne<any>(
-        `SELECT * FROM usuario_parametros WHERE id_usuario = ?`,
+        `SELECT * FROM usuario_parametros WHERE id_usuario = $1`,
         [userId]
       );
 
@@ -53,7 +53,7 @@ export const usuarioParametrosController = {
 
       // Verificar se já existe registro
       const existe = await getOne<any>(
-        'SELECT id FROM usuario_parametros WHERE id_usuario = ?',
+        'SELECT id FROM usuario_parametros WHERE id_usuario = $1',
         [userId]
       );
 
@@ -66,7 +66,7 @@ export const usuarioParametrosController = {
           id_usuario, duracao_sessao, tempo_entre_sessao, enviar_email,
           enviar_whats, tempo_lembrete, permite_paciente_remarcar,
           tempo_remarcacao, permite_paciente_cancelar, tempo_cancelamento, criado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           userId, duracao_sessao, tempo_entre_sessao, enviar_email ? 1 : 0,
           enviar_whats ? 1 : 0, tempo_lembrete, permite_paciente_remarcar ? 1 : 0,
@@ -76,7 +76,7 @@ export const usuarioParametrosController = {
       );
 
       const parametros = await getOne<any>(
-        'SELECT * FROM usuario_parametros WHERE id_usuario = ?',
+        'SELECT * FROM usuario_parametros WHERE id_usuario = $1',
         [userId]
       );
 
@@ -113,57 +113,57 @@ export const usuarioParametrosController = {
       const values: any[] = [];
 
       if (duracao_sessao !== undefined) {
-        fields.push('duracao_sessao = ?');
         values.push(duracao_sessao);
+        fields.push(`duracao_sessao = $${values.length}`);
       }
       if (tempo_entre_sessao !== undefined) {
-        fields.push('tempo_entre_sessao = ?');
         values.push(tempo_entre_sessao);
+        fields.push(`tempo_entre_sessao = $${values.length}`);
       }
       if (enviar_email !== undefined) {
-        fields.push('enviar_email = ?');
         values.push(enviar_email ? 1 : 0);
+        fields.push(`enviar_email = $${values.length}`);
       }
       if (enviar_whats !== undefined) {
-        fields.push('enviar_whats = ?');
         values.push(enviar_whats ? 1 : 0);
+        fields.push(`enviar_whats = $${values.length}`);
       }
       if (tempo_lembrete !== undefined) {
-        fields.push('tempo_lembrete = ?');
         values.push(tempo_lembrete);
+        fields.push(`tempo_lembrete = $${values.length}`);
       }
       if (permite_paciente_remarcar !== undefined) {
-        fields.push('permite_paciente_remarcar = ?');
         values.push(permite_paciente_remarcar ? 1 : 0);
+        fields.push(`permite_paciente_remarcar = $${values.length}`);
       }
       if (tempo_remarcacao !== undefined) {
-        fields.push('tempo_remarcacao = ?');
         values.push(tempo_remarcacao);
+        fields.push(`tempo_remarcacao = $${values.length}`);
       }
       if (permite_paciente_cancelar !== undefined) {
-        fields.push('permite_paciente_cancelar = ?');
         values.push(permite_paciente_cancelar ? 1 : 0);
+        fields.push(`permite_paciente_cancelar = $${values.length}`);
       }
       if (tempo_cancelamento !== undefined) {
-        fields.push('tempo_cancelamento = ?');
         values.push(tempo_cancelamento);
+        fields.push(`tempo_cancelamento = $${values.length}`);
       }
 
       if (fields.length === 0) {
         return res.status(400).json({ error: 'Nenhum campo para atualizar' });
       }
 
-      fields.push('atualizado_em = ?');
       values.push(getCurrentTimestamp());
+      fields.push(`atualizado_em = $${values.length}`);
       values.push(userId);
 
       await runQuery(
-        `UPDATE usuario_parametros SET ${fields.join(', ')} WHERE id_usuario = ?`,
+        `UPDATE usuario_parametros SET ${fields.join(', ')} WHERE id_usuario = $${values.length}`,
         values
       );
 
       const parametros = await getOne<any>(
-        'SELECT * FROM usuario_parametros WHERE id_usuario = ?',
+        'SELECT * FROM usuario_parametros WHERE id_usuario = $1',
         [userId]
       );
 
@@ -196,7 +196,7 @@ export const usuarioParametrosController = {
           cor_faltou, 
           cor_reagendado 
         FROM usuario_parametros 
-        WHERE id_usuario = ?`,
+        WHERE id_usuario = $1`,
         [userId]
       );
 
@@ -217,7 +217,7 @@ export const usuarioParametrosController = {
       const { userId } = req.params;
 
       const parametros = await getOne<any>(
-        `SELECT * FROM usuario_parametros WHERE id_usuario = ?`,
+        `SELECT * FROM usuario_parametros WHERE id_usuario = $1`,
         [userId]
       );
 
@@ -257,7 +257,7 @@ export const usuarioParametrosController = {
 
       // Verificar se já existe registro
       const existe = await getOne<any>(
-        'SELECT id FROM usuario_parametros WHERE id_usuario = ?',
+        'SELECT id FROM usuario_parametros WHERE id_usuario = $1',
         [userId]
       );
 
@@ -272,7 +272,7 @@ export const usuarioParametrosController = {
           tempo_remarcacao, permite_paciente_cancelar, tempo_cancelamento,
           cor_agendado, cor_confirmado, cor_cancelado, cor_realizado, cor_faltou, cor_reagendado,
           criado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
         [
           userId, duracao_sessao, tempo_entre_sessao, enviar_email ? 1 : 0,
           enviar_whats ? 1 : 0, tempo_lembrete, permite_paciente_remarcar ? 1 : 0,
@@ -283,7 +283,7 @@ export const usuarioParametrosController = {
       );
 
       const parametros = await getOne<any>(
-        'SELECT * FROM usuario_parametros WHERE id_usuario = ?',
+        'SELECT * FROM usuario_parametros WHERE id_usuario = $1',
         [userId]
       );
 
@@ -322,81 +322,81 @@ export const usuarioParametrosController = {
       const values: any[] = [];
 
       if (duracao_sessao !== undefined) {
-        fields.push('duracao_sessao = ?');
         values.push(duracao_sessao);
+        fields.push(`duracao_sessao = $${values.length}`);
       }
       if (tempo_entre_sessao !== undefined) {
-        fields.push('tempo_entre_sessao = ?');
         values.push(tempo_entre_sessao);
+        fields.push(`tempo_entre_sessao = $${values.length}`);
       }
       if (enviar_email !== undefined) {
-        fields.push('enviar_email = ?');
         values.push(enviar_email ? 1 : 0);
+        fields.push(`enviar_email = $${values.length}`);
       }
       if (enviar_whats !== undefined) {
-        fields.push('enviar_whats = ?');
         values.push(enviar_whats ? 1 : 0);
+        fields.push(`enviar_whats = $${values.length}`);
       }
       if (tempo_lembrete !== undefined) {
-        fields.push('tempo_lembrete = ?');
         values.push(tempo_lembrete);
+        fields.push(`tempo_lembrete = $${values.length}`);
       }
       if (permite_paciente_remarcar !== undefined) {
-        fields.push('permite_paciente_remarcar = ?');
         values.push(permite_paciente_remarcar ? 1 : 0);
+        fields.push(`permite_paciente_remarcar = $${values.length}`);
       }
       if (tempo_remarcacao !== undefined) {
-        fields.push('tempo_remarcacao = ?');
         values.push(tempo_remarcacao);
+        fields.push(`tempo_remarcacao = $${values.length}`);
       }
       if (permite_paciente_cancelar !== undefined) {
-        fields.push('permite_paciente_cancelar = ?');
         values.push(permite_paciente_cancelar ? 1 : 0);
+        fields.push(`permite_paciente_cancelar = $${values.length}`);
       }
       if (tempo_cancelamento !== undefined) {
-        fields.push('tempo_cancelamento = ?');
         values.push(tempo_cancelamento);
+        fields.push(`tempo_cancelamento = $${values.length}`);
       }
       if (cor_agendado !== undefined) {
-        fields.push('cor_agendado = ?');
         values.push(cor_agendado);
+        fields.push(`cor_agendado = $${values.length}`);
       }
       if (cor_confirmado !== undefined) {
-        fields.push('cor_confirmado = ?');
         values.push(cor_confirmado);
+        fields.push(`cor_confirmado = $${values.length}`);
       }
       if (cor_cancelado !== undefined) {
-        fields.push('cor_cancelado = ?');
         values.push(cor_cancelado);
+        fields.push(`cor_cancelado = $${values.length}`);
       }
       if (cor_realizado !== undefined) {
-        fields.push('cor_realizado = ?');
         values.push(cor_realizado);
+        fields.push(`cor_realizado = $${values.length}`);
       }
       if (cor_faltou !== undefined) {
-        fields.push('cor_faltou = ?');
         values.push(cor_faltou);
+        fields.push(`cor_faltou = $${values.length}`);
       }
       if (cor_reagendado !== undefined) {
-        fields.push('cor_reagendado = ?');
         values.push(cor_reagendado);
+        fields.push(`cor_reagendado = $${values.length}`);
       }
 
       if (fields.length === 0) {
         return res.status(400).json({ error: 'Nenhum campo para atualizar' });
       }
 
-      fields.push('atualizado_em = ?');
       values.push(getCurrentTimestamp());
+      fields.push(`atualizado_em = $${values.length}`);
       values.push(userId);
 
       await runQuery(
-        `UPDATE usuario_parametros SET ${fields.join(', ')} WHERE id_usuario = ?`,
+        `UPDATE usuario_parametros SET ${fields.join(', ')} WHERE id_usuario = $${values.length}`,
         values
       );
 
       const parametros = await getOne<any>(
-        'SELECT * FROM usuario_parametros WHERE id_usuario = ?',
+        'SELECT * FROM usuario_parametros WHERE id_usuario = $1',
         [userId]
       );
 

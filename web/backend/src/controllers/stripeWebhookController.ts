@@ -48,7 +48,7 @@ export const stripeWebhookController = {
     try {
       // 3. Verificar idempotência (evitar processar evento duplicado)
       const eventoExistente = await getOne(
-        `SELECT id FROM adm_stripe_webhook_events WHERE stripe_event_id = ?`,
+        `SELECT id FROM adm_stripe_webhook_events WHERE stripe_event_id = $1`,
         [event.id]
       );
 
@@ -89,7 +89,7 @@ export const stripeWebhookController = {
       await runQuery(
         `INSERT INTO adm_stripe_webhook_events 
          (stripe_event_id, tipo, processado_em, resultado)
-         VALUES (?, ?, datetime('now'), ?)`,
+         VALUES ($1, $2, NOW(), $3)`,
         [event.id, event.type, resultado]
       );
 
@@ -101,7 +101,7 @@ export const stripeWebhookController = {
       await runQuery(
         `INSERT INTO adm_stripe_webhook_events 
          (stripe_event_id, tipo, processado_em, resultado, erro)
-         VALUES (?, ?, datetime('now'), 'error', ?)`,
+         VALUES ($1, $2, NOW(), 'error', $3)`,
         [event.id, event.type, error.message]
       );
 
@@ -129,7 +129,7 @@ async function handlePaymentSucceeded(event: Stripe.Event): Promise<string> {
   // Buscar assinatura no banco
   const assinatura = await getOne<{ id: number; status: string }>(
     `SELECT id, status FROM adm_assinatura 
-     WHERE stripe_subscription_id = ? AND dt_excluido IS NULL`,
+     WHERE stripe_subscription_id = $1 AND dt_excluido IS NULL`,
     [subscriptionId]
   );
 
@@ -145,8 +145,8 @@ async function handlePaymentSucceeded(event: Stripe.Event): Promise<string> {
        SET status = 'ATIVO',
            dt_demonstracao = NULL,
            dt_bloqueio = NULL,
-           dt_alteracao = datetime('now')
-       WHERE id = ?`,
+           dt_alteracao = NOW()
+       WHERE id = $1`,
       [assinatura.id]
     );
 
@@ -173,7 +173,7 @@ async function handlePaymentFailed(event: Stripe.Event): Promise<string> {
 
   const assinatura = await getOne<{ id: number }>(
     `SELECT id FROM adm_assinatura 
-     WHERE stripe_subscription_id = ? AND dt_excluido IS NULL`,
+     WHERE stripe_subscription_id = $1 AND dt_excluido IS NULL`,
     [subscriptionId]
   );
 
@@ -186,9 +186,9 @@ async function handlePaymentFailed(event: Stripe.Event): Promise<string> {
   await runQuery(
     `UPDATE adm_assinatura 
      SET status = 'INADIMPLENTE',
-         dt_bloqueio = datetime('now'),
-         dt_alteracao = datetime('now')
-     WHERE id = ?`,
+         dt_bloqueio = NOW(),
+         dt_alteracao = NOW()
+     WHERE id = $1`,
     [assinatura.id]
   );
 
@@ -207,7 +207,7 @@ async function handleSubscriptionDeleted(event: Stripe.Event): Promise<string> {
 
   const assinatura = await getOne<{ id: number }>(
     `SELECT id FROM adm_assinatura 
-     WHERE stripe_subscription_id = ? AND dt_excluido IS NULL`,
+     WHERE stripe_subscription_id = $1 AND dt_excluido IS NULL`,
     [subscription.id]
   );
 
@@ -218,9 +218,9 @@ async function handleSubscriptionDeleted(event: Stripe.Event): Promise<string> {
   // Soft delete da assinatura
   await runQuery(
     `UPDATE adm_assinatura 
-     SET dt_excluido = datetime('now'),
-         dt_alteracao = datetime('now')
-     WHERE id = ?`,
+     SET dt_excluido = NOW(),
+         dt_alteracao = NOW()
+     WHERE id = $1`,
     [assinatura.id]
   );
 
@@ -237,7 +237,7 @@ async function handleSubscriptionUpdated(event: Stripe.Event): Promise<string> {
 
   const assinatura = await getOne<{ id: number; status: string }>(
     `SELECT id, status FROM adm_assinatura 
-     WHERE stripe_subscription_id = ? AND dt_excluido IS NULL`,
+     WHERE stripe_subscription_id = $1 AND dt_excluido IS NULL`,
     [subscription.id]
   );
 
@@ -267,9 +267,9 @@ async function handleSubscriptionUpdated(event: Stripe.Event): Promise<string> {
   if (novoStatus !== assinatura.status) {
     await runQuery(
       `UPDATE adm_assinatura 
-       SET status = ?,
-           dt_alteracao = datetime('now')
-       WHERE id = ?`,
+       SET status = $1,
+           dt_alteracao = NOW()
+       WHERE id = $2`,
       [novoStatus, assinatura.id]
     );
 
@@ -287,7 +287,7 @@ async function handleTrialWillEnd(event: Stripe.Event): Promise<string> {
 
   const assinatura = await getOne<{ id: number; email: string; nome: string }>(
     `SELECT id, email, nome FROM adm_assinatura 
-     WHERE stripe_subscription_id = ? AND dt_excluido IS NULL`,
+     WHERE stripe_subscription_id = $1 AND dt_excluido IS NULL`,
     [subscription.id]
   );
 

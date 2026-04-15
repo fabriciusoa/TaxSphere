@@ -16,14 +16,14 @@ export const dashboardController = {
 
             // Chamados abertos do usuário
             const chamadosAbertosResult = await getOne<{ qtde: number }>(
-                "SELECT COUNT(*) AS qtde FROM chamado WHERE id_usuario = ? AND status NOT IN ('Fechado', 'Cancelado')",
+                "SELECT COUNT(*) AS qtde FROM chamado WHERE id_usuario = $1 AND status NOT IN ('Fechado', 'Cancelado')",
                 [id_usuario]
             );
             const qtdeChamadosAbertos = chamadosAbertosResult?.qtde || 0;
 
             // Total de chamados do usuário
             const chamadosTotalResult = await getOne<{ qtde: number }>(
-                'SELECT COUNT(*) AS qtde FROM chamado WHERE id_usuario = ?',
+                'SELECT COUNT(*) AS qtde FROM chamado WHERE id_usuario = $1',
                 [id_usuario]
             );
             const qtdeChamadosTotal = chamadosTotalResult?.qtde || 0;

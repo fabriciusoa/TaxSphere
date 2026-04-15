@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
-import { db } from '../database/connection';
+import { getOne, runQuery } from '../database/connection';
 import { log } from '../utils/logger';
 
 export const alterarSenha = async (req: Request, res: Response) => {
@@ -13,17 +13,7 @@ export const alterarSenha = async (req: Request, res: Response) => {
     }
 
     // Buscar usuário
-    const usuario = await new Promise<any>((resolve, reject) => {
-      db.get(
-        'SELECT * FROM usuarios WHERE id = ?',
-        [id],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
-
+		const usuario = await getOne<any>('SELECT * FROM usuarios WHERE id = $1', [id]);
     if (!usuario) {
       return res.status(404).json({ message: 'Usuário não encontrado' });
     }
@@ -60,17 +50,7 @@ export const alterarSenha = async (req: Request, res: Response) => {
     const novaSenhaHash = await bcrypt.hash(novaSenha, 10);
 
     // Atualizar senha
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        'UPDATE usuarios SET senha = ? WHERE id = ?',
-        [novaSenhaHash, id],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
-
+		await runQuery('UPDATE usuarios SET senha = $1 WHERE id = $2', [novaSenhaHash, id]);
     return res.json({ message: 'Senha alterada com sucesso' });
   } catch (error: any) {
     log.error(`Erro ao alterar senha: ${error.message}`);

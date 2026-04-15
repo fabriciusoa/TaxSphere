@@ -208,7 +208,7 @@ Aguardamos você!`,
     const template = await getOne<EmailTemplate>(
       `SELECT assunto_confirmacao, template_texto_confirmacao, assunto_lembrete, template_texto_lembrete, assinatura 
        FROM email_templates 
-       WHERE id_usuario = ?`,
+       WHERE id_usuario = $1`,
       [idUsuario]
     );
 
@@ -247,7 +247,7 @@ const processarAniversariantes = async (req: Request, res: Response) => {
 
   // Verificar se já foi executado hoje
   const executadoHoje = await getOne<any>(
-    `SELECT id FROM cron_execucoes WHERE nome_job = 'processarAniversariantes' AND strftime('%Y-%m-%d', executado_em) = strftime('%Y-%m-%d', datetime('now', 'localtime'))`);
+    `SELECT id FROM cron_execucoes WHERE nome_job = 'processarAniversariantes' AND DATE(executado_em AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE`);
 
   if (!executadoHoje) {
     try {
@@ -265,8 +265,8 @@ const processarAniversariantes = async (req: Request, res: Response) => {
         `SELECT p.id, p.nome, p.email, p.dt_nascimento, u.nome nome_medico
         FROM paciente p, usuarios u
        where p.id_usuario = u.id 
-         and strftime('%d', p.dt_nascimento) = ? 
-         AND strftime('%m', p.dt_nascimento) = ?`,
+         AND TO_CHAR(p.dt_nascimento::date, 'DD') = $1
+         AND TO_CHAR(p.dt_nascimento::date, 'MM') = $2`,
         [dia.toString().padStart(2, '0'), mes.toString().padStart(2, '0')]
       );
 
@@ -306,7 +306,7 @@ const processarAniversariantes = async (req: Request, res: Response) => {
     });
     await runQuery(
       `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
-            VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+            VALUES ($1, NOW(), $2, $3, $4, $5)`,
       [
         'processarAniversariantes',
         duracaoMs,
@@ -346,7 +346,7 @@ const processarFila = async (req: Request, res: Response) => {
       `SELECT id, id_agendamento, tipo, contador_tentativas, tipo_notificacao, id_usuario
        FROM notificacao 
        WHERE status = 'Pendente' 
-         AND (enviado_em IS NULL OR enviado_em <= datetime('now'))
+         AND (enviado_em IS NULL OR enviado_em <= NOW())
          AND contador_tentativas < 3
        ORDER BY enviado_em ASC, id ASC
        LIMIT 50`
@@ -382,7 +382,7 @@ const processarFila = async (req: Request, res: Response) => {
            FROM agendamento a
            INNER JOIN paciente p ON a.id_paciente = p.id
            INNER JOIN usuarios u ON a.id_usuario = u.id
-           WHERE a.id = ?`,
+           WHERE a.id = $1`,
           [notificacao.id_agendamento]
         );
 
@@ -394,9 +394,9 @@ const processarFila = async (req: Request, res: Response) => {
           await runQuery(
             `UPDATE notificacao 
              SET status = 'Falha', 
-                 erro_falha = ?, 
+                 erro_falha = $1, 
                  contador_tentativas = contador_tentativas + 1
-             WHERE id = ?`,
+             WHERE id = $2`,
             ['Agendamento foi cancelado ou não encontrado', notificacao.id]
           );
 
@@ -411,10 +411,10 @@ const processarFila = async (req: Request, res: Response) => {
           await runQuery(
             `UPDATE notificacao 
              SET status = 'Falha', 
-                 erro = ?,
+                 erro = $1,
                  contador_tentativas = contador_tentativas + 1,
-                 ultima_tentativa_notificacao = datetime('now')
-             WHERE id = ?`,
+                 ultima_tentativa_notificacao = NOW()
+             WHERE id = $2`,
             ['Paciente sem email cadastrado', notificacao.id]
           );
 
@@ -441,18 +441,18 @@ const processarFila = async (req: Request, res: Response) => {
           await runQuery(
             `UPDATE notificacao 
              SET status = 'Enviado', 
-                 entregue_em = datetime('now'),
+                 entregue_em = NOW(),
                  contador_tentativas = contador_tentativas + 1,                 
                  erro_falha = NULL
-             WHERE id = ?`,
+             WHERE id = $1`,
             [notificacao.id]
           );
 
           // Atualizar timestamp no agendamento
           await runQuery(
             `UPDATE agendamento 
-             SET ultima_tentativa_notificacao = datetime('now') 
-             WHERE id = ?`,
+             SET ultima_tentativa_notificacao = NOW() 
+             WHERE id = $1`,
             [notificacao.id_agendamento]
           );
 
@@ -473,8 +473,8 @@ const processarFila = async (req: Request, res: Response) => {
               `UPDATE notificacao 
                SET status = 'Falha', 
                    erro_falha = 'Limite de tentativas atingido (3 tentativas)',
-                   contador_tentativas = ?
-               WHERE id = ?`,
+                   contador_tentativas = $1
+               WHERE id = $2`,
               [novoContador, notificacao.id]
             );
 
@@ -493,10 +493,10 @@ const processarFila = async (req: Request, res: Response) => {
 
             await runQuery(
               `UPDATE notificacao 
-               SET contador_tentativas = ?,
-                   enviado_em = ?,
+               SET contador_tentativas = $1,
+                   enviado_em = $2,
                    erro_falha = 'Falha temporária no envio'
-               WHERE id = ?`,
+               WHERE id = $3`,
               [novoContador, proximaTentativaISO, notificacao.id]
             );
 
@@ -525,9 +525,9 @@ const processarFila = async (req: Request, res: Response) => {
 
         await runQuery(
           `UPDATE notificacao 
-           SET erro_falha = ?,
+           SET erro_falha = $1,
                contador_tentativas = contador_tentativas + 1
-           WHERE id = ?`,
+           WHERE id = $2`,
           [mensagemErro, notificacao.id]
         );
 
@@ -548,7 +548,7 @@ const processarFila = async (req: Request, res: Response) => {
 
     await runQuery(
       `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
-       VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+       VALUES ($1, NOW(), $2, $3, $4, $5)`,
       [
         'processarFila',
         duracaoMs,
@@ -582,7 +582,7 @@ const processarFila = async (req: Request, res: Response) => {
 
     await runQuery(
       `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
-       VALUES (?, datetime('now'), ?, ?, 0, ?)`,
+       VALUES ($1, NOW(), $2, $3, 0, $4)`,
       ['processarFila', duracaoMs, totalProcessadas, mensagemErro]
     );
 
@@ -618,7 +618,7 @@ const estatisticas = async (req: AuthRequest, res: Response) => {
 
     if (userPerfilId !== 1) {
       // Não é ADMIN: filtrar por id_usuario via JOIN com agendamento
-      whereClause = `WHERE n.id_usuario = ?`;
+      whereClause = `WHERE n.id_usuario = $1`;
       params = [userId];
     }
 
@@ -710,8 +710,8 @@ const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
 
     if (userPerfilId !== 1) {
       // Não é ADMIN: reprocessar apenas notificações do próprio usuário
-      whereClause += ` AND n.id_usuario = ?`;
       params.push(userId);
+      whereClause += ` AND n.id_usuario = $${params.length}`;
     }
 
     // Resetar notificações com falha
@@ -719,7 +719,7 @@ const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
       `UPDATE notificacao 
        SET status = 'Pendente',
            contador_tentativas = 0,
-           enviado_em = datetime('now'),
+           enviado_em = NOW(),
            erro_falha = NULL
          ${whereClause}
        `,
@@ -776,7 +776,7 @@ const catchUp = async (req: AuthRequest, res: Response) => {
       `SELECT id, id_agendamento, tipo, contador_tentativas, tipo_notificacao, id_usuario
        FROM notificacao 
        WHERE status = 'Pendente' 
-         AND (enviado_em IS NULL OR enviado_em <= datetime('now'))
+         AND (enviado_em IS NULL OR enviado_em <= NOW())
          AND contador_tentativas < 3
        ORDER BY enviado_em ASC, id ASC`
     );
@@ -804,7 +804,7 @@ const catchUp = async (req: AuthRequest, res: Response) => {
            FROM agendamento a
            INNER JOIN paciente p ON a.id_paciente = p.id
            INNER JOIN usuarios u ON a.id_usuario = u.id
-           WHERE a.id = ?`,
+           WHERE a.id = $1`,
           [notificacao.id_agendamento]
         );
 
@@ -813,7 +813,7 @@ const catchUp = async (req: AuthRequest, res: Response) => {
             `UPDATE notificacao 
              SET status = 'Falha', erro_falha = 'Dados inválidos',
                  contador_tentativas = contador_tentativas + 1
-             WHERE id = ?`,
+             WHERE id = $1`,
             [notificacao.id]
           );
           falhas++;
@@ -834,9 +834,9 @@ const catchUp = async (req: AuthRequest, res: Response) => {
         if (enviado) {
           await runQuery(
             `UPDATE notificacao 
-             SET status = 'Enviado', entregue_em = datetime('now'),
+             SET status = 'Enviado', entregue_em = NOW(),
                  contador_tentativas = contador_tentativas + 1
-             WHERE id = ?`,
+             WHERE id = $1`,
             [notificacao.id]
           );
           sucessos++;
@@ -846,8 +846,8 @@ const catchUp = async (req: AuthRequest, res: Response) => {
             await runQuery(
               `UPDATE notificacao 
                SET status = 'Falha', erro_falha = 'Limite de tentativas',
-                   contador_tentativas = ?
-               WHERE id = ?`,
+                   contador_tentativas = $1
+               WHERE id = $2`,
               [novoContador, notificacao.id]
             );
           }
@@ -865,7 +865,7 @@ const catchUp = async (req: AuthRequest, res: Response) => {
 
     await runQuery(
       `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
-       VALUES (?, datetime('now'), ?, ?, ?, ?)`,
+       VALUES ($1, NOW(), $2, $3, $4, $5)`,
       ['catchUp', duracaoMs, totalProcessadas, falhas === 0 ? 1 : 0, erros.join('; ') || null]
     );
 
@@ -908,20 +908,25 @@ const listar = async (req: AuthRequest, res: Response) => {
 
     // Filtrar por usuário se não ADMIN
     if (userPerfilId !== 1) {
-      whereClause += ` AND a.id_usuario = ?`;
       params.push(userId);
+      whereClause += ` AND a.id_usuario = $${params.length}`;
     }
 
     // Filtros opcionais
     if (status) {
-      whereClause += ` AND n.status = ?`;
       params.push(status);
+      whereClause += ` AND n.status = $${params.length}`;
     }
 
     if (tipo) {
-      whereClause += ` AND n.tipo = ?`;
       params.push(tipo);
+      whereClause += ` AND n.tipo = $${params.length}`;
     }
+
+    params.push(Number(limite));
+    const limiteIdx = params.length;
+    params.push(Number(offset));
+    const offsetIdx = params.length;
 
     const notificacoes = await getAll(
        ` SELECT n.id,
@@ -953,8 +958,8 @@ const listar = async (req: AuthRequest, res: Response) => {
               left join parametros pm on pm.id = pm.id
         WHERE ${whereClause}
         ORDER BY n.enviado_em DESC
-        LIMIT ? OFFSET ?`,
-      [...params, Number(limite), Number(offset)]
+        LIMIT $${limiteIdx} OFFSET $${offsetIdx}`,
+      params
     );
 
     return res.json(notificacoes);
