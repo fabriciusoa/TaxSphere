@@ -21,8 +21,8 @@ export const manutencaoController = {
   listar: async (req: AuthRequest, res: Response) => {
     try {
       const manutencoes = await getAll<Manutencao>(
-        `SELECT * FROM manutencoes
-         WHERE dt_excluido_em IS NULL
+        `SELECT * FROM sys_manutencao
+         WHERE excluded_at IS NULL
          ORDER BY dt_inicio DESC`
       );
       res.json(manutencoes);
@@ -44,14 +44,14 @@ export const manutencaoController = {
 
       const now = getCurrentTimestamp();
       const result = await runQuery(
-        `INSERT INTO manutencoes (descricao, dt_inicio, dt_fim, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO sys_manutencao (descricao, dt_inicio, dt_fim, status,usuario_id)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id`,
-        [descricao, dt_inicio, dt_fim || null, statusFinal, now, now]
+        [descricao, dt_inicio, dt_fim || null, statusFinal, req.user?.id]
       );
 
       const novaManutencao = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = $1',
+        'SELECT * FROM sys_manutencao WHERE id = $1',
         [result.id]
       );
 
@@ -73,7 +73,7 @@ export const manutencaoController = {
       const { descricao, dt_inicio, dt_fim, status } = parse.data;
 
       const manutencao = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = $1 AND dt_excluido_em IS NULL',
+        'SELECT * FROM sys_manutencao WHERE id = $1 AND excluded_at IS NULL',
         [id]
       );
 
@@ -82,7 +82,7 @@ export const manutencaoController = {
       }
 
       await runQuery(
-        `UPDATE manutencoes
+        `UPDATE sys_manutencao
          SET descricao = $1, dt_inicio = $2, dt_fim = $3, status = $4, updated_at = $5
          WHERE id = $6`,
         [
@@ -96,7 +96,7 @@ export const manutencaoController = {
       );
 
       const atualizada = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = $1',
+        'SELECT * FROM sys_manutencao WHERE id = $1',
         [id]
       );
 
@@ -112,7 +112,7 @@ export const manutencaoController = {
       const { id } = req.params;
 
       const manutencao = await getOne<Manutencao>(
-        'SELECT * FROM manutencoes WHERE id = $1 AND dt_excluido_em IS NULL',
+        'SELECT * FROM sys_manutencao WHERE id = $1 AND excluded_at IS NULL',
         [id]
       );
 
@@ -122,7 +122,7 @@ export const manutencaoController = {
 
       const now = getCurrentTimestamp();
       await runQuery(
-        'UPDATE manutencoes SET dt_excluido_em = $1, updated_at = $2 WHERE id = $3',
+        'UPDATE sys_manutencao SET excluded_at = $1, updated_at = $2 WHERE id = $3',
         [now, now, id]
       );
 
@@ -136,8 +136,8 @@ export const manutencaoController = {
   ativas: async (req: AuthRequest, res: Response) => {
     try {
       const manutencoes = await getAll<Manutencao>(
-        `SELECT * FROM manutencoes
-         WHERE dt_excluido_em IS NULL
+        `SELECT * FROM sys_manutencao
+         WHERE excluded_at IS NULL
            AND (
              status = 'em_execucao'
              OR (status = 'planejada' AND dt_inicio <= NOW() + INTERVAL '5 days')

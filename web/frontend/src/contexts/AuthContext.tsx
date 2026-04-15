@@ -10,6 +10,7 @@ export interface AuthUser {
   perfil: string;
   perfil_id: number;
   status: string;
+  adm_mindtax: boolean;
 }
 
 interface AuthContextType {
@@ -55,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           sessionStorage.removeItem(USER_CACHE_KEY);
         } else {
-          logger.warn('Erro de rede ao validar sessão, mantendo cache', { error: error?.message });
+          logger.error('Erro de rede ao validar sessão, mantendo cache', { error: error?.message });
         }
       })
       .finally(() => setLoading(false));

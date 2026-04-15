@@ -18,8 +18,8 @@ export const loginLogController = {
         SELECT 
           ll.*,
           u.nome as usuario_nome
-        FROM login_log ll
-        LEFT JOIN usuarios u ON ll.usuario_id = u.id
+        FROM sys_login_log ll
+        LEFT JOIN adm_usuarios u ON ll.usuario_id = u.id
         WHERE 1=1
       `;
       const params: any[] = [];

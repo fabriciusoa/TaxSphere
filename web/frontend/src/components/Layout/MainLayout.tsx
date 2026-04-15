@@ -93,7 +93,7 @@ export default function MainLayout({ children }: Props) {
   const [openMenus, setOpenMenus] = useState<{ [key: string]: boolean }>({});
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
-  const isAdmin = user?.perfil === 'ADMIN';
+  const isAdmin = user?.adm_mindtax === true;
 
   useEffect(() => {
     if (isAdmin) return;

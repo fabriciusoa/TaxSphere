@@ -19,7 +19,7 @@ export const authController = {
 
     try {
       const usuario = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE email = $1',
+        'SELECT * FROM adm_usuarios WHERE email = $1',
         [email]
      );
 
@@ -58,7 +58,7 @@ export const authController = {
         return res.status(400).json({ error: 'A senha não atende aos critérios de segurança' });
       }
 
-      const usuario = await getOne<Usuario>('SELECT * FROM usuarios WHERE email = $1', [email]);
+      const usuario = await getOne<Usuario>('SELECT * FROM adm_usuarios WHERE email = $1', [email]);
       if (!usuario) {
         return res.status(404).json({ error: 'Usuário não encontrado' });
       }
@@ -67,12 +67,12 @@ export const authController = {
         return res.status(401).json({ error: 'E-mail e CPF não conferem' });
       }
 
-      if (usuario!.status.toLowerCase() !== 'ativo') {
+      if (!usuario!.status) {
         return res.status(403).json({ error: 'Conta inativa' });
       }
 
       const hash = await bcrypt.hash(newPassword, 10);
-      await runQuery('UPDATE usuarios SET senha = $1, tentativas_login = 0, dt_bloqueio = NULL WHERE id = $2', [hash, usuario!.id]);
+      await runQuery('UPDATE adm_usuarios SET senha = $1, tentativas_login = 0, dt_bloqueio = NULL WHERE id = $2', [hash, usuario!.id]);
 
       return res.status(200).json({ message: 'Senha alterada com sucesso' });
     } catch (error: any) {
@@ -99,15 +99,15 @@ export const authController = {
 
       // Buscar parâmetros
       const limiteTentativas = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = $1',
+        'SELECT * FROM sys_parametros WHERE chave = $1',
         ['limite_tentativas_login']
       );
       const tempoBloqueio = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = $1',
+        'SELECT * FROM sys_parametros WHERE chave = $1',
         ['tempo_bloqueio_minutos']
       );
       const tempoSessao = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = $1',
+        'SELECT * FROM sys_parametros WHERE chave = $1',
         ['tempo_sessao_horas']
       );
 
@@ -117,7 +117,7 @@ export const authController = {
 
       // Buscar usuário
       const usuario = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE email = $1',
+        'SELECT * FROM adm_usuarios WHERE email = $1',
         [email]
       );
 
@@ -130,9 +130,9 @@ export const authController = {
       if (!usuario) {
         // Registrar tentativa falha - usuário não encontrado
         await runQuery(
-          `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+          `INSERT INTO sys_login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [null, email, 'nao', ip, userAgent, 'usuario_nao_encontrado', getCurrentTimestamp()]
+          [null, email, false, ip, userAgent, 'usuario_nao_encontrado', getCurrentTimestamp()]
         );
         // Rastrear falha por IP (detecção de credential stuffing)
         if (ip) recordLoginFailure(ip);
@@ -140,11 +140,11 @@ export const authController = {
       }
 
       // Verificar se conta está ativa
-      if (usuario.status.toLowerCase() !== 'ativo') {
+      if (!usuario.status) {
         await runQuery(
-          `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+          `INSERT INTO sys_login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [usuario.id, email, 'nao', ip, userAgent, 'conta_inativa', getCurrentTimestamp()]
+          [usuario.id, email, false, ip, userAgent, 'conta_inativa', getCurrentTimestamp()]
         );
         return res.status(403).json({ error: 'Conta inativa' });
       }
@@ -157,9 +157,9 @@ export const authController = {
 
         if (isBefore(agora, dataExpiracao)) {
           await runQuery(
-            `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+            `INSERT INTO sys_login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [usuario.id, email, 'nao', ip, userAgent, 'conta_bloqueada', getCurrentTimestamp()]
+            [usuario.id, email, false, ip, userAgent, 'conta_bloqueada', getCurrentTimestamp()]
           );
 
           const minutosRestantes = Math.ceil((dataExpiracao.getTime() - agora.getTime()) / 60000);
@@ -171,7 +171,7 @@ export const authController = {
         } else {
           // Bloqueio expirou, resetar
           await runQuery(
-            'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL WHERE id = $1',
+            'UPDATE adm_usuarios SET tentativas_login = 0, dt_bloqueio = NULL WHERE id = $1',
             [usuario.id]
           );
         }
@@ -189,15 +189,15 @@ export const authController = {
           const txClient = await beginTransaction();
           try {
             await runQuery(
-              'UPDATE usuarios SET tentativas_login = $1, dt_bloqueio = $2 WHERE id = $3',
+              'UPDATE adm_usuarios SET tentativas_login = $1, dt_bloqueio = $2 WHERE id = $3',
               [novasTentativas, getCurrentTimestamp(), usuario.id],
               txClient
             );
 
             await runQuery(
-              `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+              `INSERT INTO sys_login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [usuario.id, email, 'nao', ip, userAgent, 'senha_invalida_bloqueio', getCurrentTimestamp()],
+              [usuario.id, email, false, ip, userAgent, 'senha_invalida_bloqueio', getCurrentTimestamp()],
               txClient
             );
             await commitTransaction(txClient);
@@ -215,14 +215,14 @@ export const authController = {
         } else {
           // Apenas incrementar tentativas
           await runQuery(
-            'UPDATE usuarios SET tentativas_login = $1 WHERE id = $2',
+            'UPDATE adm_usuarios SET tentativas_login = $1 WHERE id = $2',
             [novasTentativas, usuario.id]
           );
 
           await runQuery(
-            `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+            `INSERT INTO sys_login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [usuario.id, email, 'nao', ip, userAgent, 'senha_invalida', getCurrentTimestamp()]
+            [usuario.id, email, false, ip, userAgent, 'senha_invalida', getCurrentTimestamp()]
           );
           if (ip) recordLoginFailure(ip);
           log.error(`Senha inválida: ${email}, IP: ${ip}, User-Agent: ${userAgent}, tentativas restantes: ${limite - novasTentativas}`);
@@ -236,16 +236,16 @@ export const authController = {
       }
 
       // Buscar nome do perfil (antes de qualquer atualização no banco)
-      const perfil = await getOne<{ perfil: string }>(
-        'SELECT perfil FROM perfil WHERE id = $1',
+      const perfil = await getOne<{ perfil: string; adm_mindtax: boolean }>(
+        'SELECT perfil, adm_mindtax FROM adm_perfil WHERE id = $1',
         [usuario.perfil]
       );
 
       // Verificar se há manutenção em andamento — bloqueia não-admins
-      if (perfil?.perfil !== 'ADMIN') {
+      if (!perfil?.adm_mindtax) {
         const manutencaoAtiva = await getOne<{ descricao: string; dt_fim: string | null }>(
-          `SELECT descricao, dt_fim FROM manutencoes
-           WHERE status = 'em_execucao' AND dt_excluido_em IS NULL
+          `SELECT descricao, dt_fim FROM sys_manutencao
+           WHERE status = 'em_execucao' AND excluded_at IS NULL
            LIMIT 1`
         );
         if (manutencaoAtiva) {
@@ -266,7 +266,7 @@ export const authController = {
       const txClient = await beginTransaction();
       try {
         await runQuery(
-          'UPDATE usuarios SET tentativas_login = 0, dt_bloqueio = NULL, ultimo_login = $1 WHERE id = $2',
+          'UPDATE adm_usuarios SET tentativas_login = 0, dt_bloqueio = NULL, ultimo_login = $1 WHERE id = $2',
           [getCurrentTimestamp(), usuario.id],
           txClient
         );
@@ -275,9 +275,9 @@ export const authController = {
 
         // Registrar login bem-sucedido
         await runQuery(
-          `INSERT INTO login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
+          `INSERT INTO sys_login_log (usuario_id, email_tentativa, sucesso, ip_address, user_agent, motivo_falha, timestamp)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [usuario.id, email, 'sim', ip, userAgent, null, getCurrentTimestamp()],
+          [usuario.id, email, true, ip, userAgent, null, getCurrentTimestamp()],
           txClient
         );
         await commitTransaction(txClient);
@@ -291,7 +291,8 @@ export const authController = {
         id: usuario.id,
         email: usuario.email,
         perfil: perfil?.perfil || '',
-        perfil_id: usuario.perfil
+        perfil_id: usuario.perfil,
+        adm_mindtax: perfil?.adm_mindtax || false
       };
 
       const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -318,7 +319,8 @@ export const authController = {
           cpf: usuario.cpf,
           perfil: perfil?.perfil,
           perfil_id: usuario.perfil,
-          status: usuario.status
+          status: usuario.status,
+          adm_mindtax: perfil?.adm_mindtax || false
         }
       });
     } catch (error: any) {
@@ -336,7 +338,7 @@ export const authController = {
 
       // Buscar usuário no banco
       const usuario = await getOne<Usuario>(
-        'SELECT * FROM usuarios WHERE id = $1',
+        'SELECT * FROM adm_usuarios WHERE id = $1',
         [req.user.id]
       );
 
@@ -345,14 +347,14 @@ export const authController = {
       }
 
       // Verificar se conta está ativa (LOWER para compatibilidade 'Ativo'/'ativo')
-      if (usuario.status.toLowerCase() !== 'ativo') {
+      if (!usuario.status) {
         return res.status(403).json({ error: 'Conta inativa. Não é possível renovar a sessão.' });
       }
 
       // Verificar se conta está bloqueada
       if (usuario.dt_bloqueio) {
         const tempoBloqueio = await getOne<Parametro>(
-          'SELECT * FROM parametros WHERE chave = $1',
+          'SELECT * FROM sys_parametros WHERE chave = $1',
           ['tempo_bloqueio_minutos']
         );
         const bloqueioMinutos = parseInt(tempoBloqueio?.valor || '30');
@@ -367,14 +369,14 @@ export const authController = {
 
       // Buscar tempo de sessão
       const tempoSessao = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE chave = $1',
+        'SELECT * FROM sys_parametros WHERE chave = $1',
         ['tempo_sessao_horas']
       );
       const sessaoHoras = parseInt(tempoSessao?.valor || '8');
 
       // Buscar nome do perfil
-      const perfil = await getOne<{ perfil: string }>(
-        'SELECT perfil FROM perfil WHERE id = $1',
+      const perfil = await getOne<{ perfil: string; adm_mindtax: boolean }>(
+        'SELECT perfil, adm_mindtax FROM adm_perfil WHERE id = $1',
         [usuario.perfil]
       );
 
@@ -383,7 +385,8 @@ export const authController = {
         id: usuario.id,
         email: usuario.email,
         perfil: perfil?.perfil || '',
-        perfil_id: usuario.perfil
+        perfil_id: usuario.perfil,
+        adm_mindtax: perfil?.adm_mindtax || false
       };
 
       const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -415,8 +418,8 @@ export const authController = {
 
       // LOWER(status) = 'ativo' para compatibilidade com 'Ativo' e 'ativo' no banco
       const usuario = await getOne<Usuario>(
-        'SELECT id, nome, email, cpf, perfil, status FROM usuarios WHERE id = $1 AND LOWER(status) = $2',
-        [req.user.id, 'ativo']
+        'SELECT id, nome, email, cpf, perfil, status FROM adm_usuarios WHERE id = $1 AND status = $2',
+        [req.user.id, true]
       );
 
       if (!usuario) {
@@ -430,8 +433,8 @@ export const authController = {
         return res.status(401).json({ error: 'Usuário não encontrado ou inativo' });
       }
 
-      const perfil = await getOne<{ perfil: string }>(
-        'SELECT perfil FROM perfil WHERE id = $1',
+      const perfil = await getOne<{ perfil: string; adm_mindtax: boolean }>(
+        'SELECT perfil, adm_mindtax FROM adm_perfil WHERE id = $1',
         [usuario.perfil]
       );
 
@@ -442,6 +445,7 @@ export const authController = {
         cpf: usuario.cpf,
         perfil: perfil?.perfil || req.user.perfil,
         perfil_id: usuario.perfil,
+        adm_mindtax: perfil?.adm_mindtax || false,
         status: usuario.status
       });
     } catch (error: any) {

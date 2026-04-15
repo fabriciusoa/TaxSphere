@@ -10,7 +10,7 @@ export const parametrosController = {
   listar: async (req: AuthRequest, res: Response) => {
     try {
       const parametros = await getAll<Parametro>(
-        'SELECT * FROM parametros ORDER BY chave'
+        'SELECT * FROM sys_parametros ORDER BY chave'
       );
       res.json(parametros);
     } catch (error: any) {
@@ -24,7 +24,7 @@ export const parametrosController = {
     try {
       const { id } = req.params;
       const parametro = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE id = $1',
+        'SELECT * FROM sys_parametros WHERE id = $1',
         [id]
       );
 
@@ -51,7 +51,7 @@ export const parametrosController = {
 
       // Verificar se parâmetro existe
       const parametro = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE id = $1',
+        'SELECT * FROM sys_parametros WHERE id = $1',
         [id]
       );
       if (!parametro) {
@@ -80,12 +80,12 @@ export const parametrosController = {
 
       valores.push(id);
       await runQuery(
-        `UPDATE parametros SET ${campos.join(', ')} WHERE id = $${valores.length}`,
+        `UPDATE sys_parametros SET ${campos.join(', ')} WHERE id = $${valores.length}`,
         valores
       );
 
       const parametroAtualizado = await getOne<Parametro>(
-        'SELECT * FROM parametros WHERE id = $1',
+        'SELECT * FROM sys_parametros WHERE id = $1',
         [id]
       );
 
@@ -100,7 +100,7 @@ export const parametrosController = {
   obterStripePublishableKey: async (req: AuthRequest, res: Response) => {
     try {
       const nodeEnv = await getOne<Parametro>(
-        'SELECT valor FROM parametros WHERE chave = $1',
+        'SELECT valor FROM sys_parametros WHERE chave = $1',
         ['NODE_ENV']
       );
 
@@ -108,7 +108,7 @@ export const parametrosController = {
       const chaveParam = isDev ? 'DES_STRIPE_CHAVE_PUB' : 'PRD_STRIPE_CHAVE_PUB';
 
       const publishableKey = await getOne<Parametro>(
-        'SELECT valor FROM parametros WHERE chave = $1',
+        'SELECT valor FROM sys_parametros WHERE chave = $1',
         [chaveParam]
       );
 

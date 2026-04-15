@@ -13,13 +13,13 @@ export const alterarSenha = async (req: Request, res: Response) => {
     }
 
     // Buscar usuário
-		const usuario = await getOne<any>('SELECT * FROM usuarios WHERE id = $1', [id]);
+		const usuario = await getOne<any>('SELECT * FROM adm_usuarios WHERE id = $1', [id]);
     if (!usuario) {
       return res.status(404).json({ message: 'Usuário não encontrado' });
     }
 
     // Verificar se o usuário está ativo
-    if (usuario.status.toLowerCase() !== 'ativo') {
+    if (!usuario.status) {
       return res.status(403).json({ message: 'Usuário inativo' });
     }
 
@@ -50,7 +50,7 @@ export const alterarSenha = async (req: Request, res: Response) => {
     const novaSenhaHash = await bcrypt.hash(novaSenha, 10);
 
     // Atualizar senha
-		await runQuery('UPDATE usuarios SET senha = $1 WHERE id = $2', [novaSenhaHash, id]);
+		await runQuery('UPDATE adm_usuarios SET senha = $1 WHERE id = $2', [novaSenhaHash, id]);
     return res.json({ message: 'Senha alterada com sucesso' });
   } catch (error: any) {
     log.error(`Erro ao alterar senha: ${error.message}`);
