@@ -6,7 +6,6 @@ export interface Usuario {
   cpf: string;
   nome: string;
   senha: string;
-  perfil: number;
   adm_mindtax?: boolean;
   status?: boolean;
   criado: string;
@@ -51,12 +50,22 @@ export interface LoginLog {
 export interface JWTPayload {
   id: number;
   email: string;
-  perfil: string;
-  perfil_id: number;
   nome?: string;
   adm_mindtax?: boolean;
+  user_permissoes?: UserPermissoes[];
 }
 
+export interface UserPermissoes {
+  usuario_id: number;
+  perfil: string;
+  adm_mindtax?: boolean;
+  modulo?: string | null;
+  funcionalidade?: string | null;
+  inserir?: boolean;
+  excluir?: boolean;
+  consultar?: boolean;
+  alterar?: boolean;
+}
 export interface AuthRequest extends Request {
   user?: JWTPayload;
 }

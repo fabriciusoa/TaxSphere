@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
-import { Usuario, Parametro, AuthRequest, JWTPayload } from '../types';
+import { getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction, getAll } from '../database/connection';
+import { Usuario, Parametro, AuthRequest, JWTPayload, UserPermissoes } from '../types';
 import { loginSchema } from '../validators/schemas';
 import { getCurrentTimestamp, fromISO8601, addMinutes, isBefore } from '../utils/dateHelpers';
 import { recordLoginFailure, resetLoginFailures } from '../middleware/adaptiveRateLimit';
@@ -21,7 +21,7 @@ export const authController = {
       const usuario = await getOne<Usuario>(
         'SELECT * FROM adm_usuarios WHERE email = $1',
         [email]
-     );
+      );
 
       if (!usuario) {
         return res.status(404).json({ error: 'Usuário não encontrado' });
@@ -36,8 +36,8 @@ export const authController = {
       log.error(`Erro ao validar reset: ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
-  },  
-  
+  },
+
   // Reset de senha sem autenticação (valida email + cpf)
   reset_password: async (req: Request, res: Response) => {
     try {
@@ -235,14 +235,13 @@ export const authController = {
         }
       }
 
-      // Buscar nome do perfil (antes de qualquer atualização no banco)
-      const perfil = await getOne<{ perfil: string; adm_mindtax: boolean }>(
-        'SELECT perfil, adm_mindtax FROM adm_perfil WHERE id = $1',
-        [usuario.perfil]
+      // Verifica se o usuário é administrador geral do sistema
+      const perfilADM = await getOne<{ adm_mindtax: boolean }>(
+        'SELECT distinct ap.adm_mindtax FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
+        [usuario.id]
       );
-
       // Verificar se há manutenção em andamento — bloqueia não-admins
-      if (!perfil?.adm_mindtax) {
+      if (!perfilADM?.adm_mindtax) {
         const manutencaoAtiva = await getOne<{ descricao: string; dt_fim: string | null }>(
           `SELECT descricao, dt_fim FROM sys_manutencao
            WHERE status = 'em_execucao' AND excluded_at IS NULL
@@ -251,15 +250,44 @@ export const authController = {
         if (manutencaoAtiva) {
           const dtFimMsg = manutencaoAtiva.dt_fim
             ? ` até ${new Date(manutencaoAtiva.dt_fim).toLocaleString('pt-BR', {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit'
-              })}`
+              day: '2-digit', month: '2-digit', year: 'numeric',
+              hour: '2-digit', minute: '2-digit'
+            })}`
             : '';
           return res.status(403).json({
             error: 'manutencao_em_execucao',
             message: `Sistema em manutenção${dtFimMsg}. Tente novamente mais tarde.`
           });
         }
+      }
+
+      //validar o permissionamento do usuário, permissões mais granulares
+      let user_permissoes: UserPermissoes[] | undefined;
+      try {
+         user_permissoes = await getAll<UserPermissoes>(`
+            select au.id usuario_id,
+                    ap.perfil,
+                    ap.adm_mindtax,
+                    sm.modulo,
+                    sf.funcionalidade,
+                    app.inserir,
+                    app.excluir,
+                    app.consultar,
+                    app.alterar,
+                    aup.dt_inativacao
+              from adm_usuarios_perfil aup
+            inner join adm_usuarios au on au.id = aup.usuario_id
+            inner join adm_perfil ap on ap.id = aup.perfil_id
+              left join adm_perfil_permissao app on app.perfil_id = ap.id
+              left join sys_funcionalidade sf on sf.id = app.funcionalidade_id
+              left join sys_modulo sm on sm.id = sf.modulo_id
+            where au.id = $1
+              and aup.dt_inativacao is null
+          `, [usuario.id]);
+
+      } catch (error: any) {
+        log.error(`Erro ao buscar as permissões do usuário: ${error.message}`);
+        res.status(500).json({ error: 'Erro ao buscar as permissões do usuário' });
       }
 
       // Login bem-sucedido - resetar tentativas e atualizar último login
@@ -290,9 +318,8 @@ export const authController = {
       const payload: JWTPayload = {
         id: usuario.id,
         email: usuario.email,
-        perfil: perfil?.perfil || '',
-        perfil_id: usuario.perfil,
-        adm_mindtax: perfil?.adm_mindtax || false
+        user_permissoes: user_permissoes,
+        adm_mindtax: perfilADM?.adm_mindtax || false
       };
 
       const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -317,10 +344,9 @@ export const authController = {
           nome: usuario.nome,
           email: usuario.email,
           cpf: usuario.cpf,
-          perfil: perfil?.perfil,
-          perfil_id: usuario.perfil,
           status: usuario.status,
-          adm_mindtax: perfil?.adm_mindtax || false
+          adm_mindtax: perfilADM?.adm_mindtax || false,
+          user_permissoes: user_permissoes
         }
       });
     } catch (error: any) {
@@ -374,19 +400,47 @@ export const authController = {
       );
       const sessaoHoras = parseInt(tempoSessao?.valor || '8');
 
-      // Buscar nome do perfil
-      const perfil = await getOne<{ perfil: string; adm_mindtax: boolean }>(
-        'SELECT perfil, adm_mindtax FROM adm_perfil WHERE id = $1',
-        [usuario.perfil]
+      // Verifica se o usuário é administrador geral do sistema
+      const perfilADM = await getOne<{ adm_mindtax: boolean }>(
+        'SELECT distinct ap.adm_mindtax FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
+        [usuario.id]
       );
+
+      //validar o permissionamento do usuário, permissões mais granulares
+      let user_permissoes: UserPermissoes[] | undefined;
+      try {
+         user_permissoes = await getAll<UserPermissoes>(`
+            select au.id usuario_id,
+                    ap.perfil,
+                    ap.adm_mindtax,
+                    sm.modulo,
+                    sf.funcionalidade,
+                    app.inserir,
+                    app.excluir,
+                    app.consultar,
+                    app.alterar,
+                    aup.dt_inativacao
+              from adm_usuarios_perfil aup
+            inner join adm_usuarios au on au.id = aup.usuario_id
+            inner join adm_perfil ap on ap.id = aup.perfil_id
+              left join adm_perfil_permissao app on app.perfil_id = ap.id
+              left join sys_funcionalidade sf on sf.id = app.funcionalidade_id
+              left join sys_modulo sm on sm.id = sf.modulo_id
+            where au.id = $1
+              and aup.dt_inativacao is null
+          `, [usuario.id]);
+
+      } catch (error: any) {
+        log.error(`Erro ao buscar as permissões do usuário: ${error.message}`);
+        res.status(500).json({ error: 'Erro ao buscar as permissões do usuário' });
+      }
 
       // Gerar novo token
       const payload: JWTPayload = {
         id: usuario.id,
         email: usuario.email,
-        perfil: perfil?.perfil || '',
-        perfil_id: usuario.perfil,
-        adm_mindtax: perfil?.adm_mindtax || false
+        user_permissoes: user_permissoes,
+        adm_mindtax: perfilADM?.adm_mindtax || false
       };
 
       const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -433,19 +487,48 @@ export const authController = {
         return res.status(401).json({ error: 'Usuário não encontrado ou inativo' });
       }
 
-      const perfil = await getOne<{ perfil: string; adm_mindtax: boolean }>(
-        'SELECT perfil, adm_mindtax FROM adm_perfil WHERE id = $1',
-        [usuario.perfil]
+      // Verifica se o usuário é administrador geral do sistema
+      const perfilADM = await getOne<{ adm_mindtax: boolean }>(
+        'SELECT distinct ap.adm_mindtax FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
+        [usuario.id]
       );
+
+      //validar o permissionamento do usuário, permissões mais granulares
+      let user_permissoes: UserPermissoes[] | undefined;
+      try {
+         user_permissoes = await getAll<UserPermissoes>(`
+            select au.id usuario_id,
+                    ap.perfil,
+                    ap.adm_mindtax,
+                    sm.modulo,
+                    sf.funcionalidade,
+                    app.inserir,
+                    app.excluir,
+                    app.consultar,
+                    app.alterar,
+                    aup.dt_inativacao
+              from adm_usuarios_perfil aup
+            inner join adm_usuarios au on au.id = aup.usuario_id
+            inner join adm_perfil ap on ap.id = aup.perfil_id
+              left join adm_perfil_permissao app on app.perfil_id = ap.id
+              left join sys_funcionalidade sf on sf.id = app.funcionalidade_id
+              left join sys_modulo sm on sm.id = sf.modulo_id
+            where au.id = $1
+              and aup.dt_inativacao is null
+          `, [usuario.id]);
+
+      } catch (error: any) {
+        log.error(`Erro ao buscar as permissões do usuário: ${error.message}`);
+        res.status(500).json({ error: 'Erro ao buscar as permissões do usuário' });
+      }
 
       res.json({
         id: usuario.id,
         nome: usuario.nome,
         email: usuario.email,
         cpf: usuario.cpf,
-        perfil: perfil?.perfil || req.user.perfil,
-        perfil_id: usuario.perfil,
-        adm_mindtax: perfil?.adm_mindtax || false,
+        adm_mindtax: perfilADM?.adm_mindtax || false,
+        user_permissoes: user_permissoes,
         status: usuario.status
       });
     } catch (error: any) {

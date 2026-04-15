@@ -95,6 +95,10 @@ export default function MainLayout({ children }: Props) {
 
   const isAdmin = user?.adm_mindtax === true;
 
+  //finalizar esse ponto, visto que não consigo acessar o user.UserPermissoes aqui, mesmo após adicionar no backend e frontend
+  const UserPermissoes = user?.UserPermissoes || [];
+  console.error('Permissões do usuário:', UserPermissoes);
+
   useEffect(() => {
     if (isAdmin) return;
 
@@ -114,7 +118,7 @@ export default function MainLayout({ children }: Props) {
     const interval = setInterval(verificarManutencao, 15 * 60 * 1000);
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
+/*
   useEffect(() => {
     const path = location.pathname;
     const toOpen: Record<string, boolean> = {};
@@ -137,7 +141,7 @@ export default function MainLayout({ children }: Props) {
       setOpenMenus(prev => ({ ...prev, ...toOpen }));
     }
   }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
-
+*/
   const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
 
   const handleMenuClick = (menu: string) => {

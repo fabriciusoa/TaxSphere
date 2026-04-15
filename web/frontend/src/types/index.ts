@@ -3,8 +3,6 @@ export interface Usuario {
   nome: string;
   email: string;
   cpf: string;
-  perfil: string;
-  perfil_id: number;
   status: string;
   criado?: string | null;
   dt_inativacao?: string | null;
@@ -15,10 +13,7 @@ export interface Usuario {
   dt_bloqueio?: string | null;
 }
 
-export interface Perfil {
-  id: number;
-  perfil: string;
-}
+
 
 export interface Parametro {
   id: number;
@@ -54,8 +49,6 @@ export interface LoginLogPaginado {
     totalPages: number;
   };
 }
-
-export type PerfilEnum = 'ADMIN' | 'MEDICO' | 'GERENTE' | 'RELATORIO';
 
 // ============================================
 // TIPOS PARA SISTEMA DE CHAMADOS

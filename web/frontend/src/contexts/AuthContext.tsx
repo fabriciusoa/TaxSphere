@@ -11,6 +11,19 @@ export interface AuthUser {
   perfil_id: number;
   status: string;
   adm_mindtax: boolean;
+  UserPermissoes: UserPermissoes[];
+}
+
+export interface UserPermissoes {
+  usuario_id: number;
+  perfil: string;
+  adm_mindtax?: boolean;
+  modulo?: string | null;
+  funcionalidade?: string | null;
+  inserir?: boolean;
+  excluir?: boolean;
+  consultar?: boolean;
+  alterar?: boolean;
 }
 
 interface AuthContextType {
