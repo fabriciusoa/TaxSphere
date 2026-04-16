@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction, getAll } from '../database/connection';
-import { Usuario, Parametro, AuthRequest, JWTPayload, UserPermissoes } from '../types';
+import { Usuario, Parametro, AuthRequest, JWTPayload, UserModulos, UserFuncionalidade } from '../types';
 import { loginSchema } from '../validators/schemas';
 import { getCurrentTimestamp, fromISO8601, addMinutes, isBefore } from '../utils/dateHelpers';
 import { recordLoginFailure, resetLoginFailures } from '../middleware/adaptiveRateLimit';
@@ -262,19 +262,14 @@ export const authController = {
       }
 
       //validar o permissionamento do usuário, permissões mais granulares
-      let user_permissoes: UserPermissoes[] | undefined;
-      try {
-         user_permissoes = await getAll<UserPermissoes>(`
-            select au.id usuario_id,
+      let user_modulos: UserModulos[] | undefined;
+
+      user_modulos = await getAll<UserModulos>(`
+            select distinct au.id usuario_id,
                     ap.perfil,
                     ap.adm_mindtax,
-                    sm.modulo,
-                    sf.funcionalidade,
-                    app.inserir,
-                    app.excluir,
-                    app.consultar,
-                    app.alterar,
-                    aup.dt_inativacao
+                    sm.id modulo_id,
+                    sm.modulo
               from adm_usuarios_perfil aup
             inner join adm_usuarios au on au.id = aup.usuario_id
             inner join adm_perfil ap on ap.id = aup.perfil_id
@@ -285,10 +280,33 @@ export const authController = {
               and aup.dt_inativacao is null
           `, [usuario.id]);
 
-      } catch (error: any) {
-        log.error(`Erro ao buscar as permissões do usuário: ${error.message}`);
-        res.status(500).json({ error: 'Erro ao buscar as permissões do usuário' });
-      }
+      // Buscar funcionalidades de cada módulo
+      user_modulos = await Promise.all(
+        user_modulos.map(async (modulo) => {
+          const funcionalidades = await getAll<UserFuncionalidade>(
+            ` select distinct
+                    aup.usuario_id,
+                    sm.modulo,
+                    sf.funcionalidade,
+                    app.inserir,
+                    app.excluir,
+                    app.consultar,
+                    app.alterar
+                  from adm_usuarios_perfil aup
+                inner join adm_usuarios au on au.id = aup.usuario_id
+                inner join adm_perfil ap on ap.id = aup.perfil_id
+                  left join adm_perfil_permissao app on app.perfil_id = ap.id
+                  left join sys_funcionalidade sf on sf.id = app.funcionalidade_id
+                  left join sys_modulo sm on sm.id = sf.modulo_id
+                where aup.dt_inativacao is null
+            and sm.modulo is not null
+            and aup.usuario_id = $1
+            and sm.id = $2`,
+            [usuario.id, modulo.modulo_id]
+          );
+          return { ...modulo, user_funcionalidade: funcionalidades };
+        })
+      );
 
       // Login bem-sucedido - resetar tentativas e atualizar último login
       const txClient = await beginTransaction();
@@ -318,7 +336,7 @@ export const authController = {
       const payload: JWTPayload = {
         id: usuario.id,
         email: usuario.email,
-        user_permissoes: user_permissoes,
+        user_modulos: user_modulos,
         adm_mindtax: perfilADM?.adm_mindtax || false
       };
 
@@ -346,7 +364,7 @@ export const authController = {
           cpf: usuario.cpf,
           status: usuario.status,
           adm_mindtax: perfilADM?.adm_mindtax || false,
-          user_permissoes: user_permissoes
+          user_modulos: user_modulos
         }
       });
     } catch (error: any) {
@@ -407,19 +425,14 @@ export const authController = {
       );
 
       //validar o permissionamento do usuário, permissões mais granulares
-      let user_permissoes: UserPermissoes[] | undefined;
+      let user_modulos: UserModulos[] | undefined;
       try {
-         user_permissoes = await getAll<UserPermissoes>(`
-            select au.id usuario_id,
+        user_modulos = await getAll<UserModulos>(`
+            select distinct au.id usuario_id,
                     ap.perfil,
                     ap.adm_mindtax,
-                    sm.modulo,
-                    sf.funcionalidade,
-                    app.inserir,
-                    app.excluir,
-                    app.consultar,
-                    app.alterar,
-                    aup.dt_inativacao
+                    sm.id modulo_id,
+                    sm.modulo
               from adm_usuarios_perfil aup
             inner join adm_usuarios au on au.id = aup.usuario_id
             inner join adm_perfil ap on ap.id = aup.perfil_id
@@ -430,6 +443,33 @@ export const authController = {
               and aup.dt_inativacao is null
           `, [usuario.id]);
 
+        user_modulos = await Promise.all(
+          user_modulos.map(async (modulo) => {
+            const funcionalidades = await getAll<UserFuncionalidade>(
+              ` select distinct
+                    aup.usuario_id,
+                    sm.modulo,
+                    sf.funcionalidade,
+                    app.inserir,
+                    app.excluir,
+                    app.consultar,
+                    app.alterar
+                  from adm_usuarios_perfil aup
+                inner join adm_usuarios au on au.id = aup.usuario_id
+                inner join adm_perfil ap on ap.id = aup.perfil_id
+                  left join adm_perfil_permissao app on app.perfil_id = ap.id
+                  left join sys_funcionalidade sf on sf.id = app.funcionalidade_id
+                  left join sys_modulo sm on sm.id = sf.modulo_id
+                where aup.dt_inativacao is null
+            and sm.modulo is not null
+            and aup.usuario_id = $1
+            and sm.id = $2`,
+              [usuario.id, modulo.modulo_id]
+            );
+            return { ...modulo, user_funcionalidade: funcionalidades };
+          })
+        );
+
       } catch (error: any) {
         log.error(`Erro ao buscar as permissões do usuário: ${error.message}`);
         res.status(500).json({ error: 'Erro ao buscar as permissões do usuário' });
@@ -439,7 +479,7 @@ export const authController = {
       const payload: JWTPayload = {
         id: usuario.id,
         email: usuario.email,
-        user_permissoes: user_permissoes,
+        user_modulos: user_modulos,
         adm_mindtax: perfilADM?.adm_mindtax || false
       };
 
@@ -472,7 +512,7 @@ export const authController = {
 
       // LOWER(status) = 'ativo' para compatibilidade com 'Ativo' e 'ativo' no banco
       const usuario = await getOne<Usuario>(
-        'SELECT id, nome, email, cpf, perfil, status FROM adm_usuarios WHERE id = $1 AND status = $2',
+        'SELECT id, nome, email, cpf, status FROM adm_usuarios WHERE id = $1 AND status = $2',
         [req.user.id, true]
       );
 
@@ -494,19 +534,14 @@ export const authController = {
       );
 
       //validar o permissionamento do usuário, permissões mais granulares
-      let user_permissoes: UserPermissoes[] | undefined;
+      let user_modulos: UserModulos[] | undefined;
       try {
-         user_permissoes = await getAll<UserPermissoes>(`
-            select au.id usuario_id,
+        user_modulos = await getAll<UserModulos>(`
+            select distinct au.id usuario_id,
                     ap.perfil,
                     ap.adm_mindtax,
-                    sm.modulo,
-                    sf.funcionalidade,
-                    app.inserir,
-                    app.excluir,
-                    app.consultar,
-                    app.alterar,
-                    aup.dt_inativacao
+                    sm.id modulo_id,
+                    sm.modulo
               from adm_usuarios_perfil aup
             inner join adm_usuarios au on au.id = aup.usuario_id
             inner join adm_perfil ap on ap.id = aup.perfil_id
@@ -516,6 +551,33 @@ export const authController = {
             where au.id = $1
               and aup.dt_inativacao is null
           `, [usuario.id]);
+
+        user_modulos = await Promise.all(
+          user_modulos.map(async (modulo) => {
+            const funcionalidades = await getAll<UserFuncionalidade>(
+              ` select distinct
+                    aup.usuario_id,
+                    sm.modulo,
+                    sf.funcionalidade,
+                    app.inserir,
+                    app.excluir,
+                    app.consultar,
+                    app.alterar
+                  from adm_usuarios_perfil aup
+                inner join adm_usuarios au on au.id = aup.usuario_id
+                inner join adm_perfil ap on ap.id = aup.perfil_id
+                  left join adm_perfil_permissao app on app.perfil_id = ap.id
+                  left join sys_funcionalidade sf on sf.id = app.funcionalidade_id
+                  left join sys_modulo sm on sm.id = sf.modulo_id
+                where aup.dt_inativacao is null
+            and sm.modulo is not null
+            and aup.usuario_id = $1
+            and sm.id = $2`,
+              [usuario.id, modulo.modulo_id]
+            );
+            return { ...modulo, user_funcionalidade: funcionalidades };
+          })
+        );
 
       } catch (error: any) {
         log.error(`Erro ao buscar as permissões do usuário: ${error.message}`);
@@ -528,7 +590,7 @@ export const authController = {
         email: usuario.email,
         cpf: usuario.cpf,
         adm_mindtax: perfilADM?.adm_mindtax || false,
-        user_permissoes: user_permissoes,
+        user_modulos: user_modulos,
         status: usuario.status
       });
     } catch (error: any) {

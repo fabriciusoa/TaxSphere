@@ -38,7 +38,6 @@ import {
   CorporateFare as CorporateFareIcon,
   SensorOccupied as SensorOccupiedIcon,
   Build as BuildIcon,
-  Category as CategoryIcon,
   AccountBalance as AccountBalanceIcon,
   Receipt as ReceiptIcon,
   RequestQuote as RequestQuoteIcon,
@@ -62,23 +61,23 @@ import { logger } from '../../utils/logger';
 const drawerWidth = 264;
 
 const S = {
-  navy:          '#0a1628',
-  navyMid:       '#0d1f3c',
-  navyLight:     '#0f2347',
-  cyan:          '#00c8f0',
-  cyanDim:       'rgba(0, 200, 240, 0.10)',
-  cyanBorder:    'rgba(0, 200, 240, 0.20)',
-  white:         '#FFFFFF',
-  white70:       'rgba(255, 255, 255, 0.70)',
-  white40:       'rgba(255, 255, 255, 0.38)',
-  white08:       'rgba(255, 255, 255, 0.08)',
-  white05:       'rgba(255, 255, 255, 0.05)',
-  dividerSide:   'rgba(255, 255, 255, 0.07)',
-  appBarBg:      '#FFFFFF',
-  contentBg:     '#F1F5F9',
-  borderBase:    'rgba(15, 30, 60, 0.10)',
-  textPrimary:   '#1a2332',
-  textSecond:    '#64748b',
+  navy: '#0a1628',
+  navyMid: '#0d1f3c',
+  navyLight: '#0f2347',
+  cyan: '#00c8f0',
+  cyanDim: 'rgba(0, 200, 240, 0.10)',
+  cyanBorder: 'rgba(0, 200, 240, 0.20)',
+  white: '#FFFFFF',
+  white70: 'rgba(255, 255, 255, 0.70)',
+  white40: 'rgba(255, 255, 255, 0.38)',
+  white08: 'rgba(255, 255, 255, 0.08)',
+  white05: 'rgba(255, 255, 255, 0.05)',
+  dividerSide: 'rgba(255, 255, 255, 0.07)',
+  appBarBg: '#FFFFFF',
+  contentBg: '#F1F5F9',
+  borderBase: 'rgba(15, 30, 60, 0.10)',
+  textPrimary: '#1a2332',
+  textSecond: '#64748b',
 };
 
 interface Props {
@@ -93,14 +92,23 @@ export default function MainLayout({ children }: Props) {
   const [openMenus, setOpenMenus] = useState<{ [key: string]: boolean }>({});
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
-  const isAdmin = user?.adm_mindtax === true;
+  const isAdminSystem = user?.adm_mindtax === true;
 
-  //finalizar esse ponto, visto que não consigo acessar o user.UserPermissoes aqui, mesmo após adicionar no backend e frontend
-  const UserPermissoes = user?.UserPermissoes || [];
-  console.error('Permissões do usuário:', UserPermissoes);
+  const userModulos = user?.user_modulos || [];
+
+  // Verifica se o usuário tem acesso a uma funcionalidade específica dentro de um módulo
+  const hasFuncionalidade = (moduloNome: string, funcionalidade: string) =>
+    userModulos
+      .filter(m => m.modulo === moduloNome)
+      .flatMap(m => m.user_funcionalidade ?? [])
+      .some(f => f.funcionalidade === funcionalidade);
+
+  // Verifica se o usuário tem acesso a um módulo
+  const hasModulo = (moduloNome: string) =>
+    userModulos.some(m => m.modulo === moduloNome);
 
   useEffect(() => {
-    if (isAdmin) return;
+    if (isAdminSystem) return;
 
     const verificarManutencao = async () => {
       try {
@@ -110,7 +118,7 @@ export default function MainLayout({ children }: Props) {
           await logout();
           navigate('/login?manutencao=true');
         }
-      } catch(error: any) {
+      } catch (error: any) {
         logger.error('Erro crítico ao verificarManutencao', error);
       }
     };
@@ -118,30 +126,7 @@ export default function MainLayout({ children }: Props) {
     const interval = setInterval(verificarManutencao, 15 * 60 * 1000);
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-/*
-  useEffect(() => {
-    const path = location.pathname;
-    const toOpen: Record<string, boolean> = {};
-    menuItems.forEach((item: any) => {
-      if (item.submenu) {
-        const active = item.submenu.some((sub: any) =>
-          path === sub.path || (sub.submenu && sub.submenu.some((d: any) => path === d.path))
-        );
-        if (active) {
-          toOpen[item.text] = true;
-          item.submenu.forEach((sub: any) => {
-            if (sub.submenu && sub.submenu.some((d: any) => path === d.path)) {
-              toOpen[sub.text] = true;
-            }
-          });
-        }
-      }
-    });
-    if (Object.keys(toOpen).length > 0) {
-      setOpenMenus(prev => ({ ...prev, ...toOpen }));
-    }
-  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
-*/
+
   const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
 
   const handleMenuClick = (menu: string) => {
@@ -195,54 +180,97 @@ export default function MainLayout({ children }: Props) {
       text: 'Soluções Fiscais',
       icon: <AccountBalanceIcon />,
       submenu: [
-        { text: 'Classificação NCM', icon: <CategoryIcon />, path: '/fiscal/classificacao-ncm', badge: emBreve },
-        { text: 'PERD/Comp', icon: <RequestQuoteIcon />, path: '/fiscal/perdcomp',
-          submenu: [
-            { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/perdcomp' },
-            { text: 'Créditos', icon: <AttachMoneyIcon />, path: '/fiscal/perdcomp/creditos' },
-            { text: 'Débitos', icon: <MoneyOffIcon />, path: '/fiscal/perdcomp/debitos' },
-            { text: 'Pedidos', icon: <DescriptionIcon />, path: '/fiscal/perdcomp/pedidos' },
-            { text: 'Simulador', icon: <CalculateIcon />, path: '/fiscal/perdcomp/simulador' },
-            { text: 'Assistente IA', icon: <SmartToyIcon />, path: '/fiscal/perdcomp/assistente' },
-          ],
-        },
-        { text: 'Recuperação PIS/COFINS', icon: <ReceiptIcon />, path: '/fiscal/pis-cofins', badge: emBreve },
-        { text: 'MIT', icon: <GavelIcon />, path: '/fiscal/mit', badge: emBreve },
-        { text: 'DCTF Web', icon: <BarChartIcon />, path: '/fiscal/dctf-web',
-          submenu: [
-            { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/dctf-web' },
-            { text: 'Declarações', icon: <DescriptionIcon />, path: '/fiscal/dctf-web/declaracoes' },
-          ],
-        },
-        { text: 'Gestão de CNDs', icon: <VerifiedUserIcon />, path: '/fiscal/cnds', badge: emBreve },
-        { text: 'Caixa Postal eCac', icon: <InboxIcon />, path: '/fiscal/ecac', badge: emBreve },
+        ...(hasModulo('Classificação NCM') ? [
+          {
+            text: 'PERD/Comp', icon: <RequestQuoteIcon />, path: '/fiscal/perdcomp',
+            submenu: [
+              ...(hasFuncionalidade('Classificação NCM', 'Painel') ? [
+                { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/perdcomp' },
+              ] : []),
+              ...(hasFuncionalidade('Classificação NCM', 'Créditos') ? [
+                { text: 'Créditos', icon: <AttachMoneyIcon />, path: '/fiscal/perdcomp/creditos' },
+              ] : []),
+              ...(hasFuncionalidade('Classificação NCM', 'Débitos') ? [
+                { text: 'Débitos', icon: <MoneyOffIcon />, path: '/fiscal/perdcomp/debitos' },
+              ] : []),
+              ...(hasFuncionalidade('Classificação NCM', 'Pedidos') ? [
+                { text: 'Pedidos', icon: <DescriptionIcon />, path: '/fiscal/perdcomp/pedidos' },
+              ] : []),
+              ...(hasFuncionalidade('Classificação NCM', 'Simulador') ? [
+                { text: 'Simulador', icon: <CalculateIcon />, path: '/fiscal/perdcomp/simulador' },
+              ] : []),
+              ...(hasFuncionalidade('Classificação NCM', 'Assistente IA') ? [
+                { text: 'Assistente IA', icon: <SmartToyIcon />, path: '/fiscal/perdcomp/assistente' },
+              ] : []),
+            ],
+          }
+        ] : []),
+        ...(hasModulo('Recuperação PIS/COFINS') ? [
+          { text: 'Recuperação PIS/COFINS', icon: <ReceiptIcon />, path: '/fiscal/pis-cofins', badge: emBreve }
+        ] : []),
+        ...(hasModulo('MIT') ? [
+          { text: 'MIT', icon: <GavelIcon />, path: '/fiscal/mit', badge: emBreve }
+        ] : []),
+        ...(hasModulo('DCTF Web') ? [
+          {
+            text: 'DCTF Web', icon: <BarChartIcon />, path: '/fiscal/dctf-web',
+            submenu: [
+              ...(hasFuncionalidade('DCTF Web', 'Painel') ? [
+                { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/dctf-web' },
+              ] : []),
+              ...(hasFuncionalidade('DCTF Web', 'Declarações') ? [
+                { text: 'Declarações', icon: <DescriptionIcon />, path: '/fiscal/dctf-web/declaracoes' },
+              ] : []),
+            ],
+          }
+        ] : []),
+        ...(hasModulo('Gestão de CNDs') ? [
+          { text: 'Gestão de CNDs', icon: <VerifiedUserIcon />, path: '/fiscal/cnds', badge: emBreve }
+        ] : []),
+        ...(hasModulo('Caixa Postal eCac') ? [
+          { text: 'Caixa Postal eCac', icon: <InboxIcon />, path: '/fiscal/ecac', badge: emBreve }
+        ] : []),
       ]
     },
-
     // Suporte
-    {
-      text: 'Suporte',
-      icon: <HelpCenterIcon />,
-      submenu: [
-        { text: 'Chamado', icon: <SupportAgentIcon />, path: '/suporte/chamado' },
-        { text: 'Manual', icon: <MenuBookIcon />, path: '/suporte/manual' },
-      ]
-    },
+    ...(hasModulo('Suporte') ? [
+      {
+        text: 'Suporte',
+        icon: <HelpCenterIcon />,
+        submenu: [
+          ...(hasFuncionalidade('Suporte', 'Chamado') ? [
+            { text: 'Chamado', icon: <SupportAgentIcon />, path: '/suporte/chamado' },
+          ] : []),
+          ...(hasFuncionalidade('Suporte', 'Manual') ? [
+            { text: 'Manual', icon: <MenuBookIcon />, path: '/suporte/manual' },
+          ] : []),
+        ]
+      },
+    ] : []),
 
     // Configurações do usuário
-    {
-      text: 'Configurações',
-      icon: <SistemaIcon />,
-      submenu: [
-        { text: 'Empresas', icon: <BusinessIcon />, path: '/configuracoes/empresas' },
-        { text: 'Integração eCAC', icon: <CloudSyncIcon />, path: '/configuracoes/ecac' },
-        { text: 'Meu Perfil', icon: <AccountCircleIcon />, path: '/meu-perfil' },
-        { text: 'Trocar Senha', icon: <LockIcon />, path: '/trocar-senha' }
-      ]
-    },
-
+    ...(hasModulo('Configurações') ? [
+      {
+        text: 'Configurações',
+        icon: <SistemaIcon />,
+        submenu: [
+          ...(hasModulo('Empresas') ? [
+            { text: 'Empresas', icon: <BusinessIcon />, path: '/configuracoes/empresas' },
+          ] : []),
+          ...(hasModulo('Integração eCAC') ? [
+            { text: 'Integração eCAC', icon: <CloudSyncIcon />, path: '/configuracoes/ecac' },
+          ] : []),
+          ...(hasModulo('Meu Perfil') ? [
+            { text: 'Meu Perfil', icon: <AccountCircleIcon />, path: '/meu-perfil' },
+          ] : []),
+          ...(hasModulo('Trocar Senha') ? [
+            { text: 'Trocar Senha', icon: <LockIcon />, path: '/trocar-senha' }
+          ] : []),
+        ]
+      },
+    ] : []),
     // Administração (apenas ADMIN)
-    ...(isAdmin ? [
+    ...(isAdminSystem ? [
       {
         text: 'Administração',
         icon: <SupervisorAccountIcon />,
@@ -320,7 +348,8 @@ export default function MainLayout({ children }: Props) {
       </Box>
 
       {/* Menu principal */}
-      <Box sx={{ flex: 1, overflowY: 'auto', pt: 1, pb: 2,
+      <Box sx={{
+        flex: 1, overflowY: 'auto', pt: 1, pb: 2,
         '&::-webkit-scrollbar': { width: 4 },
         '&::-webkit-scrollbar-track': { background: 'transparent' },
         '&::-webkit-scrollbar-thumb': { background: S.white08, borderRadius: 2 },
@@ -420,12 +449,16 @@ export default function MainLayout({ children }: Props) {
           {user?.nome?.charAt(0)?.toUpperCase()}
         </Avatar>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontSize: '0.8125rem', fontWeight: 600, color: S.white, lineHeight: 1.2,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <Typography sx={{
+            fontSize: '0.8125rem', fontWeight: 600, color: S.white, lineHeight: 1.2,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+          }}>
             {user?.nome}
           </Typography>
-          <Typography sx={{ fontSize: '0.6875rem', color: S.white40, lineHeight: 1.4,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <Typography sx={{
+            fontSize: '0.6875rem', color: S.white40, lineHeight: 1.4,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+          }}>
             {user?.perfil}
           </Typography>
         </Box>

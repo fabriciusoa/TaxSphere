@@ -11,13 +11,19 @@ export interface AuthUser {
   perfil_id: number;
   status: string;
   adm_mindtax: boolean;
-  UserPermissoes: UserPermissoes[];
+  user_modulos: UserModulos[];
 }
 
-export interface UserPermissoes {
+export interface UserModulos {
   usuario_id: number;
   perfil: string;
   adm_mindtax?: boolean;
+  modulo?: string | null;
+  user_funcionalidade?: UserFuncionalidade[];
+}
+
+export interface UserFuncionalidade {
+  usuario_id: number;
   modulo?: string | null;
   funcionalidade?: string | null;
   inserir?: boolean;
@@ -37,7 +43,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 // Cache de dados do usuário em sessionStorage (não o token — apenas dados não-sensíveis)
 // Persiste no F5, mas é limpo ao fechar o browser. O token permanece seguro no cookie httpOnly.
-const USER_CACHE_KEY = 'MindTax_user';
+const USER_CACHE_KEY = 'mindtax_user';
 
 function getCachedUser(): AuthUser | null {
   try {

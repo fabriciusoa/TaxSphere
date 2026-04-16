@@ -24,7 +24,7 @@ export function allowedProfiles() {
     }
 
     if (!req.user.adm_mindtax) {
-      log.error(`Usuário ${req.user.id} (${req.user.email}) sem permissão para acessar este recurso. Perfil: ${req.user.perfil}`);
+      log.error(`Usuário ${req.user.id} (${req.user.email}) sem permissão para acessar este recurso.`);
       return res.status(403).json({ error: 'Acesso negado. Você não tem permissão para acessar este recurso.' });
     }
 

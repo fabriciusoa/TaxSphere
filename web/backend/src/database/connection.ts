@@ -4,7 +4,9 @@ import { log, flushLogsAndExit } from '../utils/logger';
 
 dotenv.config();
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_ENV === 'local'
+  ? process.env.DATABASE_URL_LOCAL
+  : process.env.DATABASE_URL;
 
 if (!connectionString) {
   log.error('Variável de ambiente DATABASE_URL não definida.');
@@ -15,13 +17,24 @@ if (!connectionString) {
 // Pool de conexões PostgreSQL (Supabase)
 // SSL sempre ativado: Supabase exige conexão criptografada
 // rejectUnauthorized: false aceita o certificado da infraestrutura do Supabase
-export const pool = new Pool({
-  connectionString,
-  ssl: { rejectUnauthorized: false },
-  max: 10,                        // máximo de conexões simultâneas no pool
-  idleTimeoutMillis: 30_000,      // fecha conexão ociosa após 30s
-  connectionTimeoutMillis: 5_000, // erro se não conseguir conexão em 5s
-});
+let pool: Pool;
+if (process.env.DATABASE_ENV === 'local') {
+  pool = new Pool({
+    connectionString,
+    max: 10,                        // máximo de conexões simultâneas no pool
+    idleTimeoutMillis: 30_000,      // fecha conexão ociosa após 30s
+    connectionTimeoutMillis: 5_000, // erro se não conseguir conexão em 5s
+  });
+} else {
+  pool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 10,                        // máximo de conexões simultâneas no pool
+    idleTimeoutMillis: 30_000,      // fecha conexão ociosa após 30s
+    connectionTimeoutMillis: 5_000, // erro se não conseguir conexão em 5s
+  });
+}
+export { pool };
 
 pool.on('error', (err: Error) => {
   log.error(`Erro inesperado no pool de conexões PostgreSQL: ${err.message}`);
@@ -31,7 +44,7 @@ pool.on('error', (err: Error) => {
 pool.query('SELECT 1')
   .then(() => {
     const urlSafe = connectionString!.replace(/:([^:@]+)@/, ':****@');
-    log.info(`Conectado ao banco de dados PostgreSQL (Supabase): ${urlSafe}`);
+    log.info(`Conectado ao banco de dados PostgreSQL: ${urlSafe}`);
   })
   .catch((err: Error) => {
     log.error(`Falha ao conectar ao banco de dados: ${err.message}`);

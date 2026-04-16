@@ -52,13 +52,20 @@ export interface JWTPayload {
   email: string;
   nome?: string;
   adm_mindtax?: boolean;
-  user_permissoes?: UserPermissoes[];
+  user_modulos?: UserModulos[];
 }
 
-export interface UserPermissoes {
+export interface UserModulos {
   usuario_id: number;
   perfil: string;
   adm_mindtax?: boolean;
+  modulo_id: number;
+  modulo?: string | null;
+  user_funcionalidade?: UserFuncionalidade[];
+}
+
+export interface UserFuncionalidade {
+  usuario_id: number;
   modulo?: string | null;
   funcionalidade?: string | null;
   inserir?: boolean;
@@ -66,6 +73,7 @@ export interface UserPermissoes {
   consultar?: boolean;
   alterar?: boolean;
 }
+
 export interface AuthRequest extends Request {
   user?: JWTPayload;
 }

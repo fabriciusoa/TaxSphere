@@ -47,12 +47,9 @@ export default function DashboardPage() {
     const carregarIndicadores = async () => {
       try {
         setLoading(true);
-        const [dados, ativas] = await Promise.all([
-          dashboardService.indicadores(),
-          manutencaoService.ativas()
-        ]);
-        setIndicadores(dados);
-        setManutencoesAtivas(ativas);
+        //const [dados, ativas] = await Promise.all([dashboardService.indicadores(), manutencaoService.ativas()]);
+        //setIndicadores(dados);
+        //setManutencoesAtivas(ativas);
       } catch (error: any) {
         logger.error('Erro ao carregar indicadores', error);
         setError('Erro ao carregar indicadores');
