@@ -33,15 +33,15 @@ import { logger } from '../utils/logger';
 
 // Tokens Synchro
 const T = {
-  cyan:       '#00c8f0',
-  cyanGlow:   '0 4px 18px rgba(0,200,240,0.25)',
-  cyanHover:  '0 6px 22px rgba(0,200,240,0.38)',
-  textPrimary:'#1a2332',
+  cyan: '#00c8f0',
+  cyanGlow: '0 4px 18px rgba(0,200,240,0.25)',
+  cyanHover: '0 6px 22px rgba(0,200,240,0.38)',
+  textPrimary: '#1a2332',
   textSecond: '#64748b',
-  border:     'rgba(15, 30, 60, 0.09)',
-  surface:    '#FFFFFF',
-  inputBg:    '#F7F9FC',
-  navy:       '#0a1628',
+  border: 'rgba(15, 30, 60, 0.09)',
+  surface: '#FFFFFF',
+  inputBg: '#F7F9FC',
+  navy: '#0a1628',
   cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 };
 
@@ -85,15 +85,15 @@ const dialogPaper = {
 };
 
 const STATUS_CONFIG: Record<Manutencao['status'], { label: string; color: 'warning' | 'error' | 'default' }> = {
-  planejada:   { label: 'Planejada',   color: 'warning' },
-  em_execucao: { label: 'Em Execução', color: 'error'   },
-  terminado:   { label: 'Terminado',   color: 'default'  },
+  planejada: { label: 'Planejada', color: 'warning' },
+  em_execucao: { label: 'Em Execução', color: 'error' },
+  terminado: { label: 'Terminado', color: 'default' },
 };
 
 const STATUS_OPTIONS: { value: Manutencao['status']; label: string }[] = [
-  { value: 'planejada',   label: 'Planejada'   },
+  { value: 'planejada', label: 'Planejada' },
   { value: 'em_execucao', label: 'Em Execução' },
-  { value: 'terminado',   label: 'Terminado'   },
+  { value: 'terminado', label: 'Terminado' },
 ];
 
 function toDatetimeLocal(isoString: string | null | undefined): string {
@@ -112,14 +112,14 @@ const EMPTY_FORM: ManutencaoPayload = { descricao: '', dt_inicio: '', dt_fim: nu
 
 export default function ManutencaoPage() {
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState('');
-  const [success, setSuccess]         = useState('');
-  const [dialogOpen, setDialogOpen]   = useState(false);
-  const [editando, setEditando]       = useState<Manutencao | null>(null);
-  const [form, setForm]               = useState<ManutencaoPayload>(EMPTY_FORM);
-  const [saving, setSaving]           = useState(false);
-  const [formError, setFormError]     = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editando, setEditando] = useState<Manutencao | null>(null);
+  const [form, setForm] = useState<ManutencaoPayload>(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const carregar = async () => {
     try {
@@ -204,7 +204,7 @@ export default function ManutencaoPage() {
         </Button>
       </Box>
 
-      {error   && <Alert severity="error"   sx={{ mb: 2, borderRadius: '10px' }} onClose={() => setError('')}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2, borderRadius: '10px' }} onClose={() => setError('')}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2, borderRadius: '10px' }} onClose={() => setSuccess('')}>{success}</Alert>}
 
       {loading ? (
@@ -265,7 +265,7 @@ export default function ManutencaoPage() {
       )}
 
       {/* Dialog */}
-      <Dialog open={dialogOpen} onClose={handleFechar} maxWidth="sm" fullWidth slotProps={{ paper: { sx: dialogPaper } }}>
+      <Dialog key={editando ? `edit-${editando.id}` : 'new'} open={dialogOpen} onClose={handleFechar} maxWidth="sm" fullWidth slotProps={{ paper: { sx: dialogPaper } }}>
         <DialogTitle sx={{ fontSize: '1rem', fontWeight: 700, color: T.textPrimary, pb: 1 }}>
           {editando ? 'Editar Manutenção' : 'Nova Manutenção'}
         </DialogTitle>
@@ -273,8 +273,8 @@ export default function ManutencaoPage() {
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
             {formError && <Alert severity="error" sx={{ borderRadius: '10px' }}>{formError}</Alert>}
             <TextField label="Descrição" value={form.descricao} onChange={(e) => setForm(f => ({ ...f, descricao: e.target.value }))} fullWidth required multiline rows={2} sx={inputSx} />
-            <TextField label="Data de Início" type="datetime-local" value={form.dt_inicio} onChange={(e) => setForm(f => ({ ...f, dt_inicio: e.target.value }))} fullWidth required slotProps={{ inputLabel: { shrink: true } }} sx={inputSx} />
-            <TextField label="Data de Término (previsão)" type="datetime-local" value={form.dt_fim ?? ''} onChange={(e) => setForm(f => ({ ...f, dt_fim: e.target.value || null }))} fullWidth slotProps={{ inputLabel: { shrink: true } }} helperText="Opcional" sx={inputSx} />
+            <TextField label="Data de Início" type="datetime-local" defaultValue={form.dt_inicio || undefined} onChange={(e) => setForm(f => ({ ...f, dt_inicio: e.target.value }))} fullWidth required slotProps={{ inputLabel: { shrink: true }, input: { inputProps: { autoComplete: 'off' } } }} sx={inputSx} />
+            <TextField label="Data de Término (previsão)" type="datetime-local" defaultValue={form.dt_fim || undefined} onChange={(e) => setForm(f => ({ ...f, dt_fim: e.target.value || null }))} fullWidth slotProps={{ inputLabel: { shrink: true }, input: { inputProps: { autoComplete: 'off' } } }} helperText="Opcional" sx={inputSx} />
             <FormControl fullWidth required>
               <InputLabel sx={{ color: T.textSecond, '&.Mui-focused': { color: T.cyan } }}>Status</InputLabel>
               <Select value={form.status} label="Status" onChange={(e) => setForm(f => ({ ...f, status: e.target.value as Manutencao['status'] }))} sx={selectSx}>
