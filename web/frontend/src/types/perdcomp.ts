@@ -9,25 +9,6 @@ export type TipoDocumento = 'DARF' | 'GPS' | 'DCTF' | 'EFD' | 'Contrato' | 'Outr
 export type TipoAlerta = 'Prescrição Próxima' | 'Prazo Manifestação' | 'Crédito Esgotado' | 'Status Alterado' | 'Oportunidade Compensação';
 export type PrioridadeAlerta = 'Baixa' | 'Média' | 'Alta' | 'Crítica';
 
-export interface PerdcompEmpresa {
-  id: number;
-  id_usuario_responsavel: number;
-  cnpj: string;
-  razao_social: string;
-  nome_fantasia?: string;
-  inscricao_estadual?: string;
-  regime_tributario: RegimeTributario;
-  uf?: string;
-  municipio?: string;
-  ativo: boolean;
-  criado_em: string;
-  atualizado_em: string;
-  total_creditos?: number;
-  total_debitos?: number;
-  total_pedidos?: number;
-  saldo_creditos?: number;
-}
-
 export interface PerdcompCredito {
   id: number;
   id_empresa: number;

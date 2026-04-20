@@ -8,6 +8,7 @@ if (!SECRET) {
 }
 
 function deriveKey(): Buffer {
+  if (!SECRET) throw new Error('CERT_ENCRYPTION_KEY ou JWT_SECRET não configurado');
   return crypto.scryptSync(SECRET, 'mindtax-salt-cert', 32);
 }
 
@@ -40,10 +41,11 @@ export const certificadoService = {
   async parsePfx(pfxBuffer: Buffer, passphrase: string): Promise<CertificadoInfo> {
     const { X509Certificate } = crypto;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const p12 = crypto.createPrivateKey({
       key: pfxBuffer,
       format: 'der',
-      type: 'pkcs12',
+      type: 'pkcs12' as any,
       passphrase,
     });
 
@@ -81,10 +83,11 @@ export const certificadoService = {
 
   extractCertPem(pfxBuffer: Buffer, passphrase: string): string | null {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pfxAsn1 = crypto.createPrivateKey({
         key: pfxBuffer,
         format: 'der',
-        type: 'pkcs12',
+        type: 'pkcs12' as any,
         passphrase,
       });
 
@@ -116,10 +119,11 @@ export const certificadoService = {
 
   async validatePfx(pfxBuffer: Buffer, passphrase: string): Promise<{ valid: boolean; info?: CertificadoInfo; error?: string }> {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       crypto.createPrivateKey({
         key: pfxBuffer,
         format: 'der',
-        type: 'pkcs12',
+        type: 'pkcs12' as any,
         passphrase,
       });
 

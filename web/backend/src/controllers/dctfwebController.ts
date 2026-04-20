@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { getOne, getAll, runQuery } from '../database/connection';
+import { getOne, getAll, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { AuthRequest } from '../types';
 import { log } from '../utils/logger';
 
@@ -68,13 +68,17 @@ export const dctfwebController = {
       const where: string[] = [];
       const params: any[] = [];
 
-      if (id_empresa) { where.push('d.id_empresa = ?'); params.push(id_empresa); }
-      if (situacao) { where.push('d.situacao = ?'); params.push(situacao); }
-      if (periodo) { where.push('d.periodo_apuracao = ?'); params.push(periodo); }
+      if (id_empresa) { params.push(id_empresa); where.push(`d.id_empresa = $${params.length}`); }
+      if (situacao) { params.push(situacao); where.push(`d.situacao = $${params.length}`); }
+      if (periodo) { params.push(periodo); where.push(`d.periodo_apuracao = $${params.length}`); }
       if (busca) {
-        where.push('(e.razao_social LIKE ? OR e.cnpj LIKE ? OR d.categoria LIKE ? OR d.numero_recibo LIKE ?)');
         const b = `%${busca}%`;
-        params.push(b, b, b, b);
+        params.push(b); where.push(`e.razao_social LIKE $${params.length}`);
+        params.push(b); where.push(`e.cnpj LIKE $${params.length}`);
+        params.push(b); where.push(`d.categoria LIKE $${params.length}`);
+        params.push(b); where.push(`d.numero_recibo LIKE $${params.length}`);
+        const last4 = where.splice(-4);
+        where.push(`(${last4.join(' OR ')})`);
       }
 
       const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -85,14 +89,18 @@ export const dctfwebController = {
         params
       );
 
+      const listParamsD = [...params];
+      listParamsD.push(Number(limit)); const limitIdxD = listParamsD.length;
+      listParamsD.push(offset); const offsetIdxD = listParamsD.length;
+
       const declaracoes = await getAll<any>(
         `SELECT d.*, e.razao_social, e.cnpj
          FROM dctfweb_declaracoes d
          JOIN perdcomp_empresas e ON e.id = d.id_empresa
          ${whereClause}
          ORDER BY d.periodo_apuracao DESC, d.criado_em DESC
-         LIMIT ? OFFSET ?`,
-        [...params, Number(limit), offset]
+         LIMIT $${limitIdxD} OFFSET $${offsetIdxD}`,
+        listParamsD
       );
 
       res.json({
@@ -111,13 +119,13 @@ export const dctfwebController = {
         `SELECT d.*, e.razao_social, e.cnpj
          FROM dctfweb_declaracoes d
          JOIN perdcomp_empresas e ON e.id = d.id_empresa
-         WHERE d.id = ?`,
+         WHERE d.id = $1`,
         [req.params.id]
       );
       if (!decl) return res.status(404).json({ error: 'Declaração não encontrada' });
 
       const tributos = await getAll<any>(
-        'SELECT * FROM dctfweb_tributos WHERE id_declaracao = ? ORDER BY codigo_receita',
+        'SELECT * FROM dctfweb_tributos WHERE id_declaracao = $1 ORDER BY codigo_receita',
         [req.params.id]
       );
 
@@ -137,33 +145,45 @@ export const dctfwebController = {
         return res.status(400).json({ error: 'Empresa, categoria e período são obrigatórios' });
       }
 
-      const { lastID } = await runQuery(
-        `INSERT INTO dctfweb_declaracoes
-         (id_empresa, categoria, periodo_apuracao, situacao, debito_apurado, credito_vinculado,
-          saldo_pagar, data_transmissao, numero_recibo, origem, observacoes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Manual', ?)`,
-        [id_empresa, categoria, periodo_apuracao, situacao || 'Em Andamento',
-         debito_apurado || 0, credito_vinculado || 0, saldo_pagar || 0,
-         data_transmissao || null, numero_recibo || null, observacoes || null]
-      );
+      const txClient = await beginTransaction();
+      let lastID: number;
+      try {
+        const { id: declId } = await runQuery(
+          `INSERT INTO dctfweb_declaracoes
+           (id_empresa, categoria, periodo_apuracao, situacao, debito_apurado, credito_vinculado,
+            saldo_pagar, data_transmissao, numero_recibo, origem, observacoes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Manual', $10)
+           RETURNING id`,
+          [id_empresa, categoria, periodo_apuracao, situacao || 'Em Andamento',
+           debito_apurado || 0, credito_vinculado || 0, saldo_pagar || 0,
+           data_transmissao || null, numero_recibo || null, observacoes || null],
+          txClient
+        );
 
-      if (tributos && Array.isArray(tributos)) {
-        for (const t of tributos) {
-          const total = (t.valor_principal || 0) + (t.valor_multa || 0) + (t.valor_juros || 0);
-          const saldo = total - (t.compensado || 0) - (t.suspenso || 0);
-          await runQuery(
-            `INSERT INTO dctfweb_tributos
-             (id_declaracao, codigo_receita, descricao, valor_principal, valor_multa,
-              valor_juros, valor_total, compensado, suspenso, saldo)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [lastID, t.codigo_receita, t.descricao || null,
-             t.valor_principal || 0, t.valor_multa || 0, t.valor_juros || 0,
-             total, t.compensado || 0, t.suspenso || 0, saldo]
-          );
+        if (tributos && Array.isArray(tributos)) {
+          for (const t of tributos) {
+            const total = (t.valor_principal || 0) + (t.valor_multa || 0) + (t.valor_juros || 0);
+            const saldo = total - (t.compensado || 0) - (t.suspenso || 0);
+            await runQuery(
+              `INSERT INTO dctfweb_tributos
+               (id_declaracao, codigo_receita, descricao, valor_principal, valor_multa,
+                valor_juros, valor_total, compensado, suspenso, saldo)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [declId, t.codigo_receita, t.descricao || null,
+               t.valor_principal || 0, t.valor_multa || 0, t.valor_juros || 0,
+               total, t.compensado || 0, t.suspenso || 0, saldo],
+              txClient
+            );
+          }
         }
+        await commitTransaction(txClient);
+        lastID = declId;
+      } catch (txErr) {
+        await rollbackTransaction(txClient);
+        throw txErr;
       }
 
-      const created = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = ?', [lastID]);
+      const created = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = $1', [lastID]);
       res.status(201).json(created);
     } catch (error: any) {
       log.error(`Erro criar DCTFWeb: ${error.message}`);
@@ -173,7 +193,7 @@ export const dctfwebController = {
 
   atualizar: async (req: AuthRequest, res: Response) => {
     try {
-      const decl = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = ?', [req.params.id]);
+      const decl = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = $1', [req.params.id]);
       if (!decl) return res.status(404).json({ error: 'Declaração não encontrada' });
 
       const campos = req.body;
@@ -185,16 +205,17 @@ export const dctfwebController = {
 
       for (const [key, value] of Object.entries(campos)) {
         if (allowed.includes(key) && value !== undefined) {
-          sets.push(`${key} = ?`);
           vals.push(value);
+          sets.push(`${key} = $${vals.length}`);
         }
       }
       if (sets.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
 
-      sets.push("atualizado_em = datetime('now')");
-      await runQuery(`UPDATE dctfweb_declaracoes SET ${sets.join(', ')} WHERE id = ?`, [...vals, req.params.id]);
+      sets.push("atualizado_em = NOW()");
+      vals.push(req.params.id);
+      await runQuery(`UPDATE dctfweb_declaracoes SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
 
-      const updated = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = ?', [req.params.id]);
+      const updated = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = $1', [req.params.id]);
       res.json(updated);
     } catch (error: any) {
       log.error(`Erro atualizar DCTFWeb: ${error.message}`);
@@ -204,11 +225,11 @@ export const dctfwebController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
-      const decl = await getOne<any>('SELECT id FROM dctfweb_declaracoes WHERE id = ?', [req.params.id]);
+      const decl = await getOne<any>('SELECT id FROM dctfweb_declaracoes WHERE id = $1', [req.params.id]);
       if (!decl) return res.status(404).json({ error: 'Declaração não encontrada' });
 
-      await runQuery('DELETE FROM dctfweb_tributos WHERE id_declaracao = ?', [req.params.id]);
-      await runQuery('DELETE FROM dctfweb_declaracoes WHERE id = ?', [req.params.id]);
+      await runQuery('DELETE FROM dctfweb_tributos WHERE id_declaracao = $1', [req.params.id]);
+      await runQuery('DELETE FROM dctfweb_declaracoes WHERE id = $1', [req.params.id]);
       res.json({ message: 'Declaração excluída' });
     } catch (error: any) {
       log.error(`Erro excluir DCTFWeb: ${error.message}`);
@@ -219,14 +240,14 @@ export const dctfwebController = {
   gerarDarf: async (req: AuthRequest, res: Response) => {
     try {
       const { codigo, vencimento, valor } = req.body;
-      const decl = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = ?', [req.params.id]);
+      const decl = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = $1', [req.params.id]);
       if (!decl) return res.status(404).json({ error: 'Declaração não encontrada' });
 
       await runQuery(
         `UPDATE dctfweb_declaracoes
-         SET darf_gerado = 1, darf_codigo = ?, darf_vencimento = ?, darf_valor = ?,
-             atualizado_em = datetime('now')
-         WHERE id = ?`,
+         SET darf_gerado = 1, darf_codigo = $1, darf_vencimento = $2, darf_valor = $3,
+             atualizado_em = NOW()
+         WHERE id = $4`,
         [codigo || '', vencimento || '', valor || decl.saldo_pagar, req.params.id]
       );
 
@@ -239,11 +260,11 @@ export const dctfwebController = {
 
   marcarPago: async (req: AuthRequest, res: Response) => {
     try {
-      const decl = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = ?', [req.params.id]);
+      const decl = await getOne<any>('SELECT * FROM dctfweb_declaracoes WHERE id = $1', [req.params.id]);
       if (!decl) return res.status(404).json({ error: 'Declaração não encontrada' });
 
       await runQuery(
-        `UPDATE dctfweb_declaracoes SET darf_pago = 1, atualizado_em = datetime('now') WHERE id = ?`,
+        `UPDATE dctfweb_declaracoes SET darf_pago = 1, atualizado_em = NOW() WHERE id = $1`,
         [req.params.id]
       );
       res.json({ message: 'DARF marcado como pago' });

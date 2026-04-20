@@ -122,7 +122,7 @@ export const perdcompRegraService = {
     seisM.setMonth(seisM.getMonth() + 6);
 
     const creditosProximos = await getAll<CreditoBase>(
-      `SELECT * FROM perdcomp_creditos WHERE id_empresa = ? AND status IN ('Disponível', 'Parcialmente Utilizado') AND dt_vencimento_prescricao <= ? AND dt_vencimento_prescricao > ?`,
+      `SELECT * FROM perdcomp_creditos WHERE id_empresa = $1 AND status IN ('Disponível', 'Parcialmente Utilizado') AND dt_vencimento_prescricao <= $2 AND dt_vencimento_prescricao > $3`,
       [idEmpresa, seisM.toISOString(), agora.toISOString()]
     );
 
@@ -131,13 +131,13 @@ export const perdcompRegraService = {
         (new Date(c.dt_vencimento_prescricao).getTime() - agora.getTime()) / (1000 * 60 * 60 * 24)
       );
       const jaExiste = await getOne<{ id: number }>(
-        `SELECT id FROM perdcomp_alertas WHERE id_credito = ? AND tipo_alerta = 'Prescrição Próxima' AND criado_em > datetime('now', '-7 days')`,
+        `SELECT id FROM perdcomp_alertas WHERE id_credito = $1 AND tipo_alerta = 'Prescrição Próxima' AND criado_em > NOW() - INTERVAL '7 days'`,
         [c.id]
       );
       if (!jaExiste) {
         const prioridade = diasRestantes < 30 ? 'Crítica' : diasRestantes < 90 ? 'Alta' : 'Média';
         await runQuery(
-          `INSERT INTO perdcomp_alertas (id_empresa, id_credito, id_usuario, tipo_alerta, titulo, mensagem, prioridade) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO perdcomp_alertas (id_empresa, id_credito, id_usuario, tipo_alerta, titulo, mensagem, prioridade) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [idEmpresa, c.id, idUsuario, 'Prescrição Próxima',
             `Crédito ${c.tipo_credito} próximo de prescrever`,
             `O crédito de ${c.tipo_credito} (R$ ${c.saldo_disponivel.toFixed(2)}) prescreve em ${diasRestantes} dias. Considere utilizá-lo em uma compensação.`,
@@ -148,7 +148,7 @@ export const perdcompRegraService = {
     }
 
     const pedidosPrazo = await getAll<{ id: number; dt_prazo_manifestacao: string; tipo_pedido: string }>(
-      `SELECT id, dt_prazo_manifestacao, tipo_pedido FROM perdcomp_pedidos WHERE id_empresa = ? AND dt_prazo_manifestacao IS NOT NULL AND status IN ('Indeferido', 'Não Homologado')`,
+      `SELECT id, dt_prazo_manifestacao, tipo_pedido FROM perdcomp_pedidos WHERE id_empresa = $1 AND dt_prazo_manifestacao IS NOT NULL AND status IN ('Indeferido', 'Não Homologado')`,
       [idEmpresa]
     );
 
@@ -157,12 +157,12 @@ export const perdcompRegraService = {
       const diasRestantes = Math.ceil((dtPrazo.getTime() - agora.getTime()) / (1000 * 60 * 60 * 24));
       if (diasRestantes > 0 && diasRestantes <= 10) {
         const jaExiste = await getOne<{ id: number }>(
-          `SELECT id FROM perdcomp_alertas WHERE id_pedido = ? AND tipo_alerta = 'Prazo Manifestação' AND criado_em > datetime('now', '-3 days')`,
+          `SELECT id FROM perdcomp_alertas WHERE id_pedido = $1 AND tipo_alerta = 'Prazo Manifestação' AND criado_em > NOW() - INTERVAL '3 days'`,
           [p.id]
         );
         if (!jaExiste) {
           await runQuery(
-            `INSERT INTO perdcomp_alertas (id_empresa, id_pedido, id_usuario, tipo_alerta, titulo, mensagem, prioridade) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO perdcomp_alertas (id_empresa, id_pedido, id_usuario, tipo_alerta, titulo, mensagem, prioridade) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [idEmpresa, p.id, idUsuario, 'Prazo Manifestação',
               `Prazo de manifestação vencendo`,
               `O pedido #${p.id} (${p.tipo_pedido}) tem prazo de manifestação de inconformidade em ${diasRestantes} dias.`,

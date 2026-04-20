@@ -10,21 +10,21 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { Save as SaveIcon, Person as PersonIcon } from '@mui/icons-material';
-import perfilService from '../services/perfilService';
-import type { PerfilUsuario } from '../services/perfilService';
+import { usuariosService } from '../services/usuariosService';
+import { type Usuario } from '../types';
 import { logger } from '../utils/logger';
 
 const T = {
-  cyan:        '#00c8f0',
-  cyanGlow:    '0 4px 18px rgba(0,200,240,0.25)',
-  cyanHover:   '0 6px 22px rgba(0,200,240,0.38)',
+  cyan: '#00c8f0',
+  cyanGlow: '0 4px 18px rgba(0,200,240,0.25)',
+  cyanHover: '0 6px 22px rgba(0,200,240,0.38)',
   textPrimary: '#1a2332',
-  textSecond:  '#64748b',
-  border:      'rgba(15, 30, 60, 0.10)',
-  surface:     '#FFFFFF',
-  inputBg:     '#F7F9FC',
-  navy:        '#0a1628',
-  cardShadow:  '0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)',
+  textSecond: '#64748b',
+  border: 'rgba(15, 30, 60, 0.10)',
+  surface: '#FFFFFF',
+  inputBg: '#F7F9FC',
+  navy: '#0a1628',
+  cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)',
 };
 
 const inputSx = {
@@ -45,7 +45,8 @@ export default function MeuPerfilPage() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
   const [sucesso, setSucesso] = useState('');
-  const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
+   
+  const [ , setUsuarios] = useState<Usuario[]>([]);
 
   const [formData, setFormData] = useState({ nome: '', email: '', cpf: '', dt_nascimento: '' });
 
@@ -55,13 +56,24 @@ export default function MeuPerfilPage() {
     try {
       setLoading(true);
       setErro('');
-      const dados = await perfilService.buscarMeuPerfil();
-      setPerfil(dados);
+      const usuarios = await usuariosService.buscarMeuPerfil();
+      setUsuarios([usuarios]);
+
+      let dataNascimento = '';
+      if (usuarios.dt_nascimento) {
+        if (/^\d{4}-\d{2}-\d{2}/.test(usuarios.dt_nascimento)) {
+          dataNascimento = usuarios.dt_nascimento.substring(0, 10);
+        } else {
+          const match = usuarios.dt_nascimento.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+          if (match) dataNascimento = `${match[3]}-${match[2]}-${match[1]}`;
+        }
+      }
+
       setFormData({
-        nome: dados.nome,
-        email: dados.email,
-        cpf: dados.cpf,
-        dt_nascimento: dados.dt_nascimento || '',
+        nome: usuarios.nome,
+        email: usuarios.email,
+        cpf: usuarios.cpf,
+        dt_nascimento: dataNascimento,
       });
     } catch (error: any) {
       logger.error('Erro ao carregar perfil', error);
@@ -82,7 +94,15 @@ export default function MeuPerfilPage() {
       setSalvando(true);
       setErro('');
       setSucesso('');
-      await perfilService.atualizarMeuPerfil(formData);
+
+      const dados: any = {
+        nome: formData.nome,
+        email: formData.email,
+        cpf: formData.cpf.replace(/\D/g, ''),
+        dt_nascimento: formData.dt_nascimento || null,
+      };
+
+      await usuariosService.atualizarMeuPerfil(dados);
       setSucesso('Perfil atualizado com sucesso!');
       setTimeout(() => setSucesso(''), 3000);
     } catch (error: any) {

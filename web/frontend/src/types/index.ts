@@ -3,9 +3,7 @@ export interface Usuario {
   nome: string;
   email: string;
   cpf: string;
-  perfil: string;
-  perfil_id: number;
-  status: string;
+  status: boolean;
   criado?: string | null;
   dt_inativacao?: string | null;
   dt_nascimento?: string | null;
@@ -13,11 +11,7 @@ export interface Usuario {
   ultimo_login?: string | null;
   tentativas_login?: number;
   dt_bloqueio?: string | null;
-}
-
-export interface Perfil {
-  id: number;
-  perfil: string;
+  cliente_id?: number | null;
 }
 
 export interface Parametro {
@@ -55,7 +49,85 @@ export interface LoginLogPaginado {
   };
 }
 
-export type PerfilEnum = 'ADMIN' | 'MEDICO' | 'GERENTE' | 'RELATORIO';
+export interface Empresas {
+  id: number;
+  id_usuario_responsavel: number;
+  cliente_id: number;
+  cnpj: string;
+  razao_social: string;
+  nome_fantasia?: string;
+  inscricao_estadual?: string;
+  matriz?: 'S' | 'N';
+  regime_tributario: string;
+  uf?: string;
+  municipio?: string;
+  ativo: number;
+  criado_em: string;
+  atualizado_em: string;
+  endereco: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cep: string | null;
+  cnae: number | null;
+  inscricao_municipal: string | null;
+  certificado_id: number | null;
+}
+
+export interface Cliente {
+  id: number;
+  cnpj: string;
+  razao_social: string;
+  nome_fantasia?: string | null;
+  inscricao_estadual?: string | null;
+  matriz: 'S' | 'N';
+  regime_tributario: 'Simples Nacional' | 'Lucro Presumido' | 'Lucro Real';
+  endereco?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  municipio?: string | null;
+  uf?: string | null;
+  cep?: string | null;
+  ativo: number;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+// ============================================
+// TIPOS PARA PERFIS DE ACESSO
+// ============================================
+
+export interface SysFuncionalidade {
+  id: number;
+  funcionalidade: string;
+}
+
+export interface SysModulo {
+  id: number;
+  modulo: string;
+  funcionalidades: SysFuncionalidade[];
+}
+
+export interface PerfilPermissao {
+  id?: number;
+  funcionalidade_id: number;
+  inserir: boolean;
+  alterar: boolean;
+  consultar: boolean;
+  excluir: boolean;
+}
+
+export interface Perfil {
+  id: number;
+  perfil: string;
+  adm_mindtax: boolean;
+  cliente_id: number | null;
+  cliente_nome?: string | null;
+  created_at: string;
+  excluded_at?: string | null;
+  permissoes?: PerfilPermissao[];
+}
 
 // ============================================
 // TIPOS PARA SISTEMA DE CHAMADOS

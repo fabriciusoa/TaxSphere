@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { db, runQuery, getAll } from '../database/connection';
+import { runQuery, getAll } from '../database/connection';
 import { log } from '../utils/logger'; 
 
 interface CronStatus {
@@ -68,7 +68,7 @@ async function checkCronJobs(): Promise<{ status: 'ok' | 'warning' | 'critical';
         duracao_ms as execution_time_ms,
         registros_processados as records_processed
       FROM cron_execucoes
-      WHERE executado_em >= datetime('now', '-24 hours')
+      WHERE executado_em >= NOW() - INTERVAL '24 hours'
       ORDER BY job_nome, executado_em DESC
     `);
     
@@ -164,7 +164,7 @@ async function checkNotifications(): Promise<{ status: 'ok' | 'warning' | 'criti
       SELECT COUNT(*) as falhas_recentes
       FROM notificacao
       WHERE status = 'Falha' 
-        AND criado_em >= datetime('now', '-24 hours')
+        AND criado_em >= NOW() - INTERVAL '24 hours'
     `);
     
     stats.falhas_ultimas_24h = failRows[0]?.falhas_recentes || 0;

@@ -13,17 +13,12 @@ const ParametrosPage              = lazy(() => import('./pages/ParametrosPage'))
 const ChamadoPage                 = lazy(() => import('./pages/ChamadoPage'));
 const ChamadosReportsPage         = lazy(() => import('./pages/ChamadosReportsPage'));
 const ManualPage                  = lazy(() => import('./pages/ManualPage'));
-const AssinarPage                 = lazy(() => import('./pages/AssinarPage'));
-const AdmPlanosPage               = lazy(() => import('./pages/AdmPlanosPage'));
-const AdmAssinaturaPage           = lazy(() => import('./pages/AdmAssinaturaPage'));
-const AdmStripeMetricsPage        = lazy(() => import('./pages/AdmStripeMetricsPage'));
 const ManutencaoPage              = lazy(() => import('./pages/ManutencaoPage'));
-const NotificacoesPage            = lazy(() => import('./pages/NotificacoesAgendamentoPage'));
+const NotificacoesPage            = lazy(() => import('./pages/NotificacoesPage'));
 const NotFoundPage                = lazy(() => import('./pages/NotFoundPage'));
 const ModuloEmBreve               = lazy(() => import('./pages/ModuloEmBrevePage'));
-
 const PerdcompDashboardPage       = lazy(() => import('./pages/perdcomp/PerdcompDashboardPage'));
-const PerdcompEmpresasPage        = lazy(() => import('./pages/perdcomp/EmpresasPage'));
+const PerdcompEmpresasPage        = lazy(() => import('./pages/EmpresasPage'));
 const PerdcompCreditosPage        = lazy(() => import('./pages/perdcomp/CreditosPage'));
 const PerdcompDebitosPage         = lazy(() => import('./pages/perdcomp/DebitosPage'));
 const PerdcompPedidosPage         = lazy(() => import('./pages/perdcomp/PedidosPage'));
@@ -33,6 +28,8 @@ const PerdcompAssistenteIAPage    = lazy(() => import('./pages/perdcomp/Assisten
 const EcacIntegracaoPage          = lazy(() => import('./pages/perdcomp/EcacIntegracaoPage'));
 const DctfWebDashboardPage        = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
 const DctfWebDeclaracoesPage      = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
+const ClientesPage                = lazy(() => import('./pages/ClientesPage'));
+const PerfisPage                  = lazy(() => import('./pages/PerfisPage'));
 
 // Fallback leve exibido enquanto o chunk da página é baixado (< 1 s em LAN/produção)
 function PageLoader() {
@@ -58,7 +55,6 @@ function App() {
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
-              <Route path="/assinar" element={<AssinarPage />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
               <Route element={<PrivateRoute />}>
@@ -96,13 +92,12 @@ function App() {
                 <Route path="/meu-perfil" element={<MeuPerfilPage />} />
 
                 {/* Administração */}
+                <Route path="/clientes" element={<ClientesPage />} />
+                <Route path="/sistema/perfis" element={<PerfisPage />} />
                 <Route path="/sistema/notificacoes" element={<NotificacoesPage />} />
                 <Route path="/sistema/usuarios" element={<UsuariosPage />} />
                 <Route path="/sistema/parametros" element={<ParametrosPage />} />
                 <Route path="/sistema/manutencao" element={<ManutencaoPage />} />
-                <Route path="/assinatura/planos" element={<AdmPlanosPage />} />
-                <Route path="/assinatura/assinaturas" element={<AdmAssinaturaPage />} />
-                <Route path="/assinatura/metricas-stripe" element={<AdmStripeMetricsPage />} />
 
                 <Route path="*" element={<NotFoundPage />} />
               </Route>

@@ -1,76 +1,154 @@
-import sqlite3 from 'sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { Pool, PoolClient } from 'pg';
 import dotenv from 'dotenv';
 import { log, flushLogsAndExit } from '../utils/logger';
-  
+
 dotenv.config();
 
-// Caminho do banco lido do .env (DATABASE_PATH); fallback para o caminho padrão
-const dbPath = process.env.DATABASE_PATH
-  ? path.resolve(process.env.DATABASE_PATH)
-  : path.join(path.resolve(__dirname, '../../../..'), 'data', 'mentis_db.db');
+const connectionString = process.env.DATABASE_ENV === 'local'
+  ? process.env.DATABASE_URL_LOCAL
+  : process.env.DATABASE_URL;
 
-// Validar se o banco de dados existe antes de conectar
-if (!fs.existsSync(dbPath)) {
-  log.error(`Banco de dados não encontrado: ${dbPath}`);
-  log.error('Execute as migrations ou verifique o caminho no arquivo .env (DATABASE_PATH)');
+if (!connectionString) {
+  log.error('Variável de ambiente DATABASE_URL não definida.');
+  log.error('Configure DATABASE_URL no arquivo .env com a connection string do Supabase.');
   flushLogsAndExit(1);
 }
 
-export const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => {
-  if (err) {
-    log.error(`Verifique o caminho do banco de dados: ${dbPath}`);
-    log.error(`Erro ao conectar ao banco de dados: ${err.message}`);
-    flushLogsAndExit(1);
-  }
-  log.info(`Conectado ao banco de dados SQLite: ${dbPath}`);
-
-  db.run('PRAGMA foreign_keys = ON', (fkErr) => {
-    if (fkErr) log.warn(`Falha ao ativar foreign_keys: ${fkErr.message}`);
-    else log.info('SQLite: PRAGMA foreign_keys = ON');
+// Pool de conexões PostgreSQL (Supabase)
+// SSL sempre ativado: Supabase exige conexão criptografada
+// rejectUnauthorized: false aceita o certificado da infraestrutura do Supabase
+let pool: Pool;
+if (process.env.DATABASE_ENV === 'local') {
+  pool = new Pool({
+    connectionString,
+    max: 10,                        // máximo de conexões simultâneas no pool
+    idleTimeoutMillis: 30_000,      // fecha conexão ociosa após 30s
+    connectionTimeoutMillis: 5_000, // erro se não conseguir conexão em 5s
   });
+} else {
+  pool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 10,                        // máximo de conexões simultâneas no pool
+    idleTimeoutMillis: 30_000,      // fecha conexão ociosa após 30s
+    connectionTimeoutMillis: 5_000, // erro se não conseguir conexão em 5s
+  });
+}
+export { pool };
+
+pool.on('error', (err: Error) => {
+  log.error(`Erro inesperado no pool de conexões PostgreSQL: ${err.message}`);
 });
 
-// Função helper para executar queries com Promise
-export function runQuery(sql: string, params: any[] = []): Promise<{ lastID: number; changes: number }> {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function(err) {
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID, changes: this.changes });
-    });
+// Teste de conectividade ao iniciar o servidor
+pool.query('SELECT 1')
+  .then(() => {
+    const urlSafe = connectionString!.replace(/:([^:@]+)@/, ':****@');
+    log.info(`Conectado ao banco de dados PostgreSQL: ${urlSafe}`);
+  })
+  .catch((err: Error) => {
+    log.error(`Falha ao conectar ao banco de dados: ${err.message}`);
+    flushLogsAndExit(1);
   });
+
+// ─── Helpers principais ────────────────────────────────────────────────────────
+
+/**
+ * Executa INSERT, UPDATE ou DELETE.
+ *
+ * Retorna:
+ *   - id / lastID : valor de RETURNING id (se a query incluir RETURNING id), senão 0
+ *   - changes     : número de linhas afetadas (rowCount)
+ *
+ * Nas queries INSERT que precisam do ID gerado, inclua RETURNING id no SQL.
+ * Exemplo: INSERT INTO tabela (col) VALUES ($1) RETURNING id
+ *
+ * @param client Opcional — passar quando executando dentro de uma transação
+ */
+export async function runQuery(
+  sql: string,
+  params: any[] = [],
+  client?: PoolClient
+): Promise<{ id: number; lastID: number; changes: number }> {
+  const runner = client ?? pool;
+  const result = await runner.query(sql, params);
+  const id = (result.rows[0]?.id as number) ?? 0;
+  return { id, lastID: id, changes: result.rowCount ?? 0 };
 }
 
-// Função helper para buscar um único registro
-export function getOne<T>(sql: string, params: any[] = []): Promise<T | undefined> {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row as T);
-    });
-  });
+/**
+ * Busca um único registro. Retorna undefined se não encontrar.
+ * @param client Opcional — passar quando executando dentro de uma transação
+ */
+export async function getOne<T>(
+  sql: string,
+  params: any[] = [],
+  client?: PoolClient
+): Promise<T | undefined> {
+  const runner = client ?? pool;
+  const result = await runner.query(sql, params);
+  return result.rows[0] as T | undefined;
 }
 
-// Função helper para buscar múltiplos registros
-export function getAll<T>(sql: string, params: any[] = []): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows as T[]);
-    });
-  });
+/**
+ * Busca múltiplos registros. Retorna array vazio se não encontrar.
+ * @param client Opcional — passar quando executando dentro de uma transação
+ */
+export async function getAll<T>(
+  sql: string,
+  params: any[] = [],
+  client?: PoolClient
+): Promise<T[]> {
+  const runner = client ?? pool;
+  const result = await runner.query(sql, params);
+  return result.rows as T[];
 }
 
-// Fechar conexão ao encerrar processo
-process.on('SIGINT', () => {
-  db.close((err) => {
-    if (err) {
-      log.error(`Erro ao fechar banco de dados: ${err.message}`);
-      flushLogsAndExit(1);
-    } else {
-      log.info('Conexão com banco de dados fechada.');
-      flushLogsAndExit(0);
-    }
-  });
+// ─── Helpers de transação ──────────────────────────────────────────────────────
+
+/**
+ * Inicia uma transação e retorna o cliente exclusivo.
+ * SEMPRE usar dentro de try/catch e chamar rollbackTransaction no catch.
+ *
+ * Exemplo de uso:
+ *
+ *   const client = await beginTransaction();
+ *   try {
+ *     await runQuery('INSERT ...', [...], client);
+ *     await runQuery('UPDATE ...', [...], client);
+ *     await commitTransaction(client);
+ *   } catch (err) {
+ *     await rollbackTransaction(client);
+ *     throw err;
+ *   }
+ */
+export async function beginTransaction(): Promise<PoolClient> {
+  const client = await pool.connect();
+  await client.query('BEGIN');
+  return client;
+}
+
+/** Confirma a transação e devolve o cliente ao pool. */
+export async function commitTransaction(client: PoolClient): Promise<void> {
+  await client.query('COMMIT');
+  client.release();
+}
+
+/** Cancela a transação e devolve o cliente ao pool. */
+export async function rollbackTransaction(client: PoolClient): Promise<void> {
+  await client.query('ROLLBACK');
+  client.release();
+}
+
+// ─── Encerramento gracioso ─────────────────────────────────────────────────────
+
+process.on('SIGINT', async () => {
+  try {
+    await pool.end();
+    log.info('Pool de conexões PostgreSQL encerrado.');
+    flushLogsAndExit(0);
+  } catch (err: any) {
+    log.error(`Erro ao encerrar pool: ${err.message}`);
+    flushLogsAndExit(1);
+  }
 });

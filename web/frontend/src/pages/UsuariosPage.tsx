@@ -1,14 +1,44 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Button, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Typography, TextField, IconButton, Dialog,
-  DialogTitle, DialogContent, Tabs, Tab, Alert, CircularProgress,
-  Stack, InputAdornment, FormControl, InputLabel, Select, MenuItem,
-  List, ListItem, ListItemIcon, ListItemText, Switch, TablePagination, Chip,
+  Box,
+  Button,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+  TextField,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  Alert,
+  CircularProgress,
+  Stack,
+  InputAdornment,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Switch,
+  TablePagination,
+  Chip,
+  Checkbox,
+  Divider,
 } from '@mui/material';
 import {
-  Add as AddIcon, Edit as EditIcon, LockOpen as UnlockIcon,
-  CheckCircle as CheckCircleIcon, RadioButtonUnchecked as UncheckedIcon,
+  Add as AddIcon,
+  Edit as EditIcon,
+  LockOpen as UnlockIcon,
+  CheckCircle as CheckCircleIcon,
+  RadioButtonUnchecked as UncheckedIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -17,23 +47,23 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { ptBR } from 'date-fns/locale';
 import { usuariosService } from '../services/usuariosService';
 import { perfisService } from '../services/perfisService';
-import usuarioParametrosService from '../services/usuarioParametrosService';
-import perfilService from '../services/perfilService';
 import { logger } from '../utils/logger';
+import { type Usuario, type Perfil } from '../types';
+import { formatDisplay } from '../utils/dateHelpers';
 
 // Tokens Synchro
 const T = {
-  cyan:       '#00c8f0',
-  cyanGlow:   '0 4px 18px rgba(0,200,240,0.25)',
-  cyanHover:  '0 6px 22px rgba(0,200,240,0.38)',
-  cyanDim:    'rgba(0, 200, 240, 0.08)',
+  cyan: '#00c8f0',
+  cyanGlow: '0 4px 18px rgba(0,200,240,0.25)',
+  cyanHover: '0 6px 22px rgba(0,200,240,0.38)',
+  cyanDim: 'rgba(0, 200, 240, 0.08)',
   cyanBorder: 'rgba(0, 200, 240, 0.18)',
-  textPrimary:'#1a2332',
+  textPrimary: '#1a2332',
   textSecond: '#64748b',
-  border:     'rgba(15, 30, 60, 0.09)',
-  surface:    '#FFFFFF',
-  inputBg:    '#F7F9FC',
-  navy:       '#0a1628',
+  border: 'rgba(15, 30, 60, 0.09)',
+  surface: '#FFFFFF',
+  inputBg: '#F7F9FC',
+  navy: '#0a1628',
   cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 };
 
@@ -76,123 +106,70 @@ const btnOutlined = {
   '&:hover': { borderColor: 'rgba(15,30,60,0.35)', backgroundColor: 'rgba(15,30,60,0.03)' },
 };
 
-const tabsSx = {
-  '& .MuiTab-root': { fontSize: '0.875rem', fontWeight: 600, textTransform: 'none', color: T.textSecond, minHeight: 44 },
-  '& .MuiTab-root.Mui-selected': { color: T.cyan },
-  '& .MuiTabs-indicator': { backgroundColor: T.cyan },
-};
-
-// ─── Interfaces ──────────────────────────────────────────────────────────────
-
-interface Usuario {
-  id: number; nome: string; email: string; cpf: string;
-  perfil: string; perfil_id: number; status: string;
-  criado?: string | null; dt_inativacao?: string | null;
-  dt_nascimento?: string | null; dt_ativacao?: string | null;
-  ultimo_login?: string | null; tentativas_login?: number; dt_bloqueio?: string | null;
-}
-
-interface Perfil { id: number; perfil: string; }
-
-interface DadosMedico {
-  especialidade?: number; inscricao: string; tempo_sessao?: number;
-  endereco: string; numero?: number; complemento: string;
-  bairro: string; cidade: string; uf: string; cep: string;
-  nacionalidade: string; estado_civil: string; telefone: string;
-  logo?: string; assinatura?: string;
-}
-
-interface TabPanelProps { children?: React.ReactNode; index: number; value: number; }
-
-function TabPanel({ children, value, index, ...other }: TabPanelProps) {
-  return (
-    <div role="tabpanel" hidden={value !== index} {...other}>
-      {value === index && <Box sx={{ pt: 2.5 }}>{children}</Box>}
-    </div>
-  );
-}
-
 const STATUS_CHIP: Record<string, { bg: string; color: string; label: string }> = {
-  Ativo:     { bg: 'rgba(102,187,106,0.12)', color: '#388E3C', label: 'Ativo'     },
-  Inativo:   { bg: 'rgba(158,158,158,0.12)', color: '#616161', label: 'Inativo'   },
-  Bloqueado: { bg: 'rgba(239,83,80,0.12)',   color: '#C62828', label: 'Bloqueado' },
-};
-
-const EMPTY_MEDICO: DadosMedico = {
-  especialidade: undefined, inscricao: '', tempo_sessao: undefined,
-  endereco: '', numero: undefined, complemento: '', bairro: '',
-  cidade: '', uf: '', cep: '', nacionalidade: '', estado_civil: '',
-  telefone: '', logo: '', assinatura: '',
-};
-
-const EMPTY_PARAMS = {
-  duracao_sessao: 50, tempo_entre_sessao: 10,
-  enviar_email: true, enviar_whats: false, tempo_lembrete: 24,
-  permite_paciente_remarcar: true, tempo_remarcacao: 24,
-  permite_paciente_cancelar: true, tempo_cancelamento: 24,
+  Ativo: { bg: 'rgba(102,187,106,0.12)', color: '#388E3C', label: 'Ativo' },
+  Inativo: { bg: 'rgba(158,158,158,0.12)', color: '#616161', label: 'Inativo' },
+  Bloqueado: { bg: 'rgba(239,83,80,0.12)', color: '#C62828', label: 'Bloqueado' },
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const UsuariosPage: React.FC = () => {
-  const [usuarios, setUsuarios]         = useState<Usuario[]>([]);
-  const [perfis, setPerfis]             = useState<Perfil[]>([]);
-  const [loading, setLoading]           = useState(false);
-  const [openModal, setOpenModal]       = useState(false);
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [openModal, setOpenModal] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null);
-  const [tabValue, setTabValue]         = useState(0);
-  const [erro, setErro]                 = useState('');
-  const [sucesso, setSucesso]           = useState('');
-  const [loadingPerfis, setLoadingPerfis] = useState(true);
-  const [buscandoCEP, setBuscandoCEP]   = useState(false);
-
+  const [erro, setErro] = useState('');
+  const [sucesso, setSucesso] = useState('');
   const [filtroDataCriacaoInicio, setFiltroDataCriacaoInicio] = useState<Date | null>(null);
-  const [filtroDataCriacaoFim, setFiltroDataCriacaoFim]       = useState<Date | null>(null);
-  const [filtroBusca, setFiltroBusca]   = useState('');
-  const [page, setPage]                 = useState(0);
-  const [rowsPerPage, setRowsPerPage]   = useState(10);
+  const [filtroDataCriacaoFim, setFiltroDataCriacaoFim] = useState<Date | null>(null);
+  const [filtroBusca, setFiltroBusca] = useState('');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [totalRecords, setTotalRecords] = useState(0);
 
+  // Perfis
+  const [perfisDisponiveis, setPerfisDisponiveis] = useState<Perfil[]>([]);
+  const [perfilIds, setPerfilIds] = useState<number[]>([]);
+  const [perfisLoading, setPerfisLoading] = useState(false);
+
   const [formData, setFormData] = useState({
-    nome: '', email: '', cpf: '', senha: '', confirmarSenha: '',
-    perfil: '', dt_nascimento: '', status: 'Ativo',
+    nome: '',
+    email: '',
+    cpf: '',
+    senha: '',
+    confirmarSenha: '',
+    dt_nascimento: '',
+    status: false,
+    cliente_id: 0,
   });
 
-  const [dadosMedico, setDadosMedico] = useState<DadosMedico>(EMPTY_MEDICO);
-
-  const [parametros, setParametros] = useState(EMPTY_PARAMS);
-
   const requisitos = [
-    { id: 'length',    label: 'Mínimo 8 caracteres',             test: (s: string) => s.length >= 8 },
-    { id: 'lowercase', label: 'Pelo menos 1 letra minúscula',    test: (s: string) => /[a-z]/.test(s) },
-    { id: 'uppercase', label: 'Pelo menos 1 letra maiúscula',    test: (s: string) => /[A-Z]/.test(s) },
-    { id: 'special',   label: 'Pelo menos 1 caractere especial', test: (s: string) => /[\W_]/.test(s) },
+    { id: 'length', label: 'Mínimo 8 caracteres', test: (s: string) => s.length >= 8 },
+    { id: 'lowercase', label: 'Pelo menos 1 letra minúscula', test: (s: string) => /[a-z]/.test(s) },
+    { id: 'uppercase', label: 'Pelo menos 1 letra maiúscula', test: (s: string) => /[A-Z]/.test(s) },
+    { id: 'special', label: 'Pelo menos 1 caractere especial', test: (s: string) => /[\W_]/.test(s) },
   ];
 
-  const ehMedico = editingUsuario?.perfil === 'MEDICO' || editingUsuario?.perfil === 'ADMIN';
-
   // ─── Data loaders ──────────────────────────────────────────────────────────
-
-  const carregarPerfis = useCallback(async () => {
-    try {
-      setLoadingPerfis(true);
-      setPerfis(await perfisService.listar());
-    } catch (error: any) {
-      logger.error('Erro ao carregar perfis:', error);
-      setErro(error.response?.data?.erro || 'Erro ao carregar perfis');
-    } finally { setLoadingPerfis(false); }
-  }, []);
 
   const carregarUsuarios = useCallback(async () => {
     setLoading(true);
     try {
       const filtros: Record<string, string | number> = {};
-      if (filtroDataCriacaoInicio) filtros.data_criacao_inicio = filtroDataCriacaoInicio.toISOString().split('T')[0];
-      if (filtroDataCriacaoFim)   filtros.data_criacao_fim    = filtroDataCriacaoFim.toISOString().split('T')[0];
-      if (filtroBusca.trim())     filtros.busca               = filtroBusca.trim();
-      filtros.page  = page + 1;
+      if (filtroDataCriacaoInicio)
+        filtros.data_criacao_inicio = filtroDataCriacaoInicio.toISOString().split('T')[0];
+
+      if (filtroDataCriacaoFim)
+        filtros.data_criacao_fim = filtroDataCriacaoFim.toISOString().split('T')[0];
+
+      if (filtroBusca.trim())
+        filtros.busca = filtroBusca.trim();
+
+      filtros.page = page + 1;
       filtros.limit = rowsPerPage;
       const response = await usuariosService.listar(filtros);
+
       setUsuarios(response.data);
       setTotalRecords(response.totalRecords);
     } catch (error: any) {
@@ -201,19 +178,25 @@ const UsuariosPage: React.FC = () => {
     } finally { setLoading(false); }
   }, [filtroDataCriacaoInicio, filtroDataCriacaoFim, filtroBusca, page, rowsPerPage]);
 
-  useEffect(() => { carregarPerfis(); }, [carregarPerfis]);
   useEffect(() => { carregarUsuarios(); }, [carregarUsuarios]);
+
+  useEffect(() => {
+    perfisService.listar({ limit: 200 })
+      .then(res => setPerfisDisponiveis(res.data))
+      .catch(err => logger.error('Erro ao carregar perfis:', err));
+  }, []);
 
   // ─── Modal ─────────────────────────────────────────────────────────────────
 
   const handleOpenModal = async (usuario?: Usuario) => {
+    setPerfilIds([]);
     if (usuario) {
       setEditingUsuario(usuario);
 
       let dataNascimento = '';
       if (usuario.dt_nascimento) {
         if (/^\d{4}-\d{2}-\d{2}/.test(usuario.dt_nascimento)) {
-          dataNascimento = usuario.dt_nascimento.split(' ')[0];
+          dataNascimento = usuario.dt_nascimento.substring(0, 10);
         } else {
           const match = usuario.dt_nascimento.match(/(\d{2})\/(\d{2})\/(\d{4})/);
           if (match) dataNascimento = `${match[3]}-${match[2]}-${match[1]}`;
@@ -221,71 +204,34 @@ const UsuariosPage: React.FC = () => {
       }
 
       setFormData({
-        nome: usuario.nome, email: usuario.email, cpf: usuario.cpf,
-        senha: '', confirmarSenha: '',
-        perfil: usuario.perfil_id?.toString() || '',
-        dt_nascimento: dataNascimento, status: usuario.status,
+        nome: usuario.nome,
+        email: usuario.email,
+        cpf: usuario.cpf,
+        senha: '',
+        confirmarSenha: '',
+        dt_nascimento: dataNascimento,
+        status: usuario.status,
+        cliente_id: usuario.cliente_id || 0,
       });
 
-      if (usuario.perfil === 'MEDICO' || usuario.perfil === 'ADMIN') {
-        try {
-          const dadosPerfil = await perfilService.buscarPerfilUsuario(usuario.id);
-          if (dadosPerfil.dados_medico) {
-            setDadosMedico({
-              especialidade: dadosPerfil.dados_medico.especialidade != null && !isNaN(Number(dadosPerfil.dados_medico.especialidade))
-                ? Number(dadosPerfil.dados_medico.especialidade) : undefined,
-              inscricao:     dadosPerfil.dados_medico.inscricao     || '',
-              tempo_sessao:  dadosPerfil.dados_medico.tempo_sessao  || undefined,
-              endereco:      dadosPerfil.dados_medico.endereco      || '',
-              numero:        dadosPerfil.dados_medico.numero,
-              complemento:   dadosPerfil.dados_medico.complemento   || '',
-              bairro:        dadosPerfil.dados_medico.bairro        || '',
-              cidade:        dadosPerfil.dados_medico.cidade        || '',
-              uf:            dadosPerfil.dados_medico.uf            || '',
-              cep:           dadosPerfil.dados_medico.cep           || '',
-              nacionalidade: dadosPerfil.dados_medico.nacionalidade || '',
-              estado_civil:  dadosPerfil.dados_medico.estado_civil  || '',
-              telefone:      dadosPerfil.dados_medico.telefone      || '',
-              logo:          dadosPerfil.dados_medico.logo          || '',
-              assinatura:    dadosPerfil.dados_medico.assinatura    || '',
-            });
-          }
-          try {
-            const params = await usuarioParametrosService.buscarPorUsuario(usuario.id);
-            if (params) {
-              setParametros({
-                duracao_sessao:           params.duracao_sessao           || 50,
-                tempo_entre_sessao:       params.tempo_entre_sessao       || 10,
-                enviar_email:             params.enviar_email             !== false,
-                enviar_whats:             params.enviar_whats             || false,
-                tempo_lembrete:           params.tempo_lembrete           || 24,
-                permite_paciente_remarcar:params.permite_paciente_remarcar !== false,
-                tempo_remarcacao:         params.tempo_remarcacao         || 24,
-                permite_paciente_cancelar:params.permite_paciente_cancelar !== false,
-                tempo_cancelamento:       params.tempo_cancelamento       || 24,
-              });
-            }
-          } catch (error: any) {
-            logger.error('Erro ao carregar parâmetros:', error);
-            if (error.response?.status !== 404) {
-              setErro(error.response?.data?.erro || error.response?.data?.error || 'Erro ao carregar parâmetros');
-            }
-          }
-        } catch (error: any) {
-          logger.error('Erro ao carregar dados profissionais:', error);
-          setErro(error.response?.data?.erro || error.response?.data?.error || 'Erro ao carregar dados profissionais');
-        }
+      // Carregar perfis do usuário
+      setPerfisLoading(true);
+      try {
+        const perfisUsuario = await usuariosService.buscarPerfisDoUsuario(usuario.id);
+        setPerfilIds(perfisUsuario.map(p => p.perfil_id));
+      } catch (err) {
+        logger.error('Erro ao carregar perfis do usuário:', err);
+      } finally {
+        setPerfisLoading(false);
       }
     }
-    setTabValue(0);
     setOpenModal(true);
   };
 
   const handleCloseModal = () => {
     setOpenModal(false);
     setEditingUsuario(null);
-    setDadosMedico(EMPTY_MEDICO);
-    setParametros(EMPTY_PARAMS);
+    setPerfilIds([]);
   };
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
@@ -293,56 +239,13 @@ const UsuariosPage: React.FC = () => {
   const handleInputChange = (field: string, value: string) =>
     setFormData(prev => ({ ...prev, [field]: value }));
 
-  const handleMedicoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    if (name === 'especialidade') {
-      setDadosMedico(prev => ({ ...prev, especialidade: value ? Number(value) : undefined }));
-    } else if (name === 'tempo_sessao') {
-      setDadosMedico(prev => ({ ...prev, tempo_sessao: value ? Number(value) : undefined }));
-    } else {
-      setDadosMedico(prev => ({ ...prev, [name]: value }));
-    }
-  };
-
-  const formatarCEP = (v: string) => {
-    const n = v.replace(/\D/g, '');
-    return n.length <= 5 ? n : `${n.slice(0, 5)}-${n.slice(5, 8)}`;
-  };
-
-  const formatarTelefone = (v: string) => {
-    const n = v.replace(/\D/g, '');
-    return n.length <= 10
-      ? n.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3')
-      : n.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3');
-  };
-
   const formatarCPF = (cpf: string) =>
     cpf.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
 
-  const buscarCEP = async (cep: string) => {
-    const cepLimpo = cep.replace(/\D/g, '');
-    if (cepLimpo.length !== 8) return;
-    try {
-      setBuscandoCEP(true);
-      const response = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
-      const data = await response.json();
-      if (data.erro) { setErro('CEP não encontrado'); return; }
-      setDadosMedico(prev => ({
-        ...prev,
-        endereco: data.logradouro || '',
-        bairro:   data.bairro     || '',
-        cidade:   data.localidade || '',
-        uf:       data.uf         || '',
-      }));
-    } catch (error: any) {
-      logger.error('Erro ao buscar CEP:', error);
-      setErro('Erro ao buscar CEP');
-    } finally { setBuscandoCEP(false); }
-  };
 
   const handleSalvar = async () => {
     try {
-      if (!formData.nome || !formData.email || !formData.cpf || !formData.perfil) {
+      if (!formData.nome || !formData.email || !formData.cpf) {
         setErro('Preencha todos os campos obrigatórios'); return;
       }
       if (!editingUsuario && !formData.senha) {
@@ -350,44 +253,33 @@ const UsuariosPage: React.FC = () => {
       }
       if (formData.senha) {
         if (formData.senha !== formData.confirmarSenha) { setErro('A senha e a confirmação não coincidem'); return; }
-        if (formData.senha.length < 8)                 { setErro('A senha deve ter no mínimo 8 caracteres'); return; }
-        if (!/[a-z]/.test(formData.senha))             { setErro('A senha deve conter pelo menos 1 letra minúscula'); return; }
-        if (!/[A-Z]/.test(formData.senha))             { setErro('A senha deve conter pelo menos 1 letra maiúscula'); return; }
-        if (!/[\W_]/.test(formData.senha))             { setErro('A senha deve conter pelo menos 1 caractere especial'); return; }
+        if (formData.senha.length < 8) { setErro('A senha deve ter no mínimo 8 caracteres'); return; }
+        if (!/[a-z]/.test(formData.senha)) { setErro('A senha deve conter pelo menos 1 letra minúscula'); return; }
+        if (!/[A-Z]/.test(formData.senha)) { setErro('A senha deve conter pelo menos 1 letra maiúscula'); return; }
+        if (!/[\W_]/.test(formData.senha)) { setErro('A senha deve conter pelo menos 1 caractere especial'); return; }
       }
 
       const dados: any = {
-        nome: formData.nome, email: formData.email,
+        nome: formData.nome,
+        email: formData.email,
         cpf: formData.cpf.replace(/\D/g, ''),
-        perfil_id: parseInt(formData.perfil),
         dt_nascimento: formData.dt_nascimento || null,
+        cliente_id: formData.cliente_id || 0,
       };
-      if (editingUsuario) dados.status = formData.status;
-      if (formData.senha) dados.senha  = formData.senha;
-      if (ehMedico) {
-        dados.dados_medico = { ...dadosMedico, numero: dadosMedico.numero ? Number(dadosMedico.numero) : undefined };
-      }
+      if (editingUsuario)
+        dados.status = formData.status;
+      if (formData.senha)
+        dados.senha = formData.senha;
 
       if (editingUsuario) {
         await usuariosService.atualizar(editingUsuario.id, dados);
-        if (ehMedico) {
-          try {
-            await usuarioParametrosService.atualizarPorUsuario(editingUsuario.id, { ...parametros });
-          } catch (error: any) {
-            logger.error('Erro ao atualizar parâmetros:', error);
-            if (error.response?.status === 404) {
-              try {
-                await usuarioParametrosService.criarParaUsuario(editingUsuario.id, { ...parametros } as any);
-              } catch (criarError: any) {
-                logger.error('Erro ao criar parâmetros:', criarError);
-                setErro(criarError.response?.data?.erro || 'Erro ao criar parâmetros');
-              }
-            }
-          }
-        }
+        await usuariosService.sincronizarPerfisDoUsuario(editingUsuario.id, perfilIds);
         setSucesso('Usuário atualizado com sucesso');
       } else {
-        await usuariosService.criar(dados);
+        const criado = await usuariosService.criar(dados);
+        if (perfilIds.length > 0) {
+          await usuariosService.sincronizarPerfisDoUsuario(criado.id, perfilIds);
+        }
         setSucesso('Usuário criado com sucesso');
       }
 
@@ -403,14 +295,18 @@ const UsuariosPage: React.FC = () => {
     }
   };
 
-  const handleToggleStatus = async (id: number, nome: string, statusAtual: string) => {
-    const novoStatus = statusAtual === 'Ativo' ? 'Inativo' : 'Ativo';
-    const acao = novoStatus === 'Inativo' ? 'desativar' : 'ativar';
-    if (!window.confirm(`Deseja realmente ${acao} o usuário ${nome}?`)) return;
+  const handleToggleStatus = async (id: number, nome: string, statusAtual: boolean) => {
+    const novoStatus = !statusAtual;
+    const acao = novoStatus ? 'ativar' : 'desativar';
+    if (!window.confirm(`Deseja realmente ${acao} o usuário ${nome}?`))
+      return;
     try {
       const dados: any = { status: novoStatus };
-      if (novoStatus === 'Ativo') dados.dt_inativacao = null;
+      if (novoStatus)
+        dados.dt_inativacao = null;
+
       await usuariosService.atualizar(id, dados);
+
       setSucesso(`Usuário ${acao === 'desativar' ? 'desativado' : 'ativado'} com sucesso`);
       carregarUsuarios();
       setTimeout(() => setSucesso(''), 3000);
@@ -421,7 +317,8 @@ const UsuariosPage: React.FC = () => {
   };
 
   const handleDesbloquear = async (id: number, nome: string) => {
-    if (!window.confirm(`Deseja desbloquear o usuário ${nome}?`)) return;
+    if (!window.confirm(`Deseja desbloquear o usuário ${nome}?`))
+      return;
     try {
       await usuariosService.desbloquear(id);
       setSucesso('Usuário desbloqueado com sucesso');
@@ -434,9 +331,9 @@ const UsuariosPage: React.FC = () => {
   };
 
   const abrirModalNovo = () => {
-    setFormData({ nome: '', email: '', cpf: '', senha: '', confirmarSenha: '', perfil: '', dt_nascimento: '', status: 'Ativo' });
+    setFormData({ nome: '', email: '', cpf: '', senha: '', confirmarSenha: '', dt_nascimento: '', status: true, cliente_id: 0 });
     setEditingUsuario(null);
-    setTabValue(0);
+    setPerfilIds([]);
     setOpenModal(true);
   };
 
@@ -461,7 +358,7 @@ const UsuariosPage: React.FC = () => {
           </Button>
         </Box>
 
-        {erro   && <Alert severity="error"   onClose={() => setErro('')}    sx={{ mb: 2, borderRadius: '10px' }}>{erro}</Alert>}
+        {erro && <Alert severity="error" onClose={() => setErro('')} sx={{ mb: 2, borderRadius: '10px' }}>{erro}</Alert>}
         {sucesso && <Alert severity="success" onClose={() => setSucesso('')} sx={{ mb: 2, borderRadius: '10px' }}>{sucesso}</Alert>}
 
         {/* Filtros */}
@@ -515,33 +412,36 @@ const UsuariosPage: React.FC = () => {
               <Table>
                 <TableHead>
                   <TableRow>
-                    {['Nome', 'Email', 'CPF', 'Perfil', 'Status', 'Último Login'].map(h => (
-                      <TableCell key={h} sx={thCellSx}>{h}</TableCell>
-                    ))}
+                    <TableCell align="center" sx={thCellSx}>Nome</TableCell>
+                    <TableCell align="center" sx={thCellSx}>Email</TableCell>
+                    <TableCell align="center" sx={thCellSx}>CPF</TableCell>
+                    <TableCell align="center" sx={thCellSx}>Cliente</TableCell>
+                    <TableCell sx={thCellSx}>Status</TableCell>
+                    <TableCell align="center" sx={thCellSx}>Data Bloqueio</TableCell>
+                    <TableCell align="center" sx={thCellSx}>Último Login</TableCell>
                     <TableCell align="center" sx={thCellSx}>Ações</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {usuarios.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 4, color: T.textSecond, fontSize: '0.875rem' }}>
+                      <TableCell colSpan={8} align="center" sx={{ py: 4, color: T.textSecond, fontSize: '0.875rem' }}>
                         Nenhum usuário encontrado
                       </TableCell>
                     </TableRow>
                   ) : usuarios.map((usuario) => {
-                    const sc = STATUS_CHIP[usuario.status] || STATUS_CHIP['Inativo'];
+                    const sc = STATUS_CHIP[usuario.status ? 'Ativo' : 'Inativo'] || STATUS_CHIP['Inativo'];
                     return (
                       <TableRow key={usuario.id} hover sx={{ '&:hover': { backgroundColor: '#F8FAFC' }, '& td': { borderBottom: `1px solid ${T.border}`, py: 1.25 } }}>
-                        <TableCell sx={{ fontSize: '0.875rem', fontWeight: 500, color: T.textPrimary }}>{usuario.nome}</TableCell>
-                        <TableCell sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{usuario.email}</TableCell>
-                        <TableCell sx={{ fontSize: '0.8125rem', fontFamily: 'monospace', color: T.textSecond }}>{formatarCPF(usuario.cpf)}</TableCell>
-                        <TableCell sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{usuario.perfil}</TableCell>
-                        <TableCell>
+                        <TableCell align="center" sx={{ fontSize: '0.875rem', fontWeight: 500, color: T.textPrimary }}>{usuario.nome}</TableCell>
+                        <TableCell align="center" sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{usuario.email}</TableCell>
+                        <TableCell align="center" sx={{ fontSize: '0.8125rem', fontFamily: 'monospace', color: T.textSecond }}>{formatarCPF(usuario.cpf)}</TableCell>
+                        <TableCell align="center" sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{usuario.cliente_id || 'N/A'}</TableCell>
+                        <TableCell align="center">
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <Switch
-                              checked={usuario.status === 'Ativo'}
+                              checked={usuario.status}
                               onChange={() => handleToggleStatus(usuario.id, usuario.nome, usuario.status)}
-                              disabled={usuario.status === 'Bloqueado'}
                               size="small"
                               sx={{
                                 '& .MuiSwitch-switchBase.Mui-checked': { color: T.cyan },
@@ -555,7 +455,8 @@ const UsuariosPage: React.FC = () => {
                             />
                           </Box>
                         </TableCell>
-                        <TableCell sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{usuario.ultimo_login || 'Nunca'}</TableCell>
+                        <TableCell align="center" sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{formatDisplay(usuario.dt_bloqueio) || '-'}</TableCell>
+                        <TableCell align="center" sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{formatDisplay(usuario.ultimo_login) || 'Nunca'}</TableCell>
                         <TableCell align="center">
                           <IconButton
                             size="small"
@@ -564,7 +465,7 @@ const UsuariosPage: React.FC = () => {
                           >
                             <EditIcon fontSize="small" />
                           </IconButton>
-                          {usuario.status === 'Bloqueado' && (
+                          {usuario.dt_bloqueio && (
                             <IconButton
                               size="small"
                               onClick={() => handleDesbloquear(usuario.id, usuario.nome)}
@@ -612,29 +513,11 @@ const UsuariosPage: React.FC = () => {
             {erro && (
               <Alert severity="error" onClose={() => setErro('')} sx={{ mt: 2, mb: 1, borderRadius: '10px' }}>{erro}</Alert>
             )}
-
-            {/* Tabs */}
-            <Box sx={{ borderBottom: `1px solid ${T.border}` }}>
-              <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)} sx={tabsSx}>
-                <Tab label="Dados Pessoais" />
-                <Tab label="Acesso" />
-                {ehMedico && <Tab label="Dados Profissionais" />}
-                {ehMedico && <Tab label="Endereço" />}
-              </Tabs>
-            </Box>
-
-            {/* Tab 0 — Dados Pessoais */}
-            <TabPanel value={tabValue} index={0}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <TextField label="Nome Completo"   value={formData.nome}  onChange={(e) => handleInputChange('nome', e.target.value)}  fullWidth required sx={inputSx} />
-                <TextField label="Email" type="email" value={formData.email} onChange={(e) => handleInputChange('email', e.target.value)} fullWidth required sx={inputSx} />
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 4, mb: 5 }}>
+              <TextField label="Nome Completo" value={formData.nome} onChange={(e) => handleInputChange('nome', e.target.value)} fullWidth required sx={inputSx} />
+              <TextField label="Email" type="email" value={formData.email} onChange={(e) => handleInputChange('email', e.target.value)} fullWidth required sx={inputSx} />
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                 <TextField label="CPF" value={formData.cpf} onChange={(e) => handleInputChange('cpf', e.target.value)} fullWidth required placeholder="000.000.000-00" sx={inputSx} />
-                <FormControl fullWidth required sx={inputSx}>
-                  <InputLabel>Perfil</InputLabel>
-                  <Select value={formData.perfil} onChange={(e) => handleInputChange('perfil', e.target.value)} label="Perfil" disabled={loadingPerfis}>
-                    {perfis.map((p) => <MenuItem key={p.id} value={p.id}>{p.perfil}</MenuItem>)}
-                  </Select>
-                </FormControl>
                 <TextField
                   label="Data de Nascimento" type="date"
                   value={formData.dt_nascimento}
@@ -643,21 +526,21 @@ const UsuariosPage: React.FC = () => {
                   slotProps={{ inputLabel: { shrink: true } }}
                   sx={inputSx}
                 />
-                {editingUsuario && (
-                  <FormControl fullWidth sx={inputSx}>
-                    <InputLabel>Status</InputLabel>
-                    <Select value={formData.status} onChange={(e) => handleInputChange('status', e.target.value)} label="Status">
-                      <MenuItem value="Ativo">Ativo</MenuItem>
-                      <MenuItem value="Inativo">Inativo</MenuItem>
-                    </Select>
-                  </FormControl>
-                )}
-              </Box>
-            </TabPanel>
-
-            {/* Tab 1 — Acesso */}
-            <TabPanel value={tabValue} index={1}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              </Stack>
+              {editingUsuario && (
+                <FormControl fullWidth sx={inputSx}>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    value={formData.status ? 'Ativo' : 'Inativo'}
+                    onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value === 'Ativo' }))}
+                    label="Status"
+                  >
+                    <MenuItem value="Ativo">Ativo</MenuItem>
+                    <MenuItem value="Inativo">Inativo</MenuItem>
+                  </Select>
+                </FormControl>
+              )}
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                 <TextField
                   type="password"
                   label={editingUsuario ? 'Nova Senha (deixe em branco para não alterar)' : 'Senha'}
@@ -672,90 +555,84 @@ const UsuariosPage: React.FC = () => {
                   onChange={(e) => handleInputChange('confirmarSenha', e.target.value)}
                   fullWidth required={!editingUsuario} sx={inputSx}
                 />
-                {formData.senha && (
-                  <Box sx={{ p: 2, borderRadius: '10px', border: `1px solid ${T.border}`, backgroundColor: '#F8FAFC' }}>
-                    <Typography sx={{ fontSize: '0.8125rem', color: T.textSecond, mb: 1, fontWeight: 600 }}>
-                      Requisitos da senha
-                    </Typography>
-                    <List dense disablePadding>
-                      {requisitos.map((req) => {
-                        const ok = req.test(formData.senha);
-                        return (
-                          <ListItem key={req.id} disablePadding sx={{ py: 0.375 }}>
-                            <ListItemIcon sx={{ minWidth: 28 }}>
-                              {ok
-                                ? <CheckCircleIcon sx={{ fontSize: 16, color: '#66BB6A' }} />
-                                : <UncheckedIcon   sx={{ fontSize: 16, color: T.textSecond }} />
-                              }
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={req.label}
-                              slotProps={{ primary: { style: { fontSize: '0.8125rem', color: ok ? T.textPrimary : T.textSecond } } }}
-                            />
-                          </ListItem>
-                        );
-                      })}
-                    </List>
+              </Stack>
+
+
+              {formData.senha && (
+                <Box sx={{ p: 2, borderRadius: '10px', border: `1px solid ${T.border}`, backgroundColor: '#F8FAFC' }}>
+                  <Typography sx={{ fontSize: '0.8125rem', color: T.textSecond, mb: 1, fontWeight: 600 }}>
+                    Requisitos da senha
+                  </Typography>
+                  <List dense disablePadding>
+                    {requisitos.map((req) => {
+                      const ok = req.test(formData.senha);
+                      return (
+                        <ListItem key={req.id} disablePadding sx={{ py: 0.375 }}>
+                          <ListItemIcon sx={{ minWidth: 28 }}>
+                            {ok
+                              ? <CheckCircleIcon sx={{ fontSize: 16, color: '#66BB6A' }} />
+                              : <UncheckedIcon sx={{ fontSize: 16, color: T.textSecond }} />
+                            }
+                          </ListItemIcon>
+                          <ListItemText
+                            primary={req.label}
+                            slotProps={{ primary: { style: { fontSize: '0.8125rem', color: ok ? T.textPrimary : T.textSecond } } }}
+                          />
+                        </ListItem>
+                      );
+                    })}
+                  </List>
+                </Box>
+              )}
+
+              {/* Perfis de Acesso */}
+              <Divider sx={{ my: 0.5 }} />
+              <Box>
+                <Typography sx={{ fontSize: '0.875rem', fontWeight: 700, color: T.textPrimary, mb: 1.5 }}>
+                  Perfis de Acesso
+                </Typography>
+                {perfisLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} sx={{ color: T.cyan }} />
+                  </Box>
+                ) : perfisDisponiveis.length === 0 ? (
+                  <Typography sx={{ fontSize: '0.8125rem', color: T.textSecond }}>Nenhum perfil cadastrado</Typography>
+                ) : (
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 0.5 }}>
+                    {perfisDisponiveis.map((perfil) => {
+                      const selecionado = perfilIds.includes(perfil.id);
+                      return (
+                        <Box
+                          key={perfil.id}
+                          onClick={() => setPerfilIds(prev =>
+                            selecionado ? prev.filter(id => id !== perfil.id) : [...prev, perfil.id]
+                          )}
+                          sx={{
+                            display: 'flex', alignItems: 'center', gap: 1,
+                            px: 1.5, py: 0.75, borderRadius: '8px', cursor: 'pointer',
+                            border: `1px solid ${selecionado ? T.cyan : T.border}`,
+                            backgroundColor: selecionado ? T.cyanDim : T.surface,
+                            transition: 'all 0.15s',
+                            '&:hover': { borderColor: T.cyan, backgroundColor: T.cyanDim },
+                          }}
+                        >
+                          <Checkbox
+                            size="small"
+                            checked={selecionado}
+                            onChange={() => {}}
+                            sx={{ p: 0, '&.Mui-checked': { color: T.cyan } }}
+                          />
+                          <Typography sx={{ fontSize: '0.8125rem', fontWeight: selecionado ? 600 : 400, color: selecionado ? T.textPrimary : T.textSecond }}>
+                            {perfil.perfil}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
                   </Box>
                 )}
               </Box>
-            </TabPanel>
+            </Box>
 
-            {/* Tab 2 — Dados Profissionais */}
-            {ehMedico && (
-              <TabPanel value={tabValue} index={2}>
-                <Stack spacing={2}>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField fullWidth label="Nacionalidade" name="nacionalidade" value={dadosMedico.nacionalidade} onChange={handleMedicoChange} sx={inputSx} />
-                    <TextField fullWidth select label="Estado Civil" name="estado_civil" value={dadosMedico.estado_civil} onChange={handleMedicoChange} sx={inputSx}>
-                      <MenuItem value="">Selecione</MenuItem>
-                      <MenuItem value="Solteiro(a)">Solteiro(a)</MenuItem>
-                      <MenuItem value="Casado(a)">Casado(a)</MenuItem>
-                      <MenuItem value="Divorciado(a)">Divorciado(a)</MenuItem>
-                      <MenuItem value="Viúvo(a)">Viúvo(a)</MenuItem>
-                    </TextField>
-                    <TextField
-                      fullWidth label="Telefone" name="telefone"
-                      value={dadosMedico.telefone}
-                      onChange={(e) => setDadosMedico(prev => ({ ...prev, telefone: formatarTelefone(e.target.value) }))}
-                      slotProps={{ htmlInput: { maxLength: 15 } }}
-                      sx={inputSx}
-                    />
-                  </Stack>
-                </Stack>
-              </TabPanel>
-            )}
-
-            {/* Tab 3 — Endereço */}
-            {ehMedico && (
-              <TabPanel value={tabValue} index={3}>
-                <Stack spacing={2}>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField
-                      sx={{ flex: 1, ...inputSx }} label="CEP" name="cep"
-                      value={dadosMedico.cep}
-                      onChange={(e) => setDadosMedico(prev => ({ ...prev, cep: formatarCEP(e.target.value) }))}
-                      onBlur={(e) => buscarCEP(e.target.value)}
-                      slotProps={{ htmlInput: { maxLength: 9 } }}
-                    />
-                    <TextField sx={{ flex: 3, ...inputSx }} label="Endereço" name="endereco" value={dadosMedico.endereco} onChange={handleMedicoChange} disabled={buscandoCEP} />
-                  </Stack>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField sx={{ flex: 1, ...inputSx }} label="Número"     name="numero"      type="number"  value={dadosMedico.numero || ''}      onChange={handleMedicoChange} />
-                    <TextField sx={{ flex: 2, ...inputSx }} label="Complemento" name="complemento"               value={dadosMedico.complemento}       onChange={handleMedicoChange} />
-                    <TextField sx={{ flex: 2, ...inputSx }} label="Bairro"      name="bairro"                    value={dadosMedico.bairro}            onChange={handleMedicoChange} disabled={buscandoCEP} />
-                  </Stack>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField sx={{ flex: 3, ...inputSx }} label="Cidade" name="cidade" value={dadosMedico.cidade} onChange={handleMedicoChange} disabled={buscandoCEP} />
-                    <TextField
-                      sx={{ flex: 1, ...inputSx }} label="UF" name="uf"
-                      value={dadosMedico.uf} onChange={handleMedicoChange} disabled={buscandoCEP}
-                      slotProps={{ htmlInput: { maxLength: 2, style: { textTransform: 'uppercase' } } }}
-                    />
-                  </Stack>
-                </Stack>
-              </TabPanel>
-            )}
 
             {/* Footer */}
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5, mt: 3, pt: 2.5, borderTop: `1px solid ${T.border}` }}>

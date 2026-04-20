@@ -1,5 +1,6 @@
 import { format, parseISO, addMinutes } from 'date-fns';
 import { zonedTimeToUtc } from 'date-fns-tz';
+import { logger } from './logger';
 
 const TIMEZONE = 'America/Sao_Paulo';
 
@@ -12,8 +13,25 @@ export function fromISO8601(isoString: string | null): Date | null {
   
   try {
     return parseISO(isoString);
-  } catch (error) {
+  } catch (error: any) {
+    logger.error('Erro ao converter ISO8601 para Date', error);
     return null;
+  }
+}
+
+export function toDatetimeLocal(isoString: string | null | undefined): string {
+  if (!isoString) return '';
+  try { return format(parseISO(isoString), "yyyy-MM-dd'T'HH:mm"); }
+  catch (e: any) { logger.error('Erro ao formatar data', e); return ''; }
+}
+
+export function formatDisplay(isoString: string | null | undefined): string {
+  if (!isoString) return '—';
+  try {
+    return format(parseISO(isoString), 'dd/MM/yyyy HH:mm');
+  }
+  catch (e: any) {
+    logger.error('Erro ao formatar data', e); return isoString;
   }
 }
 

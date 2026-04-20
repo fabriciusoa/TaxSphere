@@ -6,8 +6,8 @@ export interface Usuario {
   cpf: string;
   nome: string;
   senha: string;
-  perfil: number;
-  status: string;
+  adm_mindtax?: boolean;
+  status?: boolean;
   criado: string;
   dt_inativacao: string | null;
   dt_nascimento: string | null;
@@ -20,11 +20,6 @@ export interface Usuario {
 export interface UsuarioResponse extends Omit<Usuario, 'senha' | 'perfil'> {
   perfil: string;
   perfil_id: number;
-}
-
-export interface Perfil {
-  id: number;
-  perfil: string;
 }
 
 export interface Parametro {
@@ -50,52 +45,33 @@ export interface LoginLog {
 export interface JWTPayload {
   id: number;
   email: string;
-  perfil: string;
-  perfil_id: number;
   nome?: string;
+  adm_mindtax?: boolean;
+  user_modulos?: UserModulos[];
+}
+
+export interface UserModulos {
+  usuario_id: number;
+  perfil: string;
+  adm_mindtax?: boolean;
+  modulo_id: number;
+  modulo?: string | null;
+  user_funcionalidade?: UserFuncionalidade[];
+}
+
+export interface UserFuncionalidade {
+  usuario_id: number;
+  modulo?: string | null;
+  funcionalidade?: string | null;
+  inserir?: boolean;
+  excluir?: boolean;
+  consultar?: boolean;
+  alterar?: boolean;
 }
 
 export interface AuthRequest extends Request {
   user?: JWTPayload;
 }
-
-export enum PerfilEnum {
-  ADMIN = 'ADMIN',
-  MEDICO = 'MEDICO',
-  GERENTE = 'GERENTE',
-  RELATORIO = 'RELATORIO'
-}
-
-export enum StatusUsuario {
-  ATIVO = 'ativo',
-  INATIVO = 'inativo'
-}
-
-// ============================================
-// TIPOS E INTERFACES DO SISTEMA DE AGENDA
-// ============================================
-
-// Status possíveis de um agendamento
-export type StatusAgendamento = 
-  | 'Agendado' 
-  | 'Confirmado' 
-  | 'Cancelado' 
-  | 'Realizado' 
-  | 'Faltou' 
-  | 'Reagendado';
-
-// Tipos de consulta disponíveis
-export type TipoConsulta = 
-  | 'Consulta' 
-  | 'Retorno' 
-  | 'Avaliação' 
-  | 'Sessão' 
-  | 'Outro';
-
-// Tipos de notificação
-export type TipoNotificacao = 
-  | 'EMAIL' 
-  | 'WHATSAPP';
 
 // Status de notificação
 export type StatusNotificacao = 
@@ -103,67 +79,21 @@ export type StatusNotificacao =
   | 'Enviado' 
   | 'Falha';
 
-// Interface completa de um agendamento (do banco de dados)
-export interface Agendamento {
-  id: number;
-  id_usuario: number;
-  id_paciente: number;
-  data_inicio: string;
-  data_fim: string;
-  tipo: TipoConsulta;
-  status: StatusAgendamento;
-  notas?: string | null;
-  token_confirmacao: string;
-  token_remarcar: string;
-  token_cancelar: string;
-  token_expiracao: string;
-  confirmado_em?: string | null;
-  motivo_cancelamento?: string | null;
-  id_agendamento_original?: number | null;
-  ultima_tentativa_notificacao?: string | null;
-  criado_em: string;
-  atualizado_em: string;
-  // Campos de JOIN (quando buscar com dados relacionados)
-  paciente_nome: string;
-  paciente_email: string;
-  usuario_nome?: string;
-  tipo_consulta?: string;
-}
-
-// DTO para criar/atualizar agendamento (usado nas requisições)
-export interface AgendamentoDTO {
-  id_usuario: number;
-  id_paciente: number;
-  data_inicio: string;
-  tipo: TipoConsulta;
-  status?: StatusAgendamento;
-  notas?: string;
-  enviar_email?: boolean;
-}
-
-// Interface para horários disponíveis
-export interface HorarioDisponivel {
-  data_hora: string;
-  disponivel: boolean;
-  motivo?: string; // Motivo de indisponibilidade (ex: "Conflito com agendamento existente")
-}
-
 // Interface completa de uma notificação
 export interface Notificacao {
   id: number;
-  id_agendamento: number;
-  id_usuario: number;
-  tipo: TipoNotificacao;
+  usuario_id: number;
+  tipo_notificacao: string;
+  status: StatusNotificacao;
   destinatario: string;
   assunto: string;
-  corpo: string;
-  status: StatusNotificacao;
+  mensagem: string;
+  enviado_em?: string;
+  erro_falha?: string;
   contador_tentativas: number;
-  erro?: string | null;
-  enviado_em?: string | null;
-  entregue_em?: string | null;
-  criado_em: string;
-  atualizado_em: string;
+  maximo_tentativas: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // Interface para templates de email
@@ -179,47 +109,6 @@ export interface EmailTemplate {
   atualizado_em: string;
 }
 
-// Interface para cores do calendário (usuario_parametros)
-export interface CoresCalendario {
-  cor_agendado: string;
-  cor_confirmado: string;
-  cor_cancelado: string;
-  cor_realizado: string;
-  cor_faltou: string;
-  cor_reagendado: string;
-}
-
-// Interface para parâmetros do usuário (tabela usuario_parametros)
-export interface UsuarioParametros {
-  id: number;
-  id_usuario: number;
-  duracao_sessao: number; // em minutos
-  tempo_entre_sessao: number; // em minutos
-  tempo_lembrete: number; // em horas antes da consulta
-  tempo_remarcacao: number; // em horas antes da consulta
-  enviar_email: boolean;
-  cor_agendado?: string | null;
-  cor_confirmado?: string | null;
-  cor_cancelado?: string | null;
-  cor_realizado?: string | null;
-  cor_faltou?: string | null;
-  cor_reagendado?: string | null;
-  criado_em: string;
-  atualizado_em: string;
-}
-
-// Interface para histórico de agendamento
-export interface AgendamentoHistorico {
-  id: number;
-  id_agendamento: number;
-  campo_alterado: string;
-  valor_anterior?: string | null;
-  valor_novo?: string | null;
-  usuario_alteracao: number;
-  data_alteracao: string;
-  operacao: 'INSERT' | 'UPDATE' | 'DELETE';
-}
-
 // Interface para execuções de cron jobs
 export interface CronExecucao {
   id: number;
@@ -228,17 +117,6 @@ export interface CronExecucao {
   status: 'Sucesso' | 'Falha' | 'Em Execução';
   registros_processados?: number | null;
   erro?: string | null;
-}
-
-// Interface para portal do paciente
-export interface PacientePortal {
-  id: number;
-  id_paciente: number;
-  token_acesso: string;
-  ultimo_acesso?: string | null;
-  ativo: boolean;
-  criado_em: string;
-  atualizado_em: string;
 }
 
 // Interface para estatísticas de notificações
@@ -252,23 +130,10 @@ export interface EstatisticasNotificacao {
 // Interface para filtros de notificações
 export interface FiltrosNotificacao {
   status?: StatusNotificacao;
-  tipo?: TipoNotificacao;
+  tipo?: string;
   data_inicio?: string;
   data_fim?: string;
   id_usuario?: number;
-}
-
-// Interface para filtros de valor de serviço
-export interface ValorServicos {
-  id: number;
-  id_usuario: number;
-  valor: number;
-  descricao: string;
-  criado_em: string;
-  atualizado_em: string;
-  quantidade: number;
-  excluido_em: string | null;
-  tipo_servico: string;   
 }
 
 // ============================================
@@ -314,13 +179,13 @@ export const MAX_FILES_PER_COMMENT = 5;
 // Interface principal de Chamado
 export interface Chamado {
   id: number;
-  id_usuario: number;
+  usuario_id: number;
   titulo: string;
   descricao: string;
   categoria: CategoriaChamado;
   prioridade: PrioridadeChamado;
   status: StatusChamado;
-  id_usuario_atribuido: number | null;
+  usuario_atribuido_id: number | null;
   criado_em: string;
   atualizado_em: string;
   fechado_em: string | null;
@@ -333,8 +198,8 @@ export interface Chamado {
 // Interface de Comentário
 export interface ChamadoComentario {
   id: number;
-  id_chamado: number;
-  id_usuario: number;
+  chamado_id: number;
+  usuario_id: number;
   comentario: string;
   criado_em: string;
   // Campos de JOIN
@@ -347,7 +212,7 @@ export interface ChamadoComentario {
 // Interface de Anexo
 export interface ChamadoAnexo {
   id: number;
-  id_chamado_comentario: number;
+  chamado_comentario_id: number;
   nome_arquivo: string;
   tipo_arquivo: string;
   tamanho_bytes: number;

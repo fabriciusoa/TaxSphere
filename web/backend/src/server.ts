@@ -9,11 +9,6 @@ import routes from './routes';
 import './database/connection';
 import notificacoesController from './controllers/notificacoesController';
 import { getParametro } from './utils/parametrosHelper';
-import { startStripeCustomerSyncJob } from './jobs/stripeCustomerSyncJob';
-import { startAbandonedSubscriptionsJob } from './jobs/abandonedSubscriptionsJob';
-import { startTrialExpirationJob } from './jobs/trialExpirationJob';
-import { startStripeReconciliationJob } from './jobs/stripeReconciliationJob';
-import { stripeWebhookController } from './controllers/stripeWebhookController';
 import { log } from './utils/logger';
 
 dotenv.config();
@@ -69,12 +64,13 @@ app.use(cookieParser());
 
 // IMPORTANTE: Rota de webhook Stripe deve usar express.raw() ANTES de express.json()
 // O Stripe precisa do body bruto para validar a assinatura
+/* Comentado temporariamente para evitar erros de webhook durante desenvolvimento
 app.post(
   '/api/stripe/webhook',
   express.raw({ type: 'application/json' }),
   stripeWebhookController.handleWebhook
 );
-
+*/
 // Aumentar limite de payload para suportar uploads de imagens em Base64
 app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ limit: '3mb', extended: true }));
@@ -154,7 +150,7 @@ app.listen(PORT, async () => {
         } as any;
 
         await notificacoesController.processarFila(mockReq, mockRes);
-      } catch (error : any) {
+      } catch (error: any) {
         log.error(`[CRON] Erro crítico ao processar fila: ${error}`);
       }
     });
@@ -179,7 +175,7 @@ app.listen(PORT, async () => {
           })
         } as any;
 
-      } catch (error : any) {
+      } catch (error: any) {
         log.error(`[CRON] Erro crítico ao auto-confirmar: ${error}`);
       }
     });
@@ -204,12 +200,12 @@ app.listen(PORT, async () => {
         } as any;
 
         await notificacoesController.processarAniversariantes(mockReq, mockRes);
-      } catch (error : any) {
+      } catch (error: any) {
         log.error(`[CRON] Erro crítico ao processarAniversariantes: ${error}`);
       }
     });
     log.info('[CRON] ✓ Job processarAniversariantes agendado (diariamente às 6h)');
-    
+
     // Processar backlog de notificações pendentes ao iniciar o servidor
     // Garante que nenhuma notificação fique sem envio
     // Validado em notificacoesController.catchUp
@@ -243,30 +239,36 @@ app.listen(PORT, async () => {
   // ============================================================
   // CRON JOBS - Sincronização Stripe
   // ============================================================
-  
+
   // Job 4: Sincronizar Customers pendentes com Stripe a cada 30 minutos
   // Cria Customers no Stripe para assinaturas que ainda não têm stripe_customer_id
   // Validado em stripeCustomerSyncJob
+  /* Comentado temporariamente para evitar erros de webhook durante desenvolvimento
   startStripeCustomerSyncJob();
   log.info('[CRON] ✓ Job Stripe Customer Sync agendado (a cada 30 minutos)');
-
+  */
   // Job 5: Deletar assinaturas abandonadas (sem subscription após 24h)
   // Remove fisicamente do banco assinaturas não convertidas
   // Validado em abandonedSubscriptionsJob
+  /* Comentado temporariamente para evitar erros de webhook durante desenvolvimento
   startAbandonedSubscriptionsJob();
   log.info('[CRON] ✓ Job Abandoned Subscriptions agendado (diariamente às 2h)');
+  */
 
   // Job 6: Bloquear trials expirados sem assinatura paga
   // Marca como INADIMPLENTE usuários que não converteram o trial
   // Validado em trialExpirationJob
+  /* Comentado temporariamente para evitar erros de webhook durante desenvolvimento
   startTrialExpirationJob();
   log.info('[CRON] ✓ Job Trial Expiration agendado (diariamente às 6h)');
-
+  */
   // Job 7: Reconciliação entre banco e Stripe
   // Verifica divergências de status e sincroniza com realidade do Stripe
   // Validado em stripeReconciliationJob
+  /* Comentado temporariamente para evitar erros de webhook durante desenvolvimento
   startStripeReconciliationJob();
   log.info('[CRON] ✓ Job Stripe Reconciliation agendado (diariamente às 3h)');
+  */
 });
 
 export default app;

@@ -35,18 +35,6 @@ const StatusPedido = z.enum(['Rascunho', 'Transmitido', 'Em Análise', 'Deferido
 const RegimeTributario = z.enum(['Simples Nacional', 'Lucro Presumido', 'Lucro Real']);
 const TipoDocumento = z.enum(['DARF', 'GPS', 'DCTF', 'EFD', 'Contrato', 'Outros']);
 
-export const empresaCreateSchema = z.object({
-  cnpj: cnpjSchema,
-  razao_social: z.string().min(3, 'Razão social deve ter no mínimo 3 caracteres'),
-  nome_fantasia: z.string().optional(),
-  inscricao_estadual: z.string().optional(),
-  regime_tributario: RegimeTributario,
-  uf: z.string().length(2, 'UF deve ter 2 caracteres').optional(),
-  municipio: z.string().optional(),
-});
-
-export const empresaUpdateSchema = empresaCreateSchema.partial();
-
 export const creditoCreateSchema = z.object({
   id_empresa: z.number().int().positive('Empresa é obrigatória'),
   tipo_credito: TipoCredito,
@@ -104,7 +92,18 @@ export const pedidoCreateSchema = z.object({
     valor_utilizado: z.number().positive('Valor deve ser positivo'),
   })).min(1, 'Pelo menos um item é obrigatório'),
 });
+export const empresaCreateSchema = z.object({
+  cnpj: cnpjSchema,
+  razao_social: z.string().min(3, 'Razão social deve ter no mínimo 3 caracteres'),
+  nome_fantasia: z.string().optional(),
+  inscricao_estadual: z.string().optional(),
+  regime_tributario: RegimeTributario,
+  uf: z.string().length(2, 'UF deve ter 2 caracteres').optional(),
+  municipio: z.string().optional(),
+});
 
+export const empresaUpdateSchema = empresaCreateSchema.partial();
+export type EmpresaCreateDTO = z.infer<typeof empresaCreateSchema>;
 export const pedidoStatusSchema = z.object({
   status: StatusPedido,
   motivo_indeferimento: z.string().optional(),
@@ -123,8 +122,7 @@ export const simuladorSchema = z.object({
   })).optional(),
 });
 
-export type EmpresaCreateDTO = z.infer<typeof empresaCreateSchema>;
-export type EmpresaUpdateDTO = z.infer<typeof empresaUpdateSchema>;
+
 export type CreditoCreateDTO = z.infer<typeof creditoCreateSchema>;
 export type CreditoUpdateDTO = z.infer<typeof creditoUpdateSchema>;
 export type DebitoCreateDTO = z.infer<typeof debitoCreateSchema>;

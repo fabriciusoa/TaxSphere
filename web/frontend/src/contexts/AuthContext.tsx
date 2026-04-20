@@ -10,6 +10,26 @@ export interface AuthUser {
   perfil: string;
   perfil_id: number;
   status: string;
+  adm_mindtax: boolean;
+  user_modulos: UserModulos[];
+}
+
+export interface UserModulos {
+  usuario_id: number;
+  perfil: string;
+  adm_mindtax?: boolean;
+  modulo?: string | null;
+  user_funcionalidade?: UserFuncionalidade[];
+}
+
+export interface UserFuncionalidade {
+  usuario_id: number;
+  modulo?: string | null;
+  funcionalidade?: string | null;
+  inserir?: boolean;
+  excluir?: boolean;
+  consultar?: boolean;
+  alterar?: boolean;
 }
 
 interface AuthContextType {
@@ -23,7 +43,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 // Cache de dados do usuário em sessionStorage (não o token — apenas dados não-sensíveis)
 // Persiste no F5, mas é limpo ao fechar o browser. O token permanece seguro no cookie httpOnly.
-const USER_CACHE_KEY = 'MindTax_user';
+const USER_CACHE_KEY = 'mindtax_user';
 
 function getCachedUser(): AuthUser | null {
   try {
@@ -55,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           sessionStorage.removeItem(USER_CACHE_KEY);
         } else {
-          logger.warn('Erro de rede ao validar sessão, mantendo cache', { error: error?.message });
+          logger.error('Erro de rede ao validar sessão, mantendo cache', { error: error?.message });
         }
       })
       .finally(() => setLoading(false));

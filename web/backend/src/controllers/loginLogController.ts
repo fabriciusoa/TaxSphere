@@ -18,30 +18,30 @@ export const loginLogController = {
         SELECT 
           ll.*,
           u.nome as usuario_nome
-        FROM login_log ll
-        LEFT JOIN usuarios u ON ll.usuario_id = u.id
+        FROM sys_login_log ll
+        LEFT JOIN adm_usuarios u ON ll.usuario_id = u.id
         WHERE 1=1
       `;
       const params: any[] = [];
 
       if (sucesso) {
-        sql += ' AND ll.sucesso = ?';
         params.push(sucesso);
+        sql += ` AND ll.sucesso = $${params.length}`;
       }
 
       if (data_inicio) {
-        sql += ' AND ll.timestamp >= ?';
         params.push(data_inicio);
+        sql += ` AND ll.timestamp >= $${params.length}`;
       }
 
       if (data_fim) {
-        sql += ' AND ll.timestamp <= ?';
         params.push(data_fim);
+        sql += ` AND ll.timestamp <= $${params.length}`;
       }
 
       if (usuario_id) {
-        sql += ' AND ll.usuario_id = ?';
         params.push(usuario_id);
+        sql += ` AND ll.usuario_id = $${params.length}`;
       }
 
       // Contar total
@@ -53,8 +53,10 @@ export const loginLogController = {
       const total = countResult[0]?.total || 0;
 
       // Buscar dados com paginação
-      sql += ' ORDER BY ll.timestamp DESC LIMIT ? OFFSET ?';
-      params.push(limit, offset);
+      params.push(limit);
+      sql += ` ORDER BY ll.timestamp DESC LIMIT $${params.length}`;
+      params.push(offset);
+      sql += ` OFFSET $${params.length}`;
 
       const logs = await getAll<any>(sql, params);
 

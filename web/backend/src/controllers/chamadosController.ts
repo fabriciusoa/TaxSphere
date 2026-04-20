@@ -1,11 +1,11 @@
 import { Response } from 'express';
-import { getOne, getAll, runQuery } from '../database/connection';
-import { AuthRequest, Chamado, ChamadoComentario, ChamadoAnexo, StatusChamado, CategoriaChamado, PrioridadeChamado, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, MAX_FILES_PER_COMMENT } from '../types';
-import { getCurrentTimestamp, formatToBrazilian } from '../utils/dateHelpers';
+import { getOne, getAll, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
+import { AuthRequest, Chamado, ChamadoComentario, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, MAX_FILES_PER_COMMENT } from '../types';
+import { getCurrentTimestamp } from '../utils/dateHelpers';
 import { processImage, isImage, formatBytes } from '../utils/imageProcessor';
 import { getSMTPConfig, getBaseUrl, getParametro } from '../utils/parametrosHelper';
 import nodemailer from 'nodemailer';
-import { log } from '../utils/logger';
+import logger, { log } from '../utils/logger';
 
 /**
  * Envia email de notificação sobre chamado
@@ -19,9 +19,9 @@ async function enviarEmailNotificacaoChamado(
 		// 1. Buscar dados do chamado e usuário
 		const chamado = await getOne<any>(`
       SELECT c.*, u.email, u.nome as nome_usuario
-      FROM chamado c
-      INNER JOIN usuarios u ON c.id_usuario = u.id
-      WHERE c.id = ?
+      from sys_chamado c
+      INNER JOIN adm_usuarios u ON c.usuario_id = u.id
+      WHERE c.id = $1
     `, [idChamado]);
 
 		if (!chamado || !chamado.email) {
@@ -86,14 +86,13 @@ Equipe de Suporte - Sistema Mentis`;
 			auth: smtpConfig.auth,
 		});
 
-		
+
 		let destinatario = chamado.email;
-		// Modo DEV: redirecionar para email de teste
-		// desativado
-		//if (nodeEnv === 'dev') {
-		//	destinatario = smtpConfig.auth.user;
-		//	cronLogger.info(`[DEV] Email redirecionado para ${destinatario}`);
-		//}
+		// Modo DEV: redirecionar para email de teste desativado
+		if (nodeEnv === 'dev') {
+			destinatario = smtpConfig.auth.user;
+			logger.info(`[DEV] Email redirecionado para ${destinatario}`);
+		}
 
 		await transporter.sendMail({
 			from: smtpConfig.from,
@@ -104,27 +103,23 @@ Equipe de Suporte - Sistema Mentis`;
 
 		// Notificação de confirmação
 		await runQuery(
-			`INSERT INTO notificacao (
-              id_usuario, tipo_notificacao, status, destinatario, assunto, mensagem, enviado_em,
-              entregue_em, erro_falha, contador_tentativas, maximo_tentativas, criado_em,
-              atualizado_em, tipo, id_externo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO sys_notificacao (
+              usuario_id, tipo_notificacao, status, destinatario, assunto, mensagem, enviado_em,
+              erro_falha, contador_tentativas, maximo_tentativas, criado_em, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			[
-				chamado.id_usuario,
+				chamado.usuario_id,
 				'Chamado',
 				'Enviado',
 				chamado.email,
 				'Chamado',
 				corpo,
 				getCurrentTimestamp(),
-				getCurrentTimestamp(),
 				'',
 				0,
 				3,
 				getCurrentTimestamp(),
-				getCurrentTimestamp(),
-				'EMAIL',
-				chamado.id
+				getCurrentTimestamp()
 			]
 		);
 
@@ -145,37 +140,40 @@ export const chamadosController = {
 		try {
 			const { status, categoria, prioridade, busca, page = 1, limit = 10 } = req.query;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			let whereConditions = ['1=1'];
 			const params: any[] = [];
 
 			// Se não for ADMIN, filtrar apenas chamados do usuário
-			if (userPerfilId !== 1) {
-				whereConditions.push('c.id_usuario = ?');
+			if (!userPerfilId) {
 				params.push(userId);
+				whereConditions.push(`c.usuario_id = $${params.length}`);
 			}
 
 			// Filtros
 			if (status) {
-				whereConditions.push('c.status = ?');
 				params.push(status);
+				whereConditions.push(`c.status = $${params.length}`);
 			}
 
 			if (categoria) {
-				whereConditions.push('c.categoria = ?');
 				params.push(categoria);
+				whereConditions.push(`c.categoria = $${params.length}`);
 			}
 
 			if (prioridade) {
-				whereConditions.push('c.prioridade = ?');
 				params.push(prioridade);
+				whereConditions.push(`c.prioridade = $${params.length}`);
 			}
 
 			if (busca) {
-				whereConditions.push('(c.titulo LIKE ? OR c.descricao LIKE ?)');
 				const buscaParam = `%${busca}%`;
-				params.push(buscaParam, buscaParam);
+				params.push(buscaParam);
+				const p1 = params.length;
+				params.push(buscaParam);
+				const p2 = params.length;
+				whereConditions.push(`(c.titulo LIKE $${p1} OR c.descricao LIKE $${p2})`);
 			}
 
 			const whereClause = whereConditions.join(' AND ');
@@ -183,7 +181,7 @@ export const chamadosController = {
 			// Contar total
 			const countSql = `
         SELECT COUNT(*) as total 
-        FROM chamado c
+        from sys_chamado c
         WHERE ${whereClause}
       `;
 			const countResult = await getOne<{ total: number }>(countSql, params);
@@ -191,15 +189,19 @@ export const chamadosController = {
 
 			// Query com paginação
 			const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
+			params.push(parseInt(limit as string));
+			const limitIdx = params.length;
+			params.push(offset);
+			const offsetIdx = params.length;
 			const sql = `
         SELECT 
           c.*,
           u.nome as usuario_nome,
           u.email as usuario_email,
           ua.nome as atribuido_nome
-        FROM chamado c
-        INNER JOIN usuarios u ON c.id_usuario = u.id
-        LEFT JOIN usuarios ua ON c.id_usuario_atribuido = ua.id
+        from sys_chamado c
+        INNER JOIN adm_usuarios u ON c.usuario_id = u.id
+        LEFT JOIN adm_usuarios ua ON c.usuario_atribuido_id = ua.id
         WHERE ${whereClause}
         ORDER BY 
           CASE c.status
@@ -211,10 +213,9 @@ export const chamadosController = {
             WHEN 'Cancelado' THEN 6
           END,
           c.criado_em DESC
-        LIMIT ? OFFSET ?
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `;
 
-			params.push(parseInt(limit as string), offset);
 			const data = await getAll<Chamado>(sql, params);
 
 			res.json({ data, total, page: parseInt(page as string), limit: parseInt(limit as string) });
@@ -231,7 +232,7 @@ export const chamadosController = {
 		try {
 			const { id } = req.params;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			const sql = `
         SELECT 
@@ -239,10 +240,10 @@ export const chamadosController = {
           u.nome as usuario_nome,
           u.email as usuario_email,
           ua.nome as atribuido_nome
-        FROM chamado c
-        INNER JOIN usuarios u ON c.id_usuario = u.id
-        LEFT JOIN usuarios ua ON c.id_usuario_atribuido = ua.id
-        WHERE c.id = ?
+        from sys_chamado c
+        INNER JOIN adm_usuarios u ON c.usuario_id = u.id
+        LEFT JOIN adm_usuarios ua ON c.usuario_id_atribuido = ua.id
+        WHERE c.id = $1
       `;
 
 			const chamado = await getOne<Chamado>(sql, [id]);
@@ -252,7 +253,7 @@ export const chamadosController = {
 			}
 
 			// Verificar permissão: admin ou criador
-			if (userPerfilId !== 1 && chamado.id_usuario !== userId) {
+			if (!userPerfilId && chamado.usuario_id !== userId) {
 				return res.status(403).json({ error: 'Sem permissão para visualizar este chamado' });
 			}
 
@@ -278,10 +279,11 @@ export const chamadosController = {
 			const agora = getCurrentTimestamp();
 
 			const sql = `
-        INSERT INTO chamado (
-          id_usuario, titulo, descricao, categoria, prioridade, status,
+        INSERT INTO sys_chamado (
+          usuario_id, titulo, descricao, categoria, prioridade, status,
           criado_em, atualizado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id
       `;
 
 			const result = await runQuery(sql, [
@@ -296,7 +298,7 @@ export const chamadosController = {
 			]);
 
 			res.status(201).json({
-				id: result.lastID,
+				id: result.id,
 				message: 'Chamado criado com sucesso'
 			});
 		} catch (error: any) {
@@ -311,19 +313,19 @@ export const chamadosController = {
 	atualizar: async (req: AuthRequest, res: Response) => {
 		try {
 			const { id } = req.params;
-			const { titulo, descricao, categoria, prioridade, status, id_usuario_atribuido } = req.body;
+			const { titulo, descricao, categoria, prioridade, status, usuario_id_atribuido } = req.body;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			// Buscar chamado atual
-			const chamadoAtual = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamadoAtual = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
 
 			if (!chamadoAtual) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
 			}
 
 			// Verificar permissão: admin ou criador
-			if (userPerfilId !== 1 && chamadoAtual.id_usuario !== userId) {
+			if (!userPerfilId && chamadoAtual.usuario_id !== userId) {
 				return res.status(403).json({ error: 'Sem permissão para atualizar este chamado' });
 			}
 
@@ -332,51 +334,52 @@ export const chamadosController = {
 			const params: any[] = [];
 
 			if (titulo !== undefined) {
-				updates.push('titulo = ?');
 				params.push(titulo);
+				updates.push(`titulo = $${params.length}`);
 			}
 
 			if (descricao !== undefined) {
-				updates.push('descricao = ?');
 				params.push(descricao);
+				updates.push(`descricao = $${params.length}`);
 			}
 
 			if (categoria !== undefined) {
-				updates.push('categoria = ?');
 				params.push(categoria);
+				updates.push(`categoria = $${params.length}`);
 			}
 
 			if (prioridade !== undefined) {
-				updates.push('prioridade = ?');
 				params.push(prioridade);
+				updates.push(`prioridade = $${params.length}`);
 			}
 
 			if (status !== undefined) {
-				updates.push('status = ?');
 				params.push(status);
+				updates.push(`status = $${params.length}`);
 
 				// Se foi resolvido ou fechado, atualizar data
 				if (status === 'Resolvido' || status === 'Fechado') {
-					updates.push('fechado_em = ?');
 					params.push(agora);
+					updates.push(`fechado_em = $${params.length}`);
 				}
 			}
 
-			if (id_usuario_atribuido !== undefined) {
-				updates.push('id_usuario_atribuido = ?');
-				params.push(id_usuario_atribuido);
+			if (usuario_id_atribuido !== undefined) {
+				params.push(usuario_id_atribuido);
+				updates.push(`usuario_atribuido_id = $${params.length}`);
 			}
 
-			updates.push('atualizado_em = ?');
 			params.push(agora);
+			updates.push(`atualizado_em = $${params.length}`);
 
 			params.push(id);
+			const idIdx = params.length;
 
-			const sql = `UPDATE chamado SET ${updates.join(', ')} WHERE id = ?`;
+			const sql = `UPDATE sys_chamado SET ${updates.join(', ')} WHERE id = $${idIdx}`;
 			await runQuery(sql, params);
 
 			// Enviar email se status mudou e é admin mudando
-			if (status !== undefined && status !== chamadoAtual.status && userPerfilId === 1) {
+			if (status !== undefined && status !== chamadoAtual.status && userPerfilId) {
 				await enviarEmailNotificacaoChamado(
 					parseInt(id),
 					'mudanca_status',
@@ -398,24 +401,24 @@ export const chamadosController = {
 		try {
 			const { id } = req.params;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			// Buscar chamado
-			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamado = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
 
 			if (!chamado) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
 			}
 
 			// Verificar permissão: admin ou criador
-			if (userPerfilId !== 1 && chamado.id_usuario !== userId) {
+			if (!userPerfilId && chamado.usuario_id !== userId) {
 				return res.status(403).json({ error: 'Sem permissão para deletar este chamado' });
 			}
 
 			// Deletar comentários e anexos associados
-			await runQuery('DELETE FROM chamados_anexos WHERE id_chamado_comentario IN (SELECT id FROM chamado_comentario WHERE id_chamado = ?)', [id]);
-			await runQuery('DELETE FROM chamado_comentario WHERE id_chamado = ?', [id]);
-			await runQuery('DELETE FROM chamado WHERE id = ?', [id]);
+			await runQuery('DELETE from sys_chamados_anexos WHERE chamado_comentario_id IN (SELECT id from sys_chamado_comentario WHERE chamado_id = $1)', [id]);
+			await runQuery('DELETE from sys_chamado_comentario WHERE chamado_id = $1', [id]);
+			await runQuery('DELETE from sys_chamado WHERE id = $1', [id]);
 
 			res.json({ message: 'Chamado deletado com sucesso' });
 		} catch (error: any) {
@@ -431,15 +434,15 @@ export const chamadosController = {
 		try {
 			const { id } = req.params;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			// Verificar se usuário tem permissão para ver este chamado
-			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamado = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
 			if (!chamado) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
 			}
 
-			if (userPerfilId !== 1 && chamado.id_usuario !== userId) {
+			if (!userPerfilId && chamado.usuario_id !== userId) {
 				return res.status(403).json({ error: 'Sem permissão' });
 			}
 
@@ -447,15 +450,15 @@ export const chamadosController = {
 			const comentariosSql = `
         SELECT 
           cc.id,
-          cc.id_chamado,
-          cc.id_usuario,
+          cc.chamado_id,
+          cc.usuario_id,
           cc.comentario,
           cc.criado_em,
           u.nome as usuario_nome,
           u.email as usuario_email
-        FROM chamado_comentario cc
-        INNER JOIN usuarios u ON cc.id_usuario = u.id
-        WHERE cc.id_chamado = ?
+        from sys_chamado_comentario cc
+        INNER JOIN adm_usuarios u ON cc.usuario_id = u.id
+        WHERE cc.chamado_id = $1
         ORDER BY cc.criado_em ASC
       `;
 
@@ -464,17 +467,17 @@ export const chamadosController = {
 			// Buscar anexos de cada comentário
 			for (const comentario of comentarios) {
 				const anexosSql = `
-          SELECT id, id_chamado_comentario, nome_arquivo, tipo_arquivo, tamanho_bytes,
+          SELECT id, chamado_comentario_id, nome_arquivo, tipo_arquivo, tamanho_bytes,
                  anexo_thumbnail, anexo
-          FROM chamados_anexos
-          WHERE id_chamado_comentario = ?
+          from sys_chamados_anexos
+          WHERE chamado_comentario_id = $1
           ORDER BY id ASC
         `;
 				const anexosRaw = await getAll<any>(anexosSql, [comentario.id]);
 				// Converter buffers para base64, igual ao padrão do MeuPerfil
 				comentario.anexos = anexosRaw.map((a) => ({
 					id: a.id,
-					id_chamado_comentario: a.id_chamado_comentario,
+					chamado_comentario_id: a.chamado_comentario_id,
 					nome_arquivo: a.nome_arquivo,
 					tipo_arquivo: a.tipo_arquivo,
 					tamanho_bytes: a.tamanho_bytes,
@@ -498,37 +501,46 @@ export const chamadosController = {
 			const { id } = req.params;
 			const { comentario } = req.body;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			if (!comentario || !comentario.trim()) {
 				return res.status(400).json({ error: 'Comentário é obrigatório' });
 			}
 
 			// Verificar se chamado existe
-			const chamado = await getOne<Chamado>('SELECT * FROM chamado WHERE id = ?', [id]);
+			const chamado = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
 			if (!chamado) {
 				return res.status(404).json({ error: 'Chamado não encontrado' });
 			}
 
 			// Verificar permissão
-			if (userPerfilId !== 1 && chamado.id_usuario !== userId) {
+			if (!userPerfilId && chamado.usuario_id !== userId) {
 				return res.status(403).json({ error: 'Sem permissão' });
 			}
 
 			const agora = getCurrentTimestamp();
 
 			const sql = `
-        INSERT INTO chamado_comentario (id_chamado, id_usuario, comentario, criado_em)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO sys_chamado_comentario (chamado_id, usuario_id, comentario, criado_em)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
       `;
 
-			const result = await runQuery(sql, [id, userId, comentario, agora]);
-
-			// Atualizar data de atualização do chamado
-			await runQuery('UPDATE chamado SET atualizado_em = ? WHERE id = ?', [agora, id]);
+			const txClient = await beginTransaction();
+			let commentId: number;
+			try {
+				const result = await runQuery(sql, [id, userId, comentario, agora], txClient);
+				commentId = result.id;
+				// Atualizar data de atualização do chamado
+				await runQuery('UPDATE sys_chamado SET atualizado_em = $1 WHERE id = $2', [agora, id], txClient);
+				await commitTransaction(txClient);
+			} catch (txErr) {
+				await rollbackTransaction(txClient);
+				throw txErr;
+			}
 
 			// Enviar email se for admin comentando
-			if (userPerfilId === 1 && chamado.id_usuario !== userId) {
+			if (userPerfilId && chamado.usuario_id !== userId) {
 				await enviarEmailNotificacaoChamado(
 					parseInt(id),
 					'novo_comentario',
@@ -537,7 +549,7 @@ export const chamadosController = {
 			}
 
 			res.status(201).json({
-				id: result.lastID,
+				id: commentId!,
 				message: 'Comentário adicionado com sucesso'
 			});
 		} catch (error: any) {
@@ -573,7 +585,7 @@ export const chamadosController = {
 
 			// Verificar se comentário existe
 			const comentario = await getOne<ChamadoComentario>(
-				'SELECT * FROM chamado_comentario WHERE id = ?',
+				'SELECT * from sys_chamado_comentario WHERE id = $1',
 				[idComentario]
 			);
 
@@ -632,14 +644,14 @@ export const chamadosController = {
 
 					// Inserir no banco
 					const sql = `
-            INSERT INTO chamados_anexos (
-              id_chamado_comentario,
+            INSERT INTO sys_chamados_anexos (
+              chamado_comentario_id,
               anexo,
               anexo_thumbnail,
               nome_arquivo,
               tipo_arquivo,
               tamanho_bytes
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
           `;
 
 					await runQuery(sql, [
@@ -697,7 +709,7 @@ export const chamadosController = {
 			const userId = req.user?.id;
 
 			const anexo = await getOne<any>(
-				'SELECT * FROM chamados_anexos WHERE id = ?',
+				'SELECT * from sys_chamados_anexos WHERE id = $1',
 				[id]
 			);
 
@@ -734,10 +746,10 @@ export const chamadosController = {
 	 */
 	dashboardAdmin: async (req: AuthRequest, res: Response) => {
 		try {
-			const userPerfilId = req.user?.perfil_id;
+			const userPerfilId = req.user?.adm_mindtax;
 
 			// Verificar se é admin
-			if (userPerfilId !== 1) {
+			if (!userPerfilId) {
 				return res.status(403).json({ error: 'Acesso negado' });
 			}
 
@@ -752,28 +764,28 @@ export const chamadosController = {
           AVG(
             CASE 
               WHEN status IN ('Resolvido', 'Fechado') AND fechado_em IS NOT NULL
-              THEN CAST((julianday(fechado_em) - julianday(criado_em)) * 24 AS INTEGER)
+              THEN EXTRACT(EPOCH FROM (fechado_em::timestamp - criado_em::timestamp)) / 3600
             END
           ) as tempo_medio_resolucao_horas,
-          SUM(CASE WHEN date(criado_em) = date('now') THEN 1 ELSE 0 END) as criados_hoje,
-          SUM(CASE WHEN date(fechado_em) = date('now') THEN 1 ELSE 0 END) as resolvidos_hoje
-        FROM chamado
-        WHERE criado_em >= date('now', '-30 days')
+          SUM(CASE WHEN criado_em::date = CURRENT_DATE THEN 1 ELSE 0 END) as criados_hoje,
+          SUM(CASE WHEN fechado_em::date = CURRENT_DATE THEN 1 ELSE 0 END) as resolvidos_hoje
+        from sys_chamado
+        WHERE criado_em >= CURRENT_DATE - INTERVAL '30 days'
       `);
 
 			// 2. Por status
 			const porStatus = await getAll<any>(`
         SELECT status, COUNT(*) as total
-        FROM chamado
-        WHERE criado_em >= date('now', '-30 days')
+        from sys_chamado
+        WHERE criado_em >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY status
       `);
 
 			// 3. Por categoria
 			const porCategoria = await getAll<any>(`
         SELECT categoria, COUNT(*) as total
-        FROM chamado
-        WHERE criado_em >= date('now', '-30 days')
+        from sys_chamado
+        WHERE criado_em >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY categoria
         ORDER BY total DESC
       `);
@@ -786,9 +798,9 @@ export const chamadosController = {
           COUNT(c.id) as total_chamados,
           SUM(CASE WHEN c.status = 'Aberto' THEN 1 ELSE 0 END) as abertos,
           SUM(CASE WHEN c.status IN ('Resolvido', 'Fechado') THEN 1 ELSE 0 END) as resolvidos
-        FROM chamado c
-        INNER JOIN usuarios u ON c.id_usuario = u.id
-        WHERE c.criado_em >= date('now', '-30 days')
+        from sys_chamado c
+        INNER JOIN adm_usuarios u ON c.usuario_id = u.id
+        WHERE c.criado_em >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY u.id, u.nome, u.email
         ORDER BY total_chamados DESC
         LIMIT 10
@@ -821,8 +833,8 @@ export const chamadosController = {
           SUM(CASE WHEN status = 'Em Andamento' THEN 1 ELSE 0 END) as em_andamento,
           SUM(CASE WHEN status = 'Resolvido' THEN 1 ELSE 0 END) as resolvidos,
           SUM(CASE WHEN status = 'Fechado' THEN 1 ELSE 0 END) as fechados
-        FROM chamado
-        WHERE id_usuario = ?
+        from sys_chamado
+        WHERE usuario_id = $1
       `, [userId]);
 
 			res.json(estatisticas || {});

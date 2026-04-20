@@ -28,8 +28,9 @@ export const criarUsuarioSchema = z.object({
   email: z.string().email('Email inválido'),
   cpf: cpfSchema,
   senha: senhaSchema,
-  perfil_id: z.number().int().positive('Perfil inválido'),
-  dt_nascimento: z.string().optional()
+    status: z.boolean().optional(),
+  dt_nascimento: z.string().optional(),
+  cliente_id: z.number().int().optional()
 });
 
 // Schema para atualizar usuário
@@ -38,11 +39,11 @@ export const atualizarUsuarioSchema = z.object({
   email: z.string().email('Email inválido').optional(),
   cpf: cpfSchema.optional(),
   senha: senhaSchema.optional(),
-  perfil_id: z.number().int().positive('Perfil inválido').optional(),
-  status: z.enum(['Ativo', 'Inativo']).optional(),
+  status: z.boolean().optional(),
   dt_nascimento: z.string().optional(),
   dt_inativacao: z.string().nullable().optional(),
-  dt_ativacao: z.string().nullable().optional()
+  dt_ativacao: z.string().nullable().optional(),
+  cliente_id: z.number().int().optional()
 });
 
 // Schema para atualizar senha
@@ -59,77 +60,6 @@ export const perfilSchema = z.object({
 export const atualizarParametroSchema = z.object({
   valor: z.string().min(1, 'Valor é obrigatório').optional(),
   descricao: z.string().optional()
-});
-
-// Schema para criar/atualizar paciente
-export const pacienteSchema = z.object({
-  nome: z.string().min(3, 'Nome deve ter no mínimo 3 caracteres'),
-  cpf: cpfSchema,
-  rg: z.string().optional(),
-  telefone: z.string().optional(),
-  dt_nascimento: z.string().optional(),
-  email: z.string().email('Email inválido').optional().or(z.literal('')),
-  sexo: z.enum(['Masculino', 'Feminino', 'Outro']).optional(),
-  status: z.enum(['Ativo', 'Inativo']).optional()
-});
-
-// Schema para criar agendamento
-export const agendamentoCreateSchema = z.object({
-  id_usuario: z.number().int().positive('ID do usuário inválido'),
-  id_paciente: z.number().int().positive('ID do paciente inválido'),
-  id_tipo_consulta: z.number().int().positive('ID do tipo de consulta inválido'),
-  data_inicio: z.string().refine((val) => {
-    try {
-      // Tenta parsear como ISO datetime (com ou sem timezone)
-      const date = new Date(val);
-      return !isNaN(date.getTime());
-    } catch {
-      return false;
-    }
-  }, 'Data de início deve estar em formato válido'),
-  status: z.enum(['Agendado', 'Confirmado', 'Cancelado', 'Realizado', 'Faltou', 'Reagendado']).optional().default('Agendado'),
-  notas: z.string().max(1000, 'Notas podem ter no máximo 1000 caracteres').optional(),
-  enviar_email: z.boolean().optional().default(true)
-});
-
-// Schema para atualizar agendamento
-export const agendamentoUpdateSchema = z.object({
-  id_paciente: z.number().int().positive('ID do paciente inválido').optional(),
-  id_tipo_consulta: z.number().int().positive('ID do tipo de consulta inválido').optional(),
-  data_inicio: z.string().datetime('Data de início deve estar no formato ISO 8601').optional(),
-  status: z.enum(['Agendado', 'Confirmado', 'Cancelado', 'Realizado', 'Faltou', 'Reagendado']).optional(),
-  notas: z.string().max(1000, 'Notas podem ter no máximo 1000 caracteres').optional(),
-  motivo_cancelamento: z.string().max(500, 'Motivo de cancelamento pode ter no máximo 500 caracteres').optional()
-});
-
-// Schema para remarcação pública (via link do paciente)
-export const remarcacaoPublicaSchema = z.object({
-  nova_data_inicio: z.string().refine((val) => {
-    try {
-      // Tenta parsear como datetime válido
-      const date = new Date(val);
-      return !isNaN(date.getTime());
-    } catch {
-      return false;
-    }
-  }, 'Data de início deve estar em formato válido'),
-  motivo: z.string().max(500, 'Motivo pode ter no máximo 500 caracteres').optional()
-});
-
-// Schema para cancelamento público
-export const cancelamentoPublicoSchema = z.object({
-  motivo: z.string().min(3, 'Motivo deve ter no mínimo 3 caracteres').max(500, 'Motivo pode ter no máximo 500 caracteres')
-});
-
-// Schema para cores do calendário
-const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
-export const coresCalendarioSchema = z.object({
-  cor_agendado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_confirmado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_cancelado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_realizado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_faltou: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_reagendado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional()
 });
 
 // Schema para email templates
@@ -155,20 +85,6 @@ export const emailTemplateSchema = z.object({
     .optional()
 });
 
-// Schema para atualizar parâmetros do usuário (incluindo cores)
-export const usuarioParametrosUpdateSchema = z.object({
-  duracao_sessao: z.number().int().positive().optional(),
-  tempo_entre_sessao: z.number().int().min(0).optional(),
-  tempo_lembrete: z.number().int().positive().optional(),
-  tempo_remarcacao: z.number().int().positive().optional(),
-  enviar_email: z.boolean().optional(),
-  cor_agendado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_confirmado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_cancelado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_realizado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_faltou: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional(),
-  cor_reagendado: z.string().regex(hexColorRegex, 'Cor deve estar no formato hexadecimal (#RRGGBB)').optional()
-});
 
 // Types exportados
 export type LoginDTO = z.infer<typeof loginSchema>;
@@ -177,52 +93,8 @@ export type AtualizarUsuarioDTO = z.infer<typeof atualizarUsuarioSchema>;
 export type AtualizarSenhaDTO = z.infer<typeof atualizarSenhaSchema>;
 export type PerfilDTO = z.infer<typeof perfilSchema>;
 export type AtualizarParametroDTO = z.infer<typeof atualizarParametroSchema>;
-export type PacienteDTO = z.infer<typeof pacienteSchema>;
-export type AgendamentoCreateDTO = z.infer<typeof agendamentoCreateSchema>;
-export type AgendamentoUpdateDTO = z.infer<typeof agendamentoUpdateSchema>;
-export type RemarcacaoPublicaDTO = z.infer<typeof remarcacaoPublicaSchema>;
-export type CancelamentoPublicoDTO = z.infer<typeof cancelamentoPublicoSchema>;
-export type CoresCalendarioDTO = z.infer<typeof coresCalendarioSchema>;
 export type EmailTemplateDTO = z.infer<typeof emailTemplateSchema>;
-export type UsuarioParametrosUpdateDTO = z.infer<typeof usuarioParametrosUpdateSchema>;
 
-// ===== RECEITA SAÚDE =====
-
-// Schema para validação de período (MM/YYYY)
-export const reciboPeriodoSchema = z.string()
-  .regex(/^\d{2}\/\d{4}$/, 'Formato inválido. Use MM/AAAA')
-  .refine((periodo) => {
-    const [mes, ano] = periodo.split('/').map(Number);
-    const dataRecibo = new Date(ano, mes - 1);
-    const dataAtual = new Date();
-    const prazoLimite = new Date(dataRecibo.getFullYear() + 1, 1, 28); // 28 de fevereiro do ano seguinte
-    return dataAtual <= prazoLimite;
-  }, 'Prazo limite de emissão retroativa excedido (28/02 do ano seguinte)');
-
-// Schema para criar recibos em lote
-export const reciboCreateBatchSchema = z.object({
-  periodo: reciboPeriodoSchema,
-  recibos: z.array(z.object({
-    id_paciente: z.number().int().positive('ID do paciente inválido'),
-    cpf_pagador: z.string().length(11, 'CPF do pagador deve ter 11 dígitos'),
-    cpf_beneficiario: z.string().length(11, 'CPF do beneficiário deve ter 11 dígitos'),
-    ids_atendimentos: z.array(z.number().int().positive()).min(1, 'Selecione ao menos um atendimento')
-  })).max(1000, 'Máximo de 1000 recibos por lote')
-});
-
-// Schema para atualizar recibo
-export const reciboUpdateSchema = z.object({
-  descricao: z.string().max(255, 'Descrição deve ter no máximo 255 caracteres')
-});
-
-// Schema para marcar status (transmitir ou validar)
-export const reciboStatusSchema = z.object({
-  periodo: reciboPeriodoSchema
-});
-
-export type ReciboCreateBatchDTO = z.infer<typeof reciboCreateBatchSchema>;
-export type ReciboUpdateDTO = z.infer<typeof reciboUpdateSchema>;
-export type ReciboStatusDTO = z.infer<typeof reciboStatusSchema>;
 // ============================================
 // SCHEMAS PARA SISTEMA DE CHAMADOS
 // ============================================
@@ -310,5 +182,91 @@ export const atualizarManutencaoSchema = z.object({
   status: z.enum(['planejada', 'em_execucao', 'terminado']).optional()
 });
 
+function validarCNPJ(cnpj: string): boolean {
+  cnpj = cnpj.replace(/\D/g, '');
+  if (cnpj.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(cnpj)) return false;
+
+  const calc = (slice: string, weights: number[]): number => {
+    const sum = slice.split('').reduce((acc, d, i) => acc + parseInt(d) * weights[i], 0);
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+
+  const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const w2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const d1 = calc(cnpj.slice(0, 12), w1);
+  const d2 = calc(cnpj.slice(0, 13), w2);
+  return parseInt(cnpj[12]) === d1 && parseInt(cnpj[13]) === d2;
+}
+
+const cnpjSchema = z.string()
+  .transform(v => v.replace(/\D/g, ''))
+  .refine(v => v.length === 14, 'CNPJ deve ter 14 dígitos')
+  .refine(validarCNPJ, 'CNPJ inválido');
+  
+const RegimeTributario = z.enum(['Simples Nacional', 'Lucro Presumido', 'Lucro Real']);
+
+export const empresaCreateSchema = z.object({
+  cnpj: cnpjSchema,
+  razao_social: z.string().min(3, 'Razão social deve ter no mínimo 3 caracteres'),
+  nome_fantasia: z.string().optional(),
+  inscricao_estadual: z.string().optional(),
+  regime_tributario: RegimeTributario,
+  uf: z.string().length(2, 'UF deve ter 2 caracteres').optional(),
+  municipio: z.string().optional(),
+});
+
+export const empresaUpdateSchema = empresaCreateSchema.partial();
+export type EmpresaCreateDTO = z.infer<typeof empresaCreateSchema>;
+export type EmpresaUpdateDTO = z.infer<typeof empresaUpdateSchema>;
 export type CriarManutencaoDTO = z.infer<typeof criarManutencaoSchema>;
 export type AtualizarManutencaoDTO = z.infer<typeof atualizarManutencaoSchema>;
+
+// ============================================
+// SCHEMAS PARA CLIENTES
+// ============================================
+export const clienteCreateSchema = z.object({
+  cnpj: cnpjSchema,
+  razao_social: z.string().min(3, 'Razão Social deve ter no mínimo 3 caracteres'),
+  nome_fantasia: z.string().optional(),
+  inscricao_estadual: z.string().optional(),
+  matriz: z.enum(['S', 'N']).optional(),
+  regime_tributario: z.enum(['Simples Nacional', 'Lucro Presumido', 'Lucro Real']),
+  endereco: z.string().optional(),
+  numero: z.string().optional(),
+  complemento: z.string().optional(),
+  bairro: z.string().optional(),
+  municipio: z.string().optional(),
+  uf: z.string().length(2, 'UF deve ter 2 caracteres').optional(),
+  cep: z.string().optional(),
+  ativo: z.number().int().optional(),
+});
+
+export const clienteUpdateSchema = clienteCreateSchema.partial();
+export type ClienteCreateDTO = z.infer<typeof clienteCreateSchema>;
+export type ClienteUpdateDTO = z.infer<typeof clienteUpdateSchema>;
+
+// ============================================
+// SCHEMAS PARA PERFIS DE ACESSO
+// ============================================
+const permissaoSchema = z.object({
+  funcionalidade_id: z.number().int().positive(),
+  inserir: z.boolean().optional(),
+  alterar: z.boolean().optional(),
+  consultar: z.boolean().optional(),
+  excluir: z.boolean().optional(),
+});
+
+export const perfilCreateSchema = z.object({
+  perfil: z.string().min(3, 'Nome do perfil deve ter no mínimo 3 caracteres'),
+  permissoes: z.array(permissaoSchema).optional(),
+});
+
+export const perfilUpdateSchema = z.object({
+  perfil: z.string().min(3, 'Nome do perfil deve ter no mínimo 3 caracteres').optional(),
+  permissoes: z.array(permissaoSchema).optional(),
+});
+
+export type PerfilCreateDTO = z.infer<typeof perfilCreateSchema>;
+export type PerfilUpdateDTO = z.infer<typeof perfilUpdateSchema>;

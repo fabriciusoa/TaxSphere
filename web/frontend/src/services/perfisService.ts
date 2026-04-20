@@ -1,33 +1,50 @@
 import api from './api';
+import type { Perfil, SysModulo, PerfilPermissao } from '../types';
 
-interface Perfil {
-  id: number;
+export interface PerfilListResponse {
+  data: Perfil[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}
+
+export interface PerfilPayload {
   perfil: string;
+  permissoes?: Omit<PerfilPermissao, 'id'>[];
 }
 
 export const perfisService = {
-  listar: async (): Promise<Perfil[]> => {
-    const response = await api.get<Perfil[]>('/perfis');
-    return response.data;
+  arvoreMenu: async (): Promise<SysModulo[]> => {
+    const { data } = await api.get('/perfis/menu');
+    return data;
+  },
+
+  listar: async (filtros?: { busca?: string; page?: number; limit?: number }): Promise<PerfilListResponse> => {
+    const params = new URLSearchParams();
+    if (filtros) {
+      Object.entries(filtros).forEach(([k, v]) => {
+        if (v !== undefined && v !== '') params.append(k, String(v));
+      });
+    }
+    const { data } = await api.get(`/perfis?${params}`);
+    return data;
   },
 
   buscarPorId: async (id: number): Promise<Perfil> => {
-    const response = await api.get<Perfil>(`/perfis/${id}`);
-    return response.data;
+    const { data } = await api.get(`/perfis/${id}`);
+    return data;
   },
 
-  criar: async (perfil: string): Promise<Perfil> => {
-    const response = await api.post<Perfil>('/perfis', { perfil });
-    return response.data;
+  criar: async (payload: PerfilPayload): Promise<Perfil> => {
+    const { data } = await api.post('/perfis', payload);
+    return data;
   },
 
-  atualizar: async (id: number, perfil: string): Promise<Perfil> => {
-    const response = await api.put<Perfil>(`/perfis/${id}`, { perfil });
-    return response.data;
+  atualizar: async (id: number, payload: PerfilPayload): Promise<Perfil> => {
+    const { data } = await api.put(`/perfis/${id}`, payload);
+    return data;
   },
 
-  deletar: async (id: number): Promise<{ message: string }> => {
-    const response = await api.delete<{ message: string }>(`/perfis/${id}`);
-    return response.data;
-  }
+  excluir: async (id: number): Promise<void> => {
+    await api.delete(`/perfis/${id}`);
+  },
 };
+

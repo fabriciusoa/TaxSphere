@@ -16,34 +16,27 @@ export const dashboardController = {
 
             // Chamados abertos do usuário
             const chamadosAbertosResult = await getOne<{ qtde: number }>(
-                "SELECT COUNT(*) AS qtde FROM chamado WHERE id_usuario = ? AND status NOT IN ('Fechado', 'Cancelado')",
+                "SELECT COUNT(*) AS qtde FROM sys_chamado WHERE usuario_id = $1 AND status NOT IN ('Fechado', 'Cancelado')",
                 [id_usuario]
             );
             const qtdeChamadosAbertos = chamadosAbertosResult?.qtde || 0;
 
             // Total de chamados do usuário
             const chamadosTotalResult = await getOne<{ qtde: number }>(
-                'SELECT COUNT(*) AS qtde FROM chamado WHERE id_usuario = ?',
+                'SELECT COUNT(*) AS qtde FROM sys_chamado WHERE usuario_id = $1',
                 [id_usuario]
             );
             const qtdeChamadosTotal = chamadosTotalResult?.qtde || 0;
 
-            // Assinaturas ativas (admin)
-            const assinaturasAtivasResult = await getOne<{ qtde: number }>(
-                "SELECT COUNT(*) AS qtde FROM adm_assinatura WHERE status = 'ATIVO' AND dt_excluido IS NULL"
-            );
-            const qtdeAssinaturasAtivas = assinaturasAtivasResult?.qtde || 0;
-
             // Total de usuários ativos
             const usuariosAtivosResult = await getOne<{ qtde: number }>(
-                "SELECT COUNT(*) AS qtde FROM usuarios WHERE LOWER(status) = 'ativo'"
+                "SELECT COUNT(*) AS qtde FROM adm_usuarios WHERE status = true"
             );
             const qtdeUsuariosAtivos = usuariosAtivosResult?.qtde || 0;
 
             return res.json({
                 qtdeChamadosAbertos,
                 qtdeChamadosTotal,
-                qtdeAssinaturasAtivas,
                 qtdeUsuariosAtivos
             });
         } catch (error: any) {

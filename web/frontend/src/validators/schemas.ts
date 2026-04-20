@@ -28,7 +28,6 @@ export const criarUsuarioSchema = z.object({
   email: z.string().email('Email inválido'),
   cpf: cpfSchema,
   senha: senhaSchema,
-  perfil_id: z.number().int().positive('Perfil inválido'),
   dt_nascimento: z.string().optional()
 });
 
@@ -37,7 +36,6 @@ export const atualizarUsuarioSchema = z.object({
   nome: z.string().min(3, 'Nome deve ter no mínimo 3 caracteres').optional(),
   email: z.string().email('Email inválido').optional(),
   cpf: cpfSchema.optional(),
-  perfil_id: z.number().int().positive('Perfil inválido').optional(),
   status: z.enum(['ativo', 'inativo']).optional(),
   dt_nascimento: z.string().optional()
 });

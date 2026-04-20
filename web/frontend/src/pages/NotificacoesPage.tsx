@@ -1,33 +1,60 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
 import {
-  Box, Typography, Card, CardContent, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, TablePagination, Paper, Chip, IconButton, Dialog, DialogTitle,
-  DialogContent, DialogActions, Button, FormControl, InputLabel, Select, MenuItem,
-  Stack, Alert, CircularProgress, Tooltip,
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TablePagination,
+  Paper,
+  Chip,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Stack,
+  Alert,
+  CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import {
-  Email as EmailIcon, Pending as PendingIcon, Error as ErrorIcon,
-  TrendingUp as TrendingUpIcon, Visibility as VisibilityIcon, WhatsApp as WhatsAppIcon,
+  Email as EmailIcon,
+  Pending as PendingIcon,
+  Error as ErrorIcon,
+  TrendingUp as TrendingUpIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { logger } from '../utils/logger';
 import notificacoesService from '../services/notificacoesService';
-import type { Notificacao, EstatisticasNotificacao, StatusNotificacao, TipoNotificacao } from '../services/notificacoesService';
+import type { Notificacao, EstatisticasNotificacao, StatusNotificacao } from '../services/notificacoesService';
 
 // Tokens Synchro
 const T = {
-  cyan:       '#00c8f0',
-  cyanDim:    'rgba(0, 200, 240, 0.08)',
+  cyan: '#00c8f0',
+  cyanDim: 'rgba(0, 200, 240, 0.08)',
   cyanBorder: 'rgba(0, 200, 240, 0.18)',
-  cyanGlow:   '0 4px 18px rgba(0,200,240,0.25)',
-  cyanHover:  '0 6px 22px rgba(0,200,240,0.38)',
-  textPrimary:'#1a2332',
+  cyanGlow: '0 4px 18px rgba(0,200,240,0.25)',
+  cyanHover: '0 6px 22px rgba(0,200,240,0.38)',
+  textPrimary: '#1a2332',
   textSecond: '#64748b',
-  border:     'rgba(15, 30, 60, 0.09)',
-  surface:    '#FFFFFF',
-  inputBg:    '#F7F9FC',
-  navy:       '#0a1628',
+  border: 'rgba(15, 30, 60, 0.09)',
+  surface: '#FFFFFF',
+  inputBg: '#F7F9FC',
+  navy: '#0a1628',
   cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 };
 
@@ -74,22 +101,21 @@ function StatCard({ icon, label, value, accent }: StatCardProps) {
 }
 
 const NotificacoesAgendamentoPage: React.FC = () => {
-  const [loading, setLoading]         = useState(false);
+  const [loading, setLoading] = useState(false);
   const [estatisticas, setEstatisticas] = useState<EstatisticasNotificacao | null>(null);
   const [notificacoes, setNotificacoes] = useState<Notificacao[]>([]);
-  const [page, setPage]               = useState(0);
+  const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(5);
-  const [alertMsg, setAlertMsg]       = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<StatusNotificacao | ''>('');
-  const [filtroTipo, setFiltroTipo]   = useState<TipoNotificacao | ''>('');
-  const [openErroDialog, setOpenErroDialog]         = useState(false);
+  const [openErroDialog, setOpenErroDialog] = useState(false);
   const [notificacaoSelecionada, setNotificacaoSelecionada] = useState<Notificacao | null>(null);
   const [openConfirmReprocessar, setOpenConfirmReprocessar] = useState(false);
-  const [reprocessando, setReprocessando]           = useState(false);
+  const [reprocessando, setReprocessando] = useState(false);
 
   useEffect(() => { carregarDados(); }, []);
   useEffect(() => { const i = setInterval(carregarDados, 60000); return () => clearInterval(i); }, []);
-  useEffect(() => { carregarNotificacoes(); }, [filtroStatus, filtroTipo, page, rowsPerPage]);
+  useEffect(() => { carregarNotificacoes(); }, [filtroStatus, page, rowsPerPage]);
 
   const carregarDados = async () => {
     await Promise.all([carregarEstatisticas(), carregarNotificacoes()]);
@@ -103,7 +129,7 @@ const NotificacoesAgendamentoPage: React.FC = () => {
   const carregarNotificacoes = async () => {
     try {
       setLoading(true);
-      setNotificacoes(await notificacoesService.listar({ status: filtroStatus || undefined, tipo: filtroTipo || undefined, limite: rowsPerPage, offset: page * rowsPerPage }));
+      setNotificacoes(await notificacoesService.listar({ status: filtroStatus || undefined, limite: rowsPerPage, offset: page * rowsPerPage }));
     } catch (e: any) {
       logger.error('Erro ao carregar notificações', e.response?.data?.message);
       mostrarAlert('error', 'Erro ao carregar notificações');
@@ -155,10 +181,10 @@ const NotificacoesAgendamentoPage: React.FC = () => {
 
       {/* Métricas */}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2, mb: 3 }}>
-        <StatCard icon={<EmailIcon sx={{ fontSize: 20 }} />}      label="Total Enviadas"   value={estatisticas?.total || 0}        accent={T.cyan} />
-        <StatCard icon={<PendingIcon sx={{ fontSize: 20 }} />}    label="Pendentes"        value={estatisticas?.pendentes || 0}    accent="#FFA726" />
-        <StatCard icon={<ErrorIcon sx={{ fontSize: 20 }} />}      label="Falhas"           value={estatisticas?.falhas || 0}       accent="#D32F2F" />
-        <StatCard icon={<TrendingUpIcon sx={{ fontSize: 20 }} />} label="Taxa de Sucesso"  value={estatisticas?.taxa_sucesso || '0%'} accent="#66BB6A" />
+        <StatCard icon={<EmailIcon sx={{ fontSize: 20 }} />} label="Total Enviadas" value={estatisticas?.total || 0} accent={T.cyan} />
+        <StatCard icon={<PendingIcon sx={{ fontSize: 20 }} />} label="Pendentes" value={estatisticas?.pendentes || 0} accent="#FFA726" />
+        <StatCard icon={<ErrorIcon sx={{ fontSize: 20 }} />} label="Falhas" value={estatisticas?.falhas || 0} accent="#D32F2F" />
+        <StatCard icon={<TrendingUpIcon sx={{ fontSize: 20 }} />} label="Taxa de Sucesso" value={estatisticas?.taxa_sucesso || '0%'} accent="#66BB6A" />
       </Box>
 
       {/* Filtros */}
@@ -171,14 +197,6 @@ const NotificacoesAgendamentoPage: React.FC = () => {
               <MenuItem value="Pendente">Pendente</MenuItem>
               <MenuItem value="Enviado">Enviado</MenuItem>
               <MenuItem value="Falha">Falha</MenuItem>
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ width: { xs: '100%', sm: 150 } }}>
-            <InputLabel sx={{ color: T.textSecond, fontSize: '0.875rem', '&.Mui-focused': { color: T.cyan } }}>Tipo</InputLabel>
-            <Select value={filtroTipo} label="Tipo" onChange={(e) => setFiltroTipo(e.target.value as TipoNotificacao | '')} sx={selectSx}>
-              <MenuItem value="">Todos</MenuItem>
-              <MenuItem value="EMAIL">E-mail</MenuItem>
-              <MenuItem value="WHATSAPP">WhatsApp</MenuItem>
             </Select>
           </FormControl>
           <Box sx={{ flex: 1 }} />
@@ -217,11 +235,6 @@ const NotificacoesAgendamentoPage: React.FC = () => {
                     </TableRow>
                   ) : notificacoes.map((n) => (
                     <TableRow key={n.id} hover sx={{ '&:hover': { backgroundColor: '#F8FAFC' }, '& td': { borderBottom: `1px solid ${T.border}`, py: 1.25 } }}>
-                      <TableCell>
-                        {n.tipo === 'EMAIL'
-                          ? <Tooltip title="E-mail"><EmailIcon sx={{ color: T.cyan, fontSize: 20 }} /></Tooltip>
-                          : <Tooltip title="WhatsApp"><WhatsAppIcon sx={{ color: '#66BB6A', fontSize: 20 }} /></Tooltip>}
-                      </TableCell>
                       <TableCell sx={{ fontSize: '0.8125rem', color: T.textSecond }}>{n.tipo_notificacao}</TableCell>
                       <TableCell sx={{ fontSize: '0.8125rem', color: T.textPrimary }}>{n.destinatario}</TableCell>
                       <TableCell sx={{ fontSize: '0.8125rem', color: T.textSecond, maxWidth: 200 }}>

@@ -1,23 +1,40 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Grid, Card, CardContent, Typography, Chip, CircularProgress,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
-  IconButton, Tooltip, Alert, FormControl, InputLabel, Select, MenuItem,
-  LinearProgress, alpha, useTheme,
+  Box,
+  Grid,
+  Card,
+  CardContent,
+  Typography,
+  Chip,
+  CircularProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  IconButton,
+  Tooltip,
+  Alert,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  LinearProgress,
+  alpha,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import {
   Assessment as AssessmentIcon,
   CheckCircle as CheckCircleIcon,
-  HourglassEmpty as HourglassIcon,
   Warning as WarningIcon,
   Receipt as ReceiptIcon,
   TrendingUp as TrendingUpIcon,
   Refresh as RefreshIcon,
-  Visibility as VisibilityIcon,
   AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
-import dctfwebService, { DctfWebDashboard } from '../../services/dctfwebService';
+import dctfwebService from '../../services/dctfwebService';
+import type { DctfWebDashboard } from '../../services/dctfwebService';
 import { perdcompService } from '../../services/perdcompService';
 
 const formatCurrency = (v: number) =>
@@ -44,7 +61,6 @@ interface KpiCardProps {
 }
 
 function KpiCard({ title, value, subtitle, icon, color }: KpiCardProps) {
-  const theme = useTheme();
   return (
     <Card sx={{ borderRadius: 3, boxShadow: '0 2px 12px rgba(0,0,0,.08)', height: '100%' }}>
       <CardContent sx={{ p: 2.5 }}>
@@ -79,7 +95,7 @@ export default function DctfWebDashboardPage() {
         perdcompService.empresas.listar(),
       ]);
       setDash(d);
-      setEmpresas(e);
+      setEmpresas(e.data);
     } catch {
       setErro('Erro ao carregar dados do dashboard');
     } finally {
@@ -125,22 +141,22 @@ export default function DctfWebDashboardPage() {
       </Box>
 
       <Grid container spacing={2.5} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard title="Total Declarações" value={totalDecl}
             subtitle={`${t?.ativas || 0} ativa(s)`}
             icon={<AssessmentIcon sx={{ color: '#1976d2' }} />} color="#1976d2" />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard title="Débitos Apurados" value={formatCurrency(t?.total_debito || 0)}
             subtitle={`Créditos: ${formatCurrency(t?.total_credito || 0)}`}
             icon={<TrendingUpIcon sx={{ color: '#e65100' }} />} color="#e65100" />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard title="Saldo a Pagar" value={formatCurrency(t?.total_saldo || 0)}
             subtitle={`Pago: ${formatCurrency(t?.total_pago || 0)}`}
             icon={<AccountBalanceIcon sx={{ color: '#2e7d32' }} />} color="#2e7d32" />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard title="Pendentes Pgto" value={formatCurrency(t?.total_pendente || 0)}
             subtitle={`${t?.em_andamento || 0} em andamento`}
             icon={<WarningIcon sx={{ color: '#f57c00' }} />} color="#f57c00" />
@@ -158,14 +174,16 @@ export default function DctfWebDashboardPage() {
               {dash!.porSituacao.map(s => {
                 const pct = totalDecl > 0 ? (s.qtd / totalDecl) * 100 : 0;
                 return (
-                  <Grid item xs={12} sm={6} md={4} key={s.situacao}>
+                  <Grid size={{ xs: 12, sm: 6, md: 4 }} key={s.situacao}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                       <Typography variant="body2" fontWeight={500}>{s.situacao}</Typography>
                       <Typography variant="body2" color="text.secondary">{s.qtd} ({pct.toFixed(0)}%)</Typography>
                     </Box>
                     <LinearProgress variant="determinate" value={pct}
-                      sx={{ height: 8, borderRadius: 4, bgcolor: '#e0e0e0',
-                        '& .MuiLinearProgress-bar': { bgcolor: situacaoColor[s.situacao] || '#9e9e9e', borderRadius: 4 } }} />
+                      sx={{
+                        height: 8, borderRadius: 4, bgcolor: '#e0e0e0',
+                        '& .MuiLinearProgress-bar': { bgcolor: situacaoColor[s.situacao] || '#9e9e9e', borderRadius: 4 }
+                      }} />
                   </Grid>
                 );
               })}
@@ -176,7 +194,7 @@ export default function DctfWebDashboardPage() {
 
       <Grid container spacing={2.5}>
         {/* Últimos períodos */}
-        <Grid item xs={12} md={7}>
+        <Grid size={{ xs: 12, md: 7 }}>
           <Card sx={{ borderRadius: 3, boxShadow: '0 2px 12px rgba(0,0,0,.08)' }}>
             <CardContent>
               <Typography variant="subtitle1" fontWeight={600} gutterBottom>
@@ -216,7 +234,7 @@ export default function DctfWebDashboardPage() {
         </Grid>
 
         {/* Próximos vencimentos */}
-        <Grid item xs={12} md={5}>
+        <Grid size={{ xs: 12, md: 5 }}>
           <Card sx={{ borderRadius: 3, boxShadow: '0 2px 12px rgba(0,0,0,.08)' }}>
             <CardContent>
               <Typography variant="subtitle1" fontWeight={600} gutterBottom>

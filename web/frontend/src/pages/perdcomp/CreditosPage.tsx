@@ -1,9 +1,30 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Typography, Button, TextField, Select, MenuItem, FormControl, InputLabel,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination,
-  Paper, Chip, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-  CircularProgress, Alert, Tooltip,
+  Box,
+  Typography,
+  Button,
+  TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TablePagination,
+  Paper,
+  Chip,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  CircularProgress,
+  Alert,
+  Tooltip,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import {
@@ -18,13 +39,13 @@ import type { PerdcompEmpresa, PerdcompCredito, TipoCredito, OrigemCredito, Stat
 import { logger } from '../../utils/logger';
 
 const T = {
-  navy:        '#0a1628',
-  cyan:        '#00c8f0',
+  navy: '#0a1628',
+  cyan: '#00c8f0',
   textPrimary: '#1a2332',
-  textSecond:  '#64748b',
-  border:      'rgba(15, 30, 60, 0.09)',
-  surface:     '#FFFFFF',
-  cardShadow:  '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+  textSecond: '#64748b',
+  border: 'rgba(15, 30, 60, 0.09)',
+  surface: '#FFFFFF',
+  cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 };
 
 const formatBRL = (value: number) =>
@@ -54,7 +75,7 @@ const prescricaoChip = (dias?: number) => {
 };
 
 interface FormData {
-  id_empresa: number | '';
+  id_empresa: string;
   tipo_credito: TipoCredito | '';
   origem_credito: OrigemCredito | '';
   periodo_apuracao: string;
@@ -154,7 +175,7 @@ export default function CreditosPage() {
   const handleOpenEdit = async (credito: PerdcompCredito) => {
     setEditingId(credito.id);
     setForm({
-      id_empresa: credito.id_empresa,
+      id_empresa: String(credito.id_empresa),
       tipo_credito: credito.tipo_credito,
       origem_credito: credito.origem_credito,
       periodo_apuracao: credito.periodo_apuracao,
@@ -175,7 +196,7 @@ export default function CreditosPage() {
       setSaving(true);
       setError('');
       const payload = {
-        id_empresa: form.id_empresa,
+        id_empresa: Number(form.id_empresa),
         tipo_credito: form.tipo_credito,
         origem_credito: form.origem_credito,
         periodo_apuracao: form.periodo_apuracao,

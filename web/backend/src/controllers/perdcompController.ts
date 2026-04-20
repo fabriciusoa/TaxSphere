@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { AuthRequest } from '../types';
-import { getAll, getOne, runQuery } from '../database/connection';
+import { getAll, getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
 import { log } from '../utils/logger';
 import { selicService } from '../services/selicService';
 import { perdcompRegraService } from '../services/perdcompRegraService';
@@ -28,7 +28,7 @@ async function registrarHistorico(params: {
   valor_anterior?: string; valor_novo?: string; detalhes?: string;
 }) {
   await runQuery(
-    `INSERT INTO perdcomp_historico (id_pedido, id_credito, id_debito, id_usuario, acao, campo_alterado, valor_anterior, valor_novo, detalhes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO perdcomp_historico (id_pedido, id_credito, id_debito, id_usuario, acao, campo_alterado, valor_anterior, valor_novo, detalhes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [params.id_pedido || null, params.id_credito || null, params.id_debito || null,
       params.id_usuario, params.acao, params.campo_alterado || null,
       params.valor_anterior || null, params.valor_novo || null, params.detalhes || null]
@@ -120,18 +120,26 @@ export const perdcompEmpresasController = {
       const params: any[] = [];
 
       if (busca) {
-        where.push("(e.razao_social LIKE ? OR e.cnpj LIKE ? OR e.nome_fantasia LIKE ?)");
         const b = `%${busca}%`;
-        params.push(b, b, b);
+        params.push(b); where.push(`e.razao_social LIKE $${params.length}`);
+        params.push(b); where.push(`e.cnpj LIKE $${params.length}`);
+        params.push(b); where.push(`e.nome_fantasia LIKE $${params.length}`);
+        // agrupando as 3 condições como OR (substituir as 3 últimas por 1 OR)
+        const last3 = where.splice(-3);
+        where.push(`(${last3.join(' OR ')})`);
       }
-      if (regime) { where.push('e.regime_tributario = ?'); params.push(regime); }
-      if (uf) { where.push('e.uf = ?'); params.push(uf); }
-      if (ativo !== undefined) { where.push('e.ativo = ?'); params.push(ativo === 'true' ? 1 : 0); }
+      if (regime) { params.push(regime); where.push(`e.regime_tributario = $${params.length}`); }
+      if (uf) { params.push(uf); where.push(`e.uf = $${params.length}`); }
+      if (ativo !== undefined) { params.push(ativo === 'true' ? 1 : 0); where.push(`e.ativo = $${params.length}`); }
 
       const offset = (Number(page) - 1) * Number(limit);
       const countResult = await getOne<{ total: number }>(
         `SELECT COUNT(*) as total FROM perdcomp_empresas e WHERE ${where.join(' AND ')}`, params
       );
+
+      const listParams = [...params];
+      listParams.push(Number(limit)); const limitIdx = listParams.length;
+      listParams.push(offset); const offsetIdx = listParams.length;
 
       const empresas = await getAll<any>(
         `SELECT e.*,
@@ -140,8 +148,8 @@ export const perdcompEmpresasController = {
           (SELECT COUNT(*) FROM perdcomp_debitos d WHERE d.id_empresa = e.id AND d.status IN ('Pendente','Parcialmente Compensado')) as total_debitos,
           (SELECT COUNT(*) FROM perdcomp_pedidos p WHERE p.id_empresa = e.id) as total_pedidos
         FROM perdcomp_empresas e WHERE ${where.join(' AND ')}
-        ORDER BY e.razao_social LIMIT ? OFFSET ?`,
-        [...params, Number(limit), offset]
+        ORDER BY e.razao_social LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        listParams
       );
 
       res.json({
@@ -162,7 +170,7 @@ export const perdcompEmpresasController = {
           (SELECT COUNT(*) FROM perdcomp_creditos c WHERE c.id_empresa = e.id) as total_creditos,
           (SELECT COUNT(*) FROM perdcomp_debitos d WHERE d.id_empresa = e.id) as total_debitos,
           (SELECT COUNT(*) FROM perdcomp_pedidos p WHERE p.id_empresa = e.id) as total_pedidos
-        FROM perdcomp_empresas e WHERE e.id = ?`,
+        FROM perdcomp_empresas e WHERE e.id = $1`,
         [req.params.id]
       );
       if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
@@ -179,15 +187,15 @@ export const perdcompEmpresasController = {
       if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
 
       const { cnpj, razao_social, nome_fantasia, inscricao_estadual, regime_tributario, uf, municipio } = resultado.data;
-      const existe = await getOne<any>('SELECT id FROM perdcomp_empresas WHERE cnpj = ?', [cnpj]);
+      const existe = await getOne<any>('SELECT id FROM perdcomp_empresas WHERE cnpj = $1', [cnpj]);
       if (existe) return res.status(409).json({ error: 'CNPJ já cadastrado' });
 
-      const { lastID } = await runQuery(
-        `INSERT INTO perdcomp_empresas (id_usuario_responsavel, cnpj, razao_social, nome_fantasia, inscricao_estadual, regime_tributario, uf, municipio) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      const { id: lastID } = await runQuery(
+        `INSERT INTO perdcomp_empresas (id_usuario_responsavel, cnpj, razao_social, nome_fantasia, inscricao_estadual, regime_tributario, uf, municipio) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
         [req.user!.id, cnpj, razao_social, nome_fantasia || null, inscricao_estadual || null, regime_tributario, uf || null, municipio || null]
       );
 
-      const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = ?', [lastID]);
+      const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [lastID]);
       res.status(201).json(empresa);
     } catch (error: any) {
       log.error(`Erro ao criar empresa: ${error.message}`);
@@ -200,21 +208,22 @@ export const perdcompEmpresasController = {
       const resultado = empresaUpdateSchema.safeParse(req.body);
       if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
 
-      const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = ?', [req.params.id]);
+      const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
       if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
 
       const campos = resultado.data;
       const sets: string[] = [];
       const vals: any[] = [];
       for (const [key, value] of Object.entries(campos)) {
-        if (value !== undefined) { sets.push(`${key} = ?`); vals.push(value); }
+        if (value !== undefined) { vals.push(value); sets.push(`${key} = $${vals.length}`); }
       }
       if (sets.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
 
-      sets.push("atualizado_em = datetime('now')");
-      await runQuery(`UPDATE perdcomp_empresas SET ${sets.join(', ')} WHERE id = ?`, [...vals, req.params.id]);
+      sets.push("atualizado_em = NOW()");
+      vals.push(req.params.id);
+      await runQuery(`UPDATE perdcomp_empresas SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
 
-      const atualizada = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = ?', [req.params.id]);
+      const atualizada = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
       res.json(atualizada);
     } catch (error: any) {
       log.error(`Erro ao atualizar empresa: ${error.message}`);
@@ -224,17 +233,17 @@ export const perdcompEmpresasController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
-      const empresa = await getOne<any>('SELECT id FROM perdcomp_empresas WHERE id = ?', [req.params.id]);
+      const empresa = await getOne<any>('SELECT id FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
       if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
 
-      const temPedidos = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedidos WHERE id_empresa = ?', [req.params.id]);
+      const temPedidos = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedidos WHERE id_empresa = $1', [req.params.id]);
       if (temPedidos && temPedidos.cnt > 0) {
         return res.status(409).json({ error: 'Empresa possui pedidos vinculados. Inative ao invés de excluir.' });
       }
 
-      await runQuery('DELETE FROM perdcomp_creditos WHERE id_empresa = ?', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_debitos WHERE id_empresa = ?', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_empresas WHERE id = ?', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_creditos WHERE id_empresa = $1', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_debitos WHERE id_empresa = $1', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
       res.json({ message: 'Empresa excluída com sucesso' });
     } catch (error: any) {
       log.error(`Erro ao excluir empresa: ${error.message}`);
@@ -276,14 +285,17 @@ export const perdcompCreditosController = {
       let where = ['1=1'];
       const params: any[] = [];
 
-      if (id_empresa) { where.push('c.id_empresa = ?'); params.push(id_empresa); }
-      if (tipo_credito) { where.push('c.tipo_credito = ?'); params.push(tipo_credito); }
-      if (status) { where.push('c.status = ?'); params.push(status); }
-      if (periodo) { where.push('c.periodo_apuracao = ?'); params.push(periodo); }
+      if (id_empresa) { params.push(id_empresa); where.push(`c.id_empresa = $${params.length}`); }
+      if (tipo_credito) { params.push(tipo_credito); where.push(`c.tipo_credito = $${params.length}`); }
+      if (status) { params.push(status); where.push(`c.status = $${params.length}`); }
+      if (periodo) { params.push(periodo); where.push(`c.periodo_apuracao = $${params.length}`); }
       if (busca) {
-        where.push('(e.razao_social LIKE ? OR e.cnpj LIKE ? OR c.codigo_receita LIKE ?)');
         const b = `%${busca}%`;
-        params.push(b, b, b);
+        params.push(b); where.push(`e.razao_social LIKE $${params.length}`);
+        params.push(b); where.push(`e.cnpj LIKE $${params.length}`);
+        params.push(b); where.push(`c.codigo_receita LIKE $${params.length}`);
+        const last3 = where.splice(-3);
+        where.push(`(${last3.join(' OR ')})`);
       }
 
       const offset = (Number(page) - 1) * Number(limit);
@@ -291,15 +303,19 @@ export const perdcompCreditosController = {
         `SELECT COUNT(*) as total FROM perdcomp_creditos c JOIN perdcomp_empresas e ON e.id = c.id_empresa WHERE ${where.join(' AND ')}`, params
       );
 
+      const listParams = [...params];
+      listParams.push(Number(limit)); const limitIdx = listParams.length;
+      listParams.push(offset); const offsetIdx = listParams.length;
+
       const creditos = await getAll<any>(
         `SELECT c.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj,
-          CAST(julianday(c.dt_vencimento_prescricao) - julianday('now') AS INTEGER) as dias_para_prescricao
+          CAST(EXTRACT(EPOCH FROM (c.dt_vencimento_prescricao::date - CURRENT_DATE)) / 86400 AS INTEGER) as dias_para_prescricao
         FROM perdcomp_creditos c
         JOIN perdcomp_empresas e ON e.id = c.id_empresa
         WHERE ${where.join(' AND ')}
         ORDER BY c.dt_vencimento_prescricao ASC
-        LIMIT ? OFFSET ?`,
-        [...params, Number(limit), offset]
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        listParams
       );
 
       res.json({
@@ -315,7 +331,7 @@ export const perdcompCreditosController = {
   buscarPorId: async (req: AuthRequest, res: Response) => {
     try {
       const credito = await getOne<any>(
-        `SELECT c.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj FROM perdcomp_creditos c JOIN perdcomp_empresas e ON e.id = c.id_empresa WHERE c.id = ?`,
+        `SELECT c.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj FROM perdcomp_creditos c JOIN perdcomp_empresas e ON e.id = c.id_empresa WHERE c.id = $1`,
         [req.params.id]
       );
       if (!credito) return res.status(404).json({ error: 'Crédito não encontrado' });
@@ -345,15 +361,15 @@ export const perdcompCreditosController = {
         selicAcumulado = valorAtualizado - data.valor_original;
       } catch { /* SELIC indisponível, usa valor original */ }
 
-      const { lastID } = await runQuery(
-        `INSERT INTO perdcomp_creditos (id_empresa, tipo_credito, origem_credito, periodo_apuracao, codigo_receita, valor_original, valor_selic_acumulado, valor_atualizado, dt_pagamento_original, dt_vencimento_prescricao, saldo_disponivel, observacoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      const { id: lastID } = await runQuery(
+        `INSERT INTO perdcomp_creditos (id_empresa, tipo_credito, origem_credito, periodo_apuracao, codigo_receita, valor_original, valor_selic_acumulado, valor_atualizado, dt_pagamento_original, dt_vencimento_prescricao, saldo_disponivel, observacoes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
         [data.id_empresa, data.tipo_credito, data.origem_credito, data.periodo_apuracao, data.codigo_receita || null,
           data.valor_original, selicAcumulado, valorAtualizado, data.dt_pagamento_original, prescricao, valorAtualizado, data.observacoes || null]
       );
 
       await registrarHistorico({ id_credito: lastID, id_usuario: req.user!.id, acao: 'Criação', detalhes: `Crédito ${data.tipo_credito} - R$ ${data.valor_original}` });
 
-      const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = ?', [lastID]);
+      const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [lastID]);
       res.status(201).json(credito);
     } catch (error: any) {
       log.error(`Erro ao criar crédito: ${error.message}`);
@@ -366,29 +382,30 @@ export const perdcompCreditosController = {
       const resultado = creditoUpdateSchema.safeParse(req.body);
       if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
 
-      const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = ?', [req.params.id]);
+      const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       if (!credito) return res.status(404).json({ error: 'Crédito não encontrado' });
 
       const campos = resultado.data;
       const sets: string[] = [];
       const vals: any[] = [];
       for (const [key, value] of Object.entries(campos)) {
-        if (value !== undefined) { sets.push(`${key} = ?`); vals.push(value); }
+        if (value !== undefined) { vals.push(value); sets.push(`${key} = $${vals.length}`); }
       }
       if (sets.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
 
       if (campos.valor_original && campos.valor_original !== credito.valor_original) {
         const prescricao = calcularPrescricao(campos.dt_pagamento_original || credito.dt_pagamento_original);
-        sets.push('dt_vencimento_prescricao = ?'); vals.push(prescricao);
-        sets.push('valor_atualizado = ?'); vals.push(campos.valor_original);
-        sets.push('saldo_disponivel = ?'); vals.push(campos.valor_original);
+        vals.push(prescricao); sets.push(`dt_vencimento_prescricao = $${vals.length}`);
+        vals.push(campos.valor_original); sets.push(`valor_atualizado = $${vals.length}`);
+        vals.push(campos.valor_original); sets.push(`saldo_disponivel = $${vals.length}`);
       }
 
-      sets.push("atualizado_em = datetime('now')");
-      await runQuery(`UPDATE perdcomp_creditos SET ${sets.join(', ')} WHERE id = ?`, [...vals, req.params.id]);
+      sets.push("atualizado_em = NOW()");
+      vals.push(req.params.id);
+      await runQuery(`UPDATE perdcomp_creditos SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
       await registrarHistorico({ id_credito: Number(req.params.id), id_usuario: req.user!.id, acao: 'Atualização' });
 
-      const atualizado = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = ?', [req.params.id]);
+      const atualizado = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       res.json(atualizado);
     } catch (error: any) {
       log.error(`Erro ao atualizar crédito: ${error.message}`);
@@ -398,13 +415,13 @@ export const perdcompCreditosController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
-      const credito = await getOne<any>('SELECT id FROM perdcomp_creditos WHERE id = ?', [req.params.id]);
+      const credito = await getOne<any>('SELECT id FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       if (!credito) return res.status(404).json({ error: 'Crédito não encontrado' });
 
-      const emUso = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedido_itens WHERE id_credito = ?', [req.params.id]);
+      const emUso = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedido_itens WHERE id_credito = $1', [req.params.id]);
       if (emUso && emUso.cnt > 0) return res.status(409).json({ error: 'Crédito vinculado a pedidos. Não pode ser excluído.' });
 
-      await runQuery('DELETE FROM perdcomp_creditos WHERE id = ?', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       res.json({ message: 'Crédito excluído com sucesso' });
     } catch (error: any) {
       log.error(`Erro ao excluir crédito: ${error.message}`);
@@ -434,21 +451,25 @@ export const perdcompDebitosController = {
       let where = ['1=1'];
       const params: any[] = [];
 
-      if (id_empresa) { where.push('d.id_empresa = ?'); params.push(id_empresa); }
-      if (tipo_tributo) { where.push('d.tipo_tributo = ?'); params.push(tipo_tributo); }
-      if (status) { where.push('d.status = ?'); params.push(status); }
-      if (periodo) { where.push('d.periodo_apuracao = ?'); params.push(periodo); }
+      if (id_empresa) { params.push(id_empresa); where.push(`d.id_empresa = $${params.length}`); }
+      if (tipo_tributo) { params.push(tipo_tributo); where.push(`d.tipo_tributo = $${params.length}`); }
+      if (status) { params.push(status); where.push(`d.status = $${params.length}`); }
+      if (periodo) { params.push(periodo); where.push(`d.periodo_apuracao = $${params.length}`); }
 
       const offset = (Number(page) - 1) * Number(limit);
       const countResult = await getOne<{ total: number }>(
         `SELECT COUNT(*) as total FROM perdcomp_debitos d WHERE ${where.join(' AND ')}`, params
       );
 
+      const listParams = [...params];
+      listParams.push(Number(limit)); const limitIdx2 = listParams.length;
+      listParams.push(offset); const offsetIdx2 = listParams.length;
+
       const debitos = await getAll<any>(
         `SELECT d.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj
         FROM perdcomp_debitos d JOIN perdcomp_empresas e ON e.id = d.id_empresa
-        WHERE ${where.join(' AND ')} ORDER BY d.dt_vencimento ASC LIMIT ? OFFSET ?`,
-        [...params, Number(limit), offset]
+        WHERE ${where.join(' AND ')} ORDER BY d.dt_vencimento ASC LIMIT $${limitIdx2} OFFSET $${offsetIdx2}`,
+        listParams
       );
 
       res.json({
@@ -464,7 +485,7 @@ export const perdcompDebitosController = {
   buscarPorId: async (req: AuthRequest, res: Response) => {
     try {
       const debito = await getOne<any>(
-        `SELECT d.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj FROM perdcomp_debitos d JOIN perdcomp_empresas e ON e.id = d.id_empresa WHERE d.id = ?`,
+        `SELECT d.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj FROM perdcomp_debitos d JOIN perdcomp_empresas e ON e.id = d.id_empresa WHERE d.id = $1`,
         [req.params.id]
       );
       if (!debito) return res.status(404).json({ error: 'Débito não encontrado' });
@@ -483,14 +504,14 @@ export const perdcompDebitosController = {
       const d = resultado.data;
       const valorTotal = d.valor_principal + d.valor_multa + d.valor_juros;
 
-      const { lastID } = await runQuery(
-        `INSERT INTO perdcomp_debitos (id_empresa, tipo_tributo, codigo_receita, periodo_apuracao, valor_principal, valor_multa, valor_juros, valor_total, dt_vencimento, saldo_devedor, observacoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      const { id: lastID } = await runQuery(
+        `INSERT INTO perdcomp_debitos (id_empresa, tipo_tributo, codigo_receita, periodo_apuracao, valor_principal, valor_multa, valor_juros, valor_total, dt_vencimento, saldo_devedor, observacoes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [d.id_empresa, d.tipo_tributo, d.codigo_receita || null, d.periodo_apuracao, d.valor_principal, d.valor_multa, d.valor_juros, valorTotal, d.dt_vencimento, valorTotal, d.observacoes || null]
       );
 
       await registrarHistorico({ id_debito: lastID, id_usuario: req.user!.id, acao: 'Criação', detalhes: `Débito ${d.tipo_tributo} - R$ ${valorTotal}` });
 
-      const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = ?', [lastID]);
+      const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [lastID]);
       res.status(201).json(debito);
     } catch (error: any) {
       log.error(`Erro ao criar débito: ${error.message}`);
@@ -503,29 +524,30 @@ export const perdcompDebitosController = {
       const resultado = debitoUpdateSchema.safeParse(req.body);
       if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
 
-      const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = ?', [req.params.id]);
+      const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [req.params.id]);
       if (!debito) return res.status(404).json({ error: 'Débito não encontrado' });
 
       const campos = resultado.data;
       const sets: string[] = [];
       const vals: any[] = [];
       for (const [key, value] of Object.entries(campos)) {
-        if (value !== undefined) { sets.push(`${key} = ?`); vals.push(value); }
+        if (value !== undefined) { vals.push(value); sets.push(`${key} = $${vals.length}`); }
       }
 
       if (campos.valor_principal !== undefined || campos.valor_multa !== undefined || campos.valor_juros !== undefined) {
         const vp = campos.valor_principal ?? debito.valor_principal;
         const vm = campos.valor_multa ?? debito.valor_multa;
         const vj = campos.valor_juros ?? debito.valor_juros;
-        sets.push('valor_total = ?'); vals.push(vp + vm + vj);
-        sets.push('saldo_devedor = ?'); vals.push(vp + vm + vj);
+        vals.push(vp + vm + vj); sets.push(`valor_total = $${vals.length}`);
+        vals.push(vp + vm + vj); sets.push(`saldo_devedor = $${vals.length}`);
       }
 
       if (sets.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
-      sets.push("atualizado_em = datetime('now')");
-      await runQuery(`UPDATE perdcomp_debitos SET ${sets.join(', ')} WHERE id = ?`, [...vals, req.params.id]);
+      sets.push("atualizado_em = NOW()");
+      vals.push(req.params.id);
+      await runQuery(`UPDATE perdcomp_debitos SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
 
-      const atualizado = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = ?', [req.params.id]);
+      const atualizado = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [req.params.id]);
       res.json(atualizado);
     } catch (error: any) {
       log.error(`Erro ao atualizar débito: ${error.message}`);
@@ -535,10 +557,10 @@ export const perdcompDebitosController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
-      const debito = await getOne<any>('SELECT id FROM perdcomp_debitos WHERE id = ?', [req.params.id]);
+      const debito = await getOne<any>('SELECT id FROM perdcomp_debitos WHERE id = $1', [req.params.id]);
       if (!debito) return res.status(404).json({ error: 'Débito não encontrado' });
 
-      const emUso = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedido_itens WHERE id_debito = ?', [req.params.id]);
+      const emUso = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedido_itens WHERE id_debito = $1', [req.params.id]);
       if (emUso && emUso.cnt > 0) return res.status(409).json({ error: 'Débito vinculado a pedidos.' });
 
       await runQuery('DELETE FROM perdcomp_debitos WHERE id = ?', [req.params.id]);
@@ -559,14 +581,18 @@ export const perdcompPedidosController = {
       let where = ['1=1'];
       const params: any[] = [];
 
-      if (id_empresa) { where.push('p.id_empresa = ?'); params.push(id_empresa); }
-      if (tipo_pedido) { where.push('p.tipo_pedido = ?'); params.push(tipo_pedido); }
-      if (status) { where.push('p.status = ?'); params.push(status); }
+      if (id_empresa) { params.push(id_empresa); where.push(`p.id_empresa = $${params.length}`); }
+      if (tipo_pedido) { params.push(tipo_pedido); where.push(`p.tipo_pedido = $${params.length}`); }
+      if (status) { params.push(status); where.push(`p.status = $${params.length}`); }
 
       const offset = (Number(page) - 1) * Number(limit);
       const countResult = await getOne<{ total: number }>(
         `SELECT COUNT(*) as total FROM perdcomp_pedidos p WHERE ${where.join(' AND ')}`, params
       );
+
+      const listParams3 = [...params];
+      listParams3.push(Number(limit)); const limitIdx3 = listParams3.length;
+      listParams3.push(offset); const offsetIdx3 = listParams3.length;
 
       const pedidos = await getAll<any>(
         `SELECT p.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj, u.nome as usuario_nome
@@ -574,8 +600,8 @@ export const perdcompPedidosController = {
         JOIN perdcomp_empresas e ON e.id = p.id_empresa
         JOIN usuarios u ON u.id = p.id_usuario_criador
         WHERE ${where.join(' AND ')}
-        ORDER BY p.criado_em DESC LIMIT ? OFFSET ?`,
-        [...params, Number(limit), offset]
+        ORDER BY p.criado_em DESC LIMIT $${limitIdx3} OFFSET $${offsetIdx3}`,
+        listParams3
       );
 
       res.json({
@@ -595,7 +621,7 @@ export const perdcompPedidosController = {
         FROM perdcomp_pedidos p
         JOIN perdcomp_empresas e ON e.id = p.id_empresa
         JOIN usuarios u ON u.id = p.id_usuario_criador
-        WHERE p.id = ?`,
+        WHERE p.id = $1`,
         [req.params.id]
       );
       if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
@@ -605,17 +631,17 @@ export const perdcompPedidosController = {
         FROM perdcomp_pedido_itens pi
         LEFT JOIN perdcomp_creditos c ON c.id = pi.id_credito
         LEFT JOIN perdcomp_debitos d ON d.id = pi.id_debito
-        WHERE pi.id_pedido = ?`,
+        WHERE pi.id_pedido = $1`,
         [req.params.id]
       );
 
       pedido.historico = await getAll<any>(
-        `SELECT h.*, u.nome as usuario_nome FROM perdcomp_historico h JOIN usuarios u ON u.id = h.id_usuario WHERE h.id_pedido = ? ORDER BY h.criado_em DESC`,
+        `SELECT h.*, u.nome as usuario_nome FROM perdcomp_historico h JOIN usuarios u ON u.id = h.id_usuario WHERE h.id_pedido = $1 ORDER BY h.criado_em DESC`,
         [req.params.id]
       );
 
       pedido.documentos = await getAll<any>(
-        `SELECT id, id_pedido, tipo_documento, nome_arquivo, tipo_arquivo, tamanho_bytes, observacoes, criado_em FROM perdcomp_documentos WHERE id_pedido = ?`,
+        `SELECT id, id_pedido, tipo_documento, nome_arquivo, tipo_arquivo, tamanho_bytes, observacoes, criado_em FROM perdcomp_documentos WHERE id_pedido = $1`,
         [req.params.id]
       );
 
@@ -641,7 +667,7 @@ export const perdcompPedidosController = {
 
       for (const item of data.itens) {
         if (item.tipo_item === 'credito' && item.id_credito) {
-          const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = ?', [item.id_credito]);
+          const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [item.id_credito]);
           if (!credito) return res.status(400).json({ error: `Crédito ${item.id_credito} não encontrado` });
           if (item.valor_utilizado > credito.saldo_disponivel) {
             return res.status(400).json({ error: `Valor excede o saldo disponível do crédito ${item.id_credito} (saldo: R$ ${credito.saldo_disponivel.toFixed(2)})` });
@@ -649,7 +675,7 @@ export const perdcompPedidosController = {
           totalCredito += item.valor_utilizado;
         }
         if (item.tipo_item === 'debito' && item.id_debito) {
-          const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = ?', [item.id_debito]);
+          const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [item.id_debito]);
           if (!debito) return res.status(400).json({ error: `Débito ${item.id_debito} não encontrado` });
           if (item.valor_utilizado > debito.saldo_devedor) {
             return res.status(400).json({ error: `Valor excede o saldo devedor do débito ${item.id_debito}` });
@@ -658,21 +684,21 @@ export const perdcompPedidosController = {
         }
       }
 
-      const { lastID } = await runQuery(
-        `INSERT INTO perdcomp_pedidos (id_empresa, id_usuario_criador, tipo_pedido, valor_total_credito, valor_total_debito, observacoes) VALUES (?, ?, ?, ?, ?, ?)`,
+      const { id: lastID } = await runQuery(
+        `INSERT INTO perdcomp_pedidos (id_empresa, id_usuario_criador, tipo_pedido, valor_total_credito, valor_total_debito, observacoes) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
         [data.id_empresa, req.user!.id, data.tipo_pedido, totalCredito, totalDebito, data.observacoes || null]
       );
 
       for (const item of data.itens) {
         await runQuery(
-          'INSERT INTO perdcomp_pedido_itens (id_pedido, id_credito, id_debito, tipo_item, valor_utilizado) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO perdcomp_pedido_itens (id_pedido, id_credito, id_debito, tipo_item, valor_utilizado) VALUES ($1, $2, $3, $4, $5)',
           [lastID, item.id_credito || null, item.id_debito || null, item.tipo_item, item.valor_utilizado]
         );
       }
 
       await registrarHistorico({ id_pedido: lastID, id_usuario: req.user!.id, acao: 'Criação', detalhes: `Pedido ${data.tipo_pedido} - Crédito: R$ ${totalCredito} / Débito: R$ ${totalDebito}` });
 
-      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = ?', [lastID]);
+      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [lastID]);
       res.status(201).json(pedido);
     } catch (error: any) {
       log.error(`Erro ao criar pedido: ${error.message}`);
@@ -685,50 +711,62 @@ export const perdcompPedidosController = {
       const resultado = pedidoStatusSchema.safeParse(req.body);
       if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
 
-      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = ?', [req.params.id]);
+      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
       if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
 
       const { status, motivo_indeferimento, dt_ciencia } = resultado.data;
-      const sets: string[] = ['status = ?', "atualizado_em = datetime('now')"];
-      const vals: any[] = [status];
+      const sets: string[] = [];
+      const vals: any[] = [];
+      vals.push(status); sets.push(`status = $${vals.length}`);
+      sets.push("atualizado_em = NOW()");
 
-      if (motivo_indeferimento) { sets.push('motivo_indeferimento = ?'); vals.push(motivo_indeferimento); }
+      if (motivo_indeferimento) { vals.push(motivo_indeferimento); sets.push(`motivo_indeferimento = $${vals.length}`); }
       if (dt_ciencia) {
-        sets.push('dt_ciencia = ?'); vals.push(dt_ciencia);
+        vals.push(dt_ciencia); sets.push(`dt_ciencia = $${vals.length}`);
         const prazo = new Date(dt_ciencia);
         prazo.setDate(prazo.getDate() + 30);
-        sets.push('dt_prazo_manifestacao = ?'); vals.push(prazo.toISOString().substring(0, 10));
+        vals.push(prazo.toISOString().substring(0, 10)); sets.push(`dt_prazo_manifestacao = $${vals.length}`);
       }
       if (status === 'Deferido' || status === 'Indeferido' || status === 'Homologado' || status === 'Não Homologado') {
-        sets.push("dt_decisao = datetime('now')");
+        sets.push("dt_decisao = NOW()");
       }
 
-      await runQuery(`UPDATE perdcomp_pedidos SET ${sets.join(', ')} WHERE id = ?`, [...vals, req.params.id]);
+      vals.push(req.params.id);
+      await runQuery(`UPDATE perdcomp_pedidos SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
       await registrarHistorico({
         id_pedido: Number(req.params.id), id_usuario: req.user!.id, acao: 'Mudança Status',
         campo_alterado: 'status', valor_anterior: pedido.status, valor_novo: status
       });
 
       if (status === 'Transmitido') {
-        await runQuery(`UPDATE perdcomp_pedidos SET dt_transmissao = datetime('now') WHERE id = ?`, [req.params.id]);
-        const itens = await getAll<any>('SELECT * FROM perdcomp_pedido_itens WHERE id_pedido = ?', [req.params.id]);
-        for (const item of itens) {
-          if (item.tipo_item === 'credito' && item.id_credito) {
-            await runQuery(
-              `UPDATE perdcomp_creditos SET saldo_disponivel = saldo_disponivel - ?, status = CASE WHEN saldo_disponivel - ? <= 0 THEN 'Esgotado' ELSE 'Parcialmente Utilizado' END, atualizado_em = datetime('now') WHERE id = ?`,
-              [item.valor_utilizado, item.valor_utilizado, item.id_credito]
-            );
+        const txClient = await beginTransaction();
+        try {
+          await runQuery(`UPDATE perdcomp_pedidos SET dt_transmissao = NOW() WHERE id = $1`, [req.params.id], txClient);
+          const itens = await getAll<any>('SELECT * FROM perdcomp_pedido_itens WHERE id_pedido = $1', [req.params.id]);
+          for (const item of itens) {
+            if (item.tipo_item === 'credito' && item.id_credito) {
+              await runQuery(
+                `UPDATE perdcomp_creditos SET saldo_disponivel = saldo_disponivel - $1, status = CASE WHEN saldo_disponivel - $2 <= 0 THEN 'Esgotado' ELSE 'Parcialmente Utilizado' END, atualizado_em = NOW() WHERE id = $3`,
+                [item.valor_utilizado, item.valor_utilizado, item.id_credito],
+                txClient
+              );
+            }
+            if (item.tipo_item === 'debito' && item.id_debito) {
+              await runQuery(
+                `UPDATE perdcomp_debitos SET saldo_devedor = saldo_devedor - $1, status = CASE WHEN saldo_devedor - $2 <= 0 THEN 'Compensado' ELSE 'Parcialmente Compensado' END, atualizado_em = NOW() WHERE id = $3`,
+                [item.valor_utilizado, item.valor_utilizado, item.id_debito],
+                txClient
+              );
+            }
           }
-          if (item.tipo_item === 'debito' && item.id_debito) {
-            await runQuery(
-              `UPDATE perdcomp_debitos SET saldo_devedor = saldo_devedor - ?, status = CASE WHEN saldo_devedor - ? <= 0 THEN 'Compensado' ELSE 'Parcialmente Compensado' END, atualizado_em = datetime('now') WHERE id = ?`,
-              [item.valor_utilizado, item.valor_utilizado, item.id_debito]
-            );
-          }
+          await commitTransaction(txClient);
+        } catch (txErr) {
+          await rollbackTransaction(txClient);
+          throw txErr;
         }
       }
 
-      const atualizado = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = ?', [req.params.id]);
+      const atualizado = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
       res.json(atualizado);
     } catch (error: any) {
       log.error(`Erro ao atualizar status: ${error.message}`);
@@ -738,13 +776,13 @@ export const perdcompPedidosController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
-      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = ?', [req.params.id]);
+      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
       if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
       if (pedido.status !== 'Rascunho') return res.status(400).json({ error: 'Apenas pedidos em rascunho podem ser excluídos' });
 
-      await runQuery('DELETE FROM perdcomp_pedido_itens WHERE id_pedido = ?', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_documentos WHERE id_pedido = ?', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_pedidos WHERE id = ?', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_pedido_itens WHERE id_pedido = $1', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_documentos WHERE id_pedido = $1', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
       res.json({ message: 'Pedido excluído com sucesso' });
     } catch (error: any) {
       log.error(`Erro ao excluir pedido: ${error.message}`);
@@ -759,8 +797,9 @@ export const perdcompDashboardController = {
   obter: async (req: AuthRequest, res: Response) => {
     try {
       const { id_empresa } = req.query;
-      const empWhere = id_empresa ? 'AND id_empresa = ?' : '';
-      const empParams = id_empresa ? [id_empresa] : [];
+      let empWhere = '';
+      const empParams: any[] = [];
+      if (id_empresa) { empParams.push(id_empresa); empWhere = `AND id_empresa = $${empParams.length}`; }
 
       const creds = await getOne<any>(
         `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor FROM perdcomp_creditos WHERE status IN ('Disponível','Parcialmente Utilizado') ${empWhere}`, empParams
@@ -781,11 +820,11 @@ export const perdcompDashboardController = {
       const taxaDeferimento = totalDecididos > 0 ? ((pedDeferidos?.total || 0) / totalDecididos * 100) : 0;
 
       const prescricao = await getOne<any>(
-        `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor FROM perdcomp_creditos WHERE status IN ('Disponível','Parcialmente Utilizado') AND dt_vencimento_prescricao <= date('now', '+6 months') ${empWhere}`, empParams
+        `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor FROM perdcomp_creditos WHERE status IN ('Disponível','Parcialmente Utilizado') AND dt_vencimento_prescricao <= CURRENT_DATE + INTERVAL '6 months' ${empWhere}`, empParams
       );
 
       const alertasNaoLidos = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_alertas WHERE lido = 0 AND id_usuario = ?`, [req.user!.id]
+        `SELECT COUNT(*) as total FROM perdcomp_alertas WHERE lido = 0 AND id_usuario = $1`, [req.user!.id]
       );
 
       const creditosPorTipo = await getAll<any>(
@@ -837,7 +876,7 @@ export const perdcompSimuladorController = {
       let totalCreditoUtilizado = 0;
 
       for (const ci of credsInput) {
-        const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = ?', [ci.id]);
+        const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [ci.id]);
         if (!credito) continue;
         const valorUsar = Math.min(ci.valor_utilizar, credito.saldo_disponivel);
         creditosSelecionados.push({
@@ -852,7 +891,7 @@ export const perdcompSimuladorController = {
 
       if (debsInput) {
         for (const di of debsInput) {
-          const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = ?', [di.id]);
+          const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [di.id]);
           if (!debito) continue;
           const valorCompensar = Math.min(di.valor_compensar, debito.saldo_devedor);
           debitosCompensados.push({
@@ -869,7 +908,7 @@ export const perdcompSimuladorController = {
       }
 
       for (const cs of creditosSelecionados) {
-        const credito = await getOne<any>('SELECT dt_vencimento_prescricao FROM perdcomp_creditos WHERE id = ?', [cs.id]);
+        const credito = await getOne<any>('SELECT dt_vencimento_prescricao FROM perdcomp_creditos WHERE id = $1', [cs.id]);
         if (credito) {
           const dias = Math.ceil((new Date(credito.dt_vencimento_prescricao).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
           if (dias < 90) alertas.push(`Crédito #${cs.id} (${cs.tipo}) prescreve em ${dias} dias`);
@@ -897,21 +936,25 @@ export const perdcompAlertasController = {
   listar: async (req: AuthRequest, res: Response) => {
     try {
       const { lido, tipo, id_empresa, page = 1, limit = 20 } = req.query;
-      let where = ['a.id_usuario = ?'];
+      const where = ['a.id_usuario = $1'];
       const params: any[] = [req.user!.id];
 
-      if (lido !== undefined) { where.push('a.lido = ?'); params.push(lido === 'true' ? 1 : 0); }
-      if (tipo) { where.push('a.tipo_alerta = ?'); params.push(tipo); }
-      if (id_empresa) { where.push('a.id_empresa = ?'); params.push(id_empresa); }
+      if (lido !== undefined) { params.push(lido === 'true' ? 1 : 0); where.push(`a.lido = $${params.length}`); }
+      if (tipo) { params.push(tipo); where.push(`a.tipo_alerta = $${params.length}`); }
+      if (id_empresa) { params.push(id_empresa); where.push(`a.id_empresa = $${params.length}`); }
 
       const offset = (Number(page) - 1) * Number(limit);
       const countResult = await getOne<{ total: number }>(
         `SELECT COUNT(*) as total FROM perdcomp_alertas a WHERE ${where.join(' AND ')}`, params
       );
 
+      const listParamsA = [...params];
+      listParamsA.push(Number(limit)); const limitIdxA = listParamsA.length;
+      listParamsA.push(offset); const offsetIdxA = listParamsA.length;
+
       const alertas = await getAll<any>(
-        `SELECT a.*, e.razao_social as empresa_razao_social FROM perdcomp_alertas a LEFT JOIN perdcomp_empresas e ON e.id = a.id_empresa WHERE ${where.join(' AND ')} ORDER BY a.criado_em DESC LIMIT ? OFFSET ?`,
-        [...params, Number(limit), offset]
+        `SELECT a.*, e.razao_social as empresa_razao_social FROM perdcomp_alertas a LEFT JOIN perdcomp_empresas e ON e.id = a.id_empresa WHERE ${where.join(' AND ')} ORDER BY a.criado_em DESC LIMIT $${limitIdxA} OFFSET $${offsetIdxA}`,
+        listParamsA
       );
 
       res.json({
@@ -926,7 +969,7 @@ export const perdcompAlertasController = {
 
   marcarLido: async (req: AuthRequest, res: Response) => {
     try {
-      const result = await runQuery('UPDATE perdcomp_alertas SET lido = 1 WHERE id = ? AND id_usuario = ?', [req.params.id, req.user!.id]);
+      const result = await runQuery('UPDATE perdcomp_alertas SET lido = 1 WHERE id = $1 AND id_usuario = $2', [req.params.id, req.user!.id]);
       if (result.changes === 0) {
         return res.status(404).json({ error: 'Alerta não encontrado' });
       }

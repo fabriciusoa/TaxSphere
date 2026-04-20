@@ -2,22 +2,21 @@ import api from './api';
 
 // Tipos e interfaces
 export type StatusNotificacao = 'Pendente' | 'Enviado' | 'Falha';
-export type TipoNotificacao = 'EMAIL' | 'WHATSAPP';
 
 export interface Notificacao {
   id: number;
-  id_agendamento: number;
-  tipo: TipoNotificacao;
+  usuario_id: number;
   tipo_notificacao: string;
+  status: StatusNotificacao;
   destinatario: string;
   assunto: string;
-  corpo: string;
-  status: StatusNotificacao;
-  contador_tentativas: number;
+  mensagem: string;
   enviado_em?: string;
-  entregue_em?: string;
   erro_falha?: string;
-  criado_em: string;
+  contador_tentativas: number;
+  maximo_tentativas: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface EstatisticasNotificacao {
@@ -30,7 +29,6 @@ export interface EstatisticasNotificacao {
 
 export interface FiltrosNotificacao {
   status?: StatusNotificacao;
-  tipo?: TipoNotificacao;
   limite?: number;
   offset?: number;
 }
