@@ -21,7 +21,6 @@ import type {
   PerdcompPedido, PerdcompPedidoItem,
   PerdcompHistorico, PerdcompDocumento, TipoPedido, StatusPedido,
 } from '../../types/perdcomp';
-import { empresasService } from '../../services/empresasService';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 

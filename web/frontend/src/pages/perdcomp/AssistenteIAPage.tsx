@@ -22,7 +22,7 @@ import {
 import { empresasService } from '../../services/empresasService';
 import { perdcompService } from '../../services/perdcompService';
 import type { IAChatMessage } from '../../types/perdcomp';
-import type { Empresas } from '../../types/index';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {

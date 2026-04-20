@@ -8,7 +8,6 @@ import { PlayArrow as SimularIcon, ArrowForward as ArrowIcon } from '@mui/icons-
 import { useNavigate } from 'react-router-dom';
 import { perdcompService } from '../../services/perdcompService';
 import type { PerdcompCredito, PerdcompDebito, SimulacaoResultado } from '../../types/perdcomp';
-import { empresasService } from '../../services/empresasService';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 

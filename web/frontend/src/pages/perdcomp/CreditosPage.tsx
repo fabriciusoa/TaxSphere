@@ -36,7 +36,6 @@ import {
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
 import type { PerdcompCredito, TipoCredito, OrigemCredito, StatusCredito } from '../../types/perdcomp';
-import { empresasService } from '../../services/empresasService';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
