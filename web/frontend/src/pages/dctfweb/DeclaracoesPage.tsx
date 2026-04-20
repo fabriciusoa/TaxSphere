@@ -45,7 +45,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import dctfwebService from '../../services/dctfwebService';
 import type { DctfWebDeclaracao } from '../../services/dctfwebService';
-import { perdcompService } from '../../services/perdcompService';
+import { empresasService } from '../../services/empresasService';
 
 const formatCurrency = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -108,7 +108,7 @@ export default function DeclaracoesPage() {
         }),
       ];
       if (!empresasLoadedRef.current) {
-        promises.push(perdcompService.empresas.listar());
+        promises.push(empresasService.listar());
       }
       const [res, emps] = await Promise.all(promises);
       setDeclaracoes(res.data);

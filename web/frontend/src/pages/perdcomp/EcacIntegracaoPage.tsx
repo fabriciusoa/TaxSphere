@@ -19,8 +19,8 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import { ecacService, type CertificadoDigital, type SincronizacaoStatus } from '../../services/ecacService';
-import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa } from '../../types/perdcomp';
+import { empresasService } from '../../services/empresasService';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -39,7 +39,7 @@ const formatDate = (d: string) => {
 };
 
 export default function EcacIntegracaoPage() {
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [certificados, setCertificados] = useState<CertificadoDigital[]>([]);
   const [historico, setHistorico] = useState<SincronizacaoStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +66,7 @@ export default function EcacIntegracaoPage() {
     setLoading(true);
     try {
       const [empRes, certRes, histRes] = await Promise.all([
-        perdcompService.empresas.listar({ limit: 200 }),
+        empresasService.listar({ limit: 200 }),
         ecacService.certificados.listar(),
         ecacService.sincronizacao.historico(),
       ]);

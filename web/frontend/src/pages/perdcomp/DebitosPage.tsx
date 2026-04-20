@@ -33,7 +33,9 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa, PerdcompDebito, StatusDebito, TipoCredito } from '../../types/perdcomp';
+import type { PerdcompDebito, StatusDebito, TipoCredito } from '../../types/perdcomp';
+import { empresasService } from '../../services/empresasService';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -90,7 +92,7 @@ const emptyForm: FormData = {
 
 export default function DebitosPage() {
   const [debitos, setDebitos] = useState<PerdcompDebito[]>([]);
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -117,7 +119,7 @@ export default function DebitosPage() {
 
   const carregarEmpresas = useCallback(async () => {
     try {
-      const resp = await perdcompService.empresas.listar({ limit: 200 });
+      const resp = await empresasService.listar({ limit: 200 });
       setEmpresas(resp.data);
     } catch (err: any) {
       logger.error('Erro ao carregar empresas', err);

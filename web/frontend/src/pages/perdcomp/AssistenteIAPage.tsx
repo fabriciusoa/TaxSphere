@@ -19,8 +19,10 @@ import {
   Lightbulb as LightbulbIcon,
   Shield as ShieldIcon,
 } from '@mui/icons-material';
+import { empresasService } from '../../services/empresasService';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa, IAChatMessage } from '../../types/perdcomp';
+import type { IAChatMessage } from '../../types/perdcomp';
+import type { Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -72,7 +74,7 @@ function formatAssistantContent(text: string) {
 }
 
 export default function AssistenteIAPage() {
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [empresaId, setEmpresaId] = useState<number | ''>('');
   const [messages, setMessages] = useState<IAChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -82,7 +84,7 @@ export default function AssistenteIAPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    perdcompService.empresas.listar({ ativo: 'true', limit: 200 })
+    empresasService.listar({ ativo: 'true', limit: 200 })
       .then(res => setEmpresas(res.data))
       .catch(err => {
         logger.error('Erro ao carregar empresas', err);
