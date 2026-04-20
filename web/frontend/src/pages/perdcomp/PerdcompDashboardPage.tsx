@@ -108,7 +108,7 @@ const PerdcompDashboardPage: React.FC = () => {
 
   const carregarEmpresas = useCallback(async () => {
     try {
-      const res = await perdcompService.empresas.listar({ limit: 500 });
+      const res = await empresasService.listar({ limit: 500 });
       setEmpresas(res.data);
     } catch (error: any) {
       logger.error('Erro ao carregar empresas:', error);

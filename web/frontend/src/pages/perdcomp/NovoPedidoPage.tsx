@@ -77,7 +77,7 @@ export default function NovoPedidoPage() {
 
   useEffect(() => {
     setEmpresasLoading(true);
-    perdcompService.empresas.listar({ limit: 200, ativo: 'true' })
+    empresasService.listar({ limit: 200, ativo: 'true' })
       .then(r => setEmpresas(r.data))
       .catch(err => { logger.error('Erro ao carregar empresas', err); setError('Erro ao carregar empresas.'); })
       .finally(() => setEmpresasLoading(false));

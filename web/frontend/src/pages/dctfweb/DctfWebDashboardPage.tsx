@@ -35,7 +35,7 @@ import {
 } from '@mui/icons-material';
 import dctfwebService from '../../services/dctfwebService';
 import type { DctfWebDashboard } from '../../services/dctfwebService';
-import { perdcompService } from '../../services/perdcompService';
+import { empresasService } from '../../services/empresasService';
 
 const formatCurrency = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -92,7 +92,7 @@ export default function DctfWebDashboardPage() {
     try {
       const [d, e] = await Promise.all([
         dctfwebService.dashboard(idEmpresa),
-        perdcompService.empresas.listar(),
+        empresasService.listar(),
       ]);
       setDash(d);
       setEmpresas(e.data);

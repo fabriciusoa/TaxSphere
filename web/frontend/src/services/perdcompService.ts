@@ -1,43 +1,11 @@
 import api from './api';
 import type {
-  PerdcompEmpresa, PerdcompCredito, PerdcompDebito, PerdcompPedido,
+  PerdcompCredito, PerdcompDebito, PerdcompPedido,
   PerdcompAlerta, PerdcompDashboardData, SimulacaoResultado, PaginatedResponse,
 } from '../types/perdcomp';
 
 export const perdcompService = {
-  // ===== EMPRESAS =====
-  empresas: {
-    listar: async (filtros?: { busca?: string; regime?: string; uf?: string; ativo?: string; page?: number; limit?: number }): Promise<PaginatedResponse<PerdcompEmpresa>> => {
-      const params = new URLSearchParams();
-      if (filtros) {
-        Object.entries(filtros).forEach(([k, v]) => { if (v !== undefined && v !== '') params.append(k, String(v)); });
-      }
-      const { data } = await api.get(`/perdcomp/empresas?${params}`);
-      return data;
-    },
-    buscarPorId: async (id: number): Promise<PerdcompEmpresa> => {
-      const { data } = await api.get(`/perdcomp/empresas/${id}`);
-      return data;
-    },
-    criar: async (empresa: Partial<PerdcompEmpresa>): Promise<PerdcompEmpresa> => {
-      const { data } = await api.post('/perdcomp/empresas', empresa);
-      return data;
-    },
-    atualizar: async (id: number, empresa: Partial<PerdcompEmpresa>): Promise<PerdcompEmpresa> => {
-      const { data } = await api.put(`/perdcomp/empresas/${id}`, empresa);
-      return data;
-    },
-    excluir: async (id: number): Promise<void> => {
-      await api.delete(`/perdcomp/empresas/${id}`);
-    },
-    buscarCNPJ: async (cnpj: string): Promise<any> => {
-      const digits = cnpj.replace(/\D/g, '');
-      const { data } = await api.get(`/perdcomp/empresas/cnpj/${digits}`);
-      return data;
-    },
-  },
-
-  // ===== CRÉDITOS =====
+   // ===== CRÉDITOS =====
   creditos: {
     listar: async (filtros?: { id_empresa?: number; tipo_credito?: string; status?: string; periodo?: string; busca?: string; page?: number; limit?: number }): Promise<PaginatedResponse<PerdcompCredito>> => {
       const params = new URLSearchParams();

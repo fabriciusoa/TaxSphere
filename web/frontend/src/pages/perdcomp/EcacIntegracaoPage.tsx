@@ -66,7 +66,7 @@ export default function EcacIntegracaoPage() {
     setLoading(true);
     try {
       const [empRes, certRes, histRes] = await Promise.all([
-        perdcompService.empresas.listar({ limit: 200 }),
+        empresasService.listar({ limit: 200 }),
         ecacService.certificados.listar(),
         ecacService.sincronizacao.historico(),
       ]);

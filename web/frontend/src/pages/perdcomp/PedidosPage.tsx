@@ -129,7 +129,7 @@ export default function PedidosPage() {
   }, [filtroEmpresa, filtroTipo, filtroStatus, page, rowsPerPage]);
 
   useEffect(() => {
-    perdcompService.empresas.listar({ limit: 200 })
+    empresasService.listar({ limit: 200 })
       .then(r => setEmpresas(r.data))
       .catch(err => logger.error('Erro ao carregar empresas', err));
   }, []);

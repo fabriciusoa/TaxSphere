@@ -184,7 +184,7 @@ app.listen(PORT, async () => {
     // Job 3: Processar os aniversariantes do dia - diariamente às 6h
     // Confirma automaticamente agendamentos quando prazo de remarcação expira
     // Validado em notificacoesController.processarAniversariantes
-    cron.schedule('0 6 * * *', async () => {
+    /*cron.schedule('0 6 * * *', async () => {
       try {
         log.info('[CRON] Executando processarAniversariantes...');
         const mockReq = { user: { perfil_id: 1 } } as any;
@@ -205,7 +205,7 @@ app.listen(PORT, async () => {
       }
     });
     log.info('[CRON] ✓ Job processarAniversariantes agendado (diariamente às 6h)');
-
+*/
     // Processar backlog de notificações pendentes ao iniciar o servidor
     // Garante que nenhuma notificação fique sem envio
     // Validado em notificacoesController.catchUp

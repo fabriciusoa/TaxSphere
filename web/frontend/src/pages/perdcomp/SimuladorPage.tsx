@@ -52,7 +52,7 @@ export default function SimuladorPage() {
   const [success, setSuccess] = useState('');
 
   useEffect(() => {
-    perdcompService.empresas.listar({ ativo: 'true', limit: 200 })
+    empresasService.listar({ ativo: 'true', limit: 200 })
       .then(res => setEmpresas(res.data))
       .catch(err => {
         logger.error('Erro ao carregar empresas', err);

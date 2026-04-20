@@ -121,7 +121,7 @@ export default function CreditosPage() {
 
   const carregarEmpresas = useCallback(async () => {
     try {
-      const resp = await perdcompService.empresas.listar({ limit: 200 });
+      const resp = await empresasService.listar({ limit: 200 });
       setEmpresas(resp.data);
     } catch (err: any) {
       logger.error('Erro ao carregar empresas', err);
