@@ -1,20 +1,50 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Box, Card, CardContent, Typography, Button, TextField, Chip, IconButton,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
-  TablePagination, Dialog, DialogTitle, DialogContent, DialogActions,
-  FormControl, InputLabel, Select, MenuItem, Alert, CircularProgress,
-  Tooltip, Grid, Divider, alpha,
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Button,
+  TextField,
+  Chip,
+  IconButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  TablePagination,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Alert,
+  CircularProgress,
+  Tooltip,
+  Grid,
+  Divider,
+  alpha,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import {
-  Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon,
-  Refresh as RefreshIcon, Search as SearchIcon, Receipt as ReceiptIcon,
-  CheckCircle as CheckIcon, Info as InfoIcon, CloudSync as CloudSyncIcon,
+  Add as AddIcon, 
+  Edit as EditIcon, 
+  Delete as DeleteIcon,
+  Receipt as ReceiptIcon, 
+  Search as SearchIcon,
+  CheckCircle as CheckIcon, 
+  CloudSync as CloudSyncIcon,
   Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import dctfwebService, { DctfWebDeclaracao } from '../../services/dctfwebService';
+import dctfwebService from '../../services/dctfwebService';
+import type { DctfWebDeclaracao } from '../../services/dctfwebService';
 import { perdcompService } from '../../services/perdcompService';
 
 const formatCurrency = (v: number) =>
@@ -68,7 +98,7 @@ export default function DeclaracoesPage() {
     setLoading(true);
     setErro('');
     try {
-      const promises: [ReturnType<typeof dctfwebService.listar>, Promise<any[]>?] = [
+      const promises: [ReturnType<typeof dctfwebService.listar>, Promise<any>?] = [
         dctfwebService.listar({
           id_empresa: filtroEmpresa ? Number(filtroEmpresa) : undefined,
           situacao: filtroSituacao || undefined,
@@ -84,7 +114,7 @@ export default function DeclaracoesPage() {
       setDeclaracoes(res.data);
       setTotal(res.pagination.total);
       if (emps) {
-        setEmpresas(emps);
+        setEmpresas(emps.data ?? emps);
         empresasLoadedRef.current = true;
       }
     } catch {
@@ -370,7 +400,7 @@ export default function DeclaracoesPage() {
         <DialogContent>
           {modalErro && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setModalErro('')}>{modalErro}</Alert>}
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <FormControl fullWidth size="small">
                 <InputLabel>Empresa *</InputLabel>
                 <Select value={form.id_empresa} label="Empresa *"
@@ -381,7 +411,7 @@ export default function DeclaracoesPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <FormControl fullWidth size="small">
                 <InputLabel>Categoria *</InputLabel>
                 <Select value={form.categoria} label="Categoria *"
@@ -390,12 +420,12 @@ export default function DeclaracoesPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <TextField fullWidth size="small" label="Período Apuração *" placeholder="YYYY-MM"
                 value={form.periodo_apuracao}
                 onChange={(e) => setForm(prev => ({ ...prev, periodo_apuracao: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <FormControl fullWidth size="small">
                 <InputLabel>Situação</InputLabel>
                 <Select value={form.situacao} label="Situação"
@@ -406,11 +436,11 @@ export default function DeclaracoesPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <TextField fullWidth size="small" label="Nº Recibo" value={form.numero_recibo}
                 onChange={(e) => setForm(prev => ({ ...prev, numero_recibo: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <TextField fullWidth size="small" label="Débito Apurado" type="number"
                 value={form.debito_apurado}
                 onChange={(e) => {
@@ -418,7 +448,7 @@ export default function DeclaracoesPage() {
                   setForm(prev => ({ ...prev, debito_apurado: deb, saldo_pagar: deb - prev.credito_vinculado }));
                 }} />
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <TextField fullWidth size="small" label="Crédito Vinculado" type="number"
                 value={form.credito_vinculado}
                 onChange={(e) => {
@@ -426,17 +456,17 @@ export default function DeclaracoesPage() {
                   setForm(prev => ({ ...prev, credito_vinculado: cred, saldo_pagar: prev.debito_apurado - cred }));
                 }} />
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <TextField fullWidth size="small" label="Saldo a Pagar" type="number"
                 value={form.saldo_pagar} InputProps={{ readOnly: true }}
                 sx={{ '& .MuiInputBase-input': { bgcolor: '#f5f5f5' } }} />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField fullWidth size="small" label="Data Transmissão" type="date"
                 value={form.data_transmissao} InputLabelProps={{ shrink: true }}
                 onChange={(e) => setForm(prev => ({ ...prev, data_transmissao: e.target.value }))} />
             </Grid>
-            <Grid item xs={12}>
+            <Grid size={{ xs: 12 }}>
               <TextField fullWidth size="small" label="Observações" multiline rows={2}
                 value={form.observacoes}
                 onChange={(e) => setForm(prev => ({ ...prev, observacoes: e.target.value }))} />
@@ -460,32 +490,32 @@ export default function DeclaracoesPage() {
           {detalhes && (
             <Box>
               <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                <Grid item xs={12} sm={6}>
+                <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="caption" color="text.secondary">Empresa</Typography>
                   <Typography variant="body1" fontWeight={600}>{detalhes.razao_social}</Typography>
                   <Typography variant="caption" color="text.secondary">{detalhes.cnpj}</Typography>
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid size={{ xs: 6, sm: 3 }}>
                   <Typography variant="caption" color="text.secondary">Categoria</Typography>
                   <Typography variant="body1">{detalhes.categoria}</Typography>
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid size={{ xs: 6, sm: 3 }}>
                   <Typography variant="caption" color="text.secondary">Período</Typography>
                   <Typography variant="body1" fontWeight={600}>{detalhes.periodo_apuracao}</Typography>
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid size={{ xs: 6, sm: 3 }}>
                   <Typography variant="caption" color="text.secondary">Situação</Typography>
                   <Box><Chip label={detalhes.situacao} size="small" color={situacaoColor[detalhes.situacao] || 'default'} /></Box>
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid size={{ xs: 6, sm: 3 }}>
                   <Typography variant="caption" color="text.secondary">Origem</Typography>
                   <Box><Chip label={detalhes.origem} size="small" variant="outlined" /></Box>
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid size={{ xs: 6, sm: 3 }}>
                   <Typography variant="caption" color="text.secondary">Transmissão</Typography>
                   <Typography variant="body1">{formatDate(detalhes.data_transmissao)}</Typography>
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid size={{ xs: 6, sm: 3 }}>
                   <Typography variant="caption" color="text.secondary">Nº Recibo</Typography>
                   <Typography variant="body1">{detalhes.numero_recibo || '-'}</Typography>
                 </Grid>
@@ -493,19 +523,19 @@ export default function DeclaracoesPage() {
 
               <Divider sx={{ my: 2 }} />
               <Grid container spacing={2}>
-                <Grid item xs={4}>
+                <Grid size={{ xs: 4 }}>
                   <Card sx={{ p: 2, bgcolor: alpha('#e65100', 0.06), borderRadius: 2 }}>
                     <Typography variant="caption" color="text.secondary">Débito Apurado</Typography>
                     <Typography variant="h6" fontWeight={700} color="#e65100">{formatCurrency(detalhes.debito_apurado)}</Typography>
                   </Card>
                 </Grid>
-                <Grid item xs={4}>
+                <Grid size={{ xs: 4 }}>
                   <Card sx={{ p: 2, bgcolor: alpha('#2e7d32', 0.06), borderRadius: 2 }}>
                     <Typography variant="caption" color="text.secondary">Crédito Vinculado</Typography>
                     <Typography variant="h6" fontWeight={700} color="#2e7d32">{formatCurrency(detalhes.credito_vinculado)}</Typography>
                   </Card>
                 </Grid>
-                <Grid item xs={4}>
+                <Grid size={{ xs: 4 }}>
                   <Card sx={{ p: 2, bgcolor: alpha('#d32f2f', 0.06), borderRadius: 2 }}>
                     <Typography variant="caption" color="text.secondary">Saldo a Pagar</Typography>
                     <Typography variant="h6" fontWeight={700} color="#d32f2f">{formatCurrency(detalhes.saldo_pagar)}</Typography>
@@ -593,16 +623,16 @@ export default function DeclaracoesPage() {
                 {darfDecl.razao_social} · {darfDecl.categoria} · {darfDecl.periodo_apuracao}
               </Alert>
               <Grid container spacing={2}>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField fullWidth size="small" label="Código Receita" value={darfForm.codigo}
                     onChange={(e) => setDarfForm(prev => ({ ...prev, codigo: e.target.value }))} />
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField fullWidth size="small" label="Vencimento" type="date"
                     value={darfForm.vencimento} InputLabelProps={{ shrink: true }}
                     onChange={(e) => setDarfForm(prev => ({ ...prev, vencimento: e.target.value }))} />
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField fullWidth size="small" label="Valor" type="number"
                     value={darfForm.valor}
                     onChange={(e) => setDarfForm(prev => ({ ...prev, valor: Number(e.target.value) }))} />

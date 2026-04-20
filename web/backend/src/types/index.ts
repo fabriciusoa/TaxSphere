@@ -22,11 +22,6 @@ export interface UsuarioResponse extends Omit<Usuario, 'senha' | 'perfil'> {
   perfil_id: number;
 }
 
-export interface Perfil {
-  id: number;
-  perfil: string;
-}
-
 export interface Parametro {
   id: number;
   chave: string;
@@ -78,11 +73,6 @@ export interface AuthRequest extends Request {
   user?: JWTPayload;
 }
 
-// Tipos de notificação
-export type TipoNotificacao = 
-  | 'EMAIL' 
-  | 'WHATSAPP';
-
 // Status de notificação
 export type StatusNotificacao = 
   | 'Pendente' 
@@ -92,19 +82,18 @@ export type StatusNotificacao =
 // Interface completa de uma notificação
 export interface Notificacao {
   id: number;
-  id_agendamento: number;
-  id_usuario: number;
-  tipo: TipoNotificacao;
+  usuario_id: number;
+  tipo_notificacao: string;
+  status: StatusNotificacao;
   destinatario: string;
   assunto: string;
-  corpo: string;
-  status: StatusNotificacao;
+  mensagem: string;
+  enviado_em?: string;
+  erro_falha?: string;
   contador_tentativas: number;
-  erro?: string | null;
-  enviado_em?: string | null;
-  entregue_em?: string | null;
-  criado_em: string;
-  atualizado_em: string;
+  maximo_tentativas: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // Interface para templates de email
@@ -141,7 +130,7 @@ export interface EstatisticasNotificacao {
 // Interface para filtros de notificações
 export interface FiltrosNotificacao {
   status?: StatusNotificacao;
-  tipo?: TipoNotificacao;
+  tipo?: string;
   data_inicio?: string;
   data_fim?: string;
   id_usuario?: number;
@@ -190,13 +179,13 @@ export const MAX_FILES_PER_COMMENT = 5;
 // Interface principal de Chamado
 export interface Chamado {
   id: number;
-  id_usuario: number;
+  usuario_id: number;
   titulo: string;
   descricao: string;
   categoria: CategoriaChamado;
   prioridade: PrioridadeChamado;
   status: StatusChamado;
-  id_usuario_atribuido: number | null;
+  usuario_atribuido_id: number | null;
   criado_em: string;
   atualizado_em: string;
   fechado_em: string | null;
@@ -209,8 +198,8 @@ export interface Chamado {
 // Interface de Comentário
 export interface ChamadoComentario {
   id: number;
-  id_chamado: number;
-  id_usuario: number;
+  chamado_id: number;
+  usuario_id: number;
   comentario: string;
   criado_em: string;
   // Campos de JOIN
@@ -223,7 +212,7 @@ export interface ChamadoComentario {
 // Interface de Anexo
 export interface ChamadoAnexo {
   id: number;
-  id_chamado_comentario: number;
+  chamado_comentario_id: number;
   nome_arquivo: string;
   tipo_arquivo: string;
   tamanho_bytes: number;

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { getOne, runQuery } from '../database/connection';
 import { log } from '../utils/logger';
 

@@ -1,7 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Box, Typography, Card, CardContent, Grid, Button, TextField, MenuItem,
-  IconButton, CircularProgress, Alert, Paper,
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  Grid,
+  Button,
+  TextField,
+  MenuItem,
+  IconButton,
+  CircularProgress,
+  Alert,
+  Paper,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -202,7 +212,7 @@ export default function AssistenteIAPage() {
           {error && <Alert severity="error" sx={{ mb: 2, borderRadius: '10px' }} onClose={() => setError('')}>{error}</Alert>}
 
           <Grid container spacing={2} sx={{ mb: 2 }}>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <Card
                 elevation={0}
                 onClick={handleAnalisar}
@@ -234,7 +244,7 @@ export default function AssistenteIAPage() {
               </Card>
             </Grid>
 
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <Card
                 elevation={0}
                 onClick={handleSugerir}
@@ -266,7 +276,7 @@ export default function AssistenteIAPage() {
               </Card>
             </Grid>
 
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <Card elevation={0} sx={{
                 borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow,
               }}>

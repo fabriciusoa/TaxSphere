@@ -2,9 +2,8 @@ import { Request, Response } from 'express';
 import nodemailer from 'nodemailer';
 import { getAll, getOne, runQuery } from '../database/connection';
 import { AuthRequest } from '../types';
-import { getSMTPConfig, getBaseUrl, getParametro } from '../utils/parametrosHelper';
-import { formatToBrazilian } from '../utils/dateHelpers';
-import { addMinutes, addHours, parseISO, format } from 'date-fns';
+import { getSMTPConfig, getBaseUrl } from '../utils/parametrosHelper';
+import { addMinutes, addHours, format } from 'date-fns';
 import { log } from '../utils/logger';
 import { getParametros } from '../utils/parametrosHelper';
 
@@ -32,26 +31,6 @@ function calcularProximaTentativa(contadorTentativas: number): Date {
       // Mais de 3 tentativas: marcar como falha (não retornar data)
       return agora;
   }
-}
-
-/**
- * Interface para dados completos de agendamento
- */
-interface DadosAgendamentoCompleto {
-  id: number;
-  id_usuario: number;
-  id_paciente: number;
-  data_inicio: string;
-  data_fim: string;
-  tipo: string;
-  status: string;
-  notas?: string;
-  paciente_nome: string;
-  paciente_email: string;
-  usuario_nome: string;
-  token_confirmacao: string;
-  token_remarcar: string;
-  token_cancelar: string;
 }
 
 /**
@@ -132,34 +111,6 @@ async function enviarEmail(
 }
 
 /**
- * Substitui variáveis no template de email
- */
-function substituirVariaveis(
-  texto: string,
-  dados: DadosAgendamentoCompleto,
-  baseUrl: string
-): string {
-  const dataHoraFormatada = formatToBrazilian(dados.data_inicio);
-
-  const variaveis: Record<string, string> = {
-    '{{nome_paciente}}': dados.paciente_nome,
-    '{{nome_profissional}}': dados.usuario_nome,
-    '{{data_hora}}': dataHoraFormatada || '-',
-    '{{tipo}}': dados.tipo,
-    '{{link_confirmar}}': `${baseUrl}api/agendamentos/link/${dados.token_confirmacao}/confirmar`,
-    '{{link_remarcar}}': `${baseUrl}api/agendamentos/link/${dados.token_remarcar}/remarcar`,
-    '{{link_cancelar}}': `${baseUrl}api/agendamentos/link/${dados.token_cancelar}/cancelar`,
-  };
-
-  let resultado = texto;
-  for (const [chave, valor] of Object.entries(variaveis)) {
-    resultado = resultado.replace(new RegExp(chave, 'g'), valor);
-  }
-
-  return resultado;
-}
-
-/**
  * Busca template de email com fallback para padrões
  */
 async function buscarTemplate(idUsuario: number, tipo: 'Confirmacao' | 'Lembrete'): Promise<{
@@ -167,156 +118,40 @@ async function buscarTemplate(idUsuario: number, tipo: 'Confirmacao' | 'Lembrete
   corpo: string;
   assinatura: string;
 }> {
-  // Templates padrão (fallback)
-  const TEMPLATE_DEFAULT_CONFIRMACAO = {
-    assunto: 'Confirmação de Agendamento',
-    corpo: `Olá {{nome_paciente}},
-
-Seu agendamento foi confirmado!
-
-📅 Data e Hora: {{data_hora}}
-👤 Profissional: {{nome_profissional}}
-
-Você pode gerenciar seu agendamento através dos links abaixo:
-
-✅ Confirmar Presença: {{link_confirmar}}
-❌ Cancelar: {{link_cancelar}}
-
-Por favor, confirme sua presença ou solicite remarcação com antecedência mínima de 48 horas.`,
-    assinatura: 'Atenciosamente,\nEquipe de Atendimento',
-  };
-
-  const TEMPLATE_DEFAULT_LEMBRETE = {
-    assunto: 'Lembrete: Agendamento Próximo',
-    corpo: `Olá {{nome_paciente}},
-
-Este é um lembrete sobre seu agendamento:
-
-📅 Data e Hora: {{data_hora}}
-👤 Profissional: {{nome_profissional}}
-
-Caso precise remarcar ou cancelar, utilize os links abaixo:
-
-❌ Cancelar: {{link_cancelar}}
-
-Aguardamos você!`,
-    assinatura: 'Atenciosamente,\nEquipe de Atendimento',
-  };
 
   try {
     // Tentar buscar template customizado do usuário
     const template = await getOne<EmailTemplate>(
-      `SELECT assunto_confirmacao, template_texto_confirmacao, assunto_lembrete, template_texto_lembrete, assinatura 
-       FROM email_templates 
-       WHERE id_usuario = $1`,
+      `SELECT assunto, template_texto, assinatura 
+       FROM adm_email_templates 
+       WHERE usuario_id = $1`,
       [idUsuario]
     );
 
     if (template) {
       if (tipo === 'Confirmacao') {
         return {
-          assunto: template.assunto_confirmacao || TEMPLATE_DEFAULT_CONFIRMACAO.assunto,
-          corpo: template.template_texto_confirmacao || TEMPLATE_DEFAULT_CONFIRMACAO.corpo,
-          assinatura: template.assinatura || TEMPLATE_DEFAULT_CONFIRMACAO.assinatura,
+          assunto: template.assunto_confirmacao || '',
+          corpo: template.template_texto_confirmacao || '',
+          assinatura: template.assinatura || '',
         };
       } else {
         return {
-          assunto: template.assunto_lembrete || TEMPLATE_DEFAULT_LEMBRETE.assunto,
-          corpo: template.template_texto_lembrete || TEMPLATE_DEFAULT_LEMBRETE.corpo,
-          assinatura: template.assinatura || TEMPLATE_DEFAULT_LEMBRETE.assinatura,
+          assunto: template.assunto_lembrete || '',
+          corpo: template.template_texto_lembrete || '',
+          assinatura: template.assinatura || '',
         };
       }
     }
   } catch (error: any) {
     log.error(`Erro ao buscar template customizado: ${error.message}`);
   }
-
-  // Fallback para templates padrão
-  return tipo === 'Confirmacao' ? TEMPLATE_DEFAULT_CONFIRMACAO : TEMPLATE_DEFAULT_LEMBRETE;
+  return {
+    assunto: '',
+    corpo: '',
+    assinatura: '',
+  };
 }
-/**
- * Processa os aniversáriantes do dia
- * Envia email de felicitações
- */
-const processarAniversariantes = async (req: Request, res: Response) => {
-  const inicioExecucao = new Date();
-  let totalProcessadas = 0;
-  let sucessos = 0;
-  let falhas = 0;
-  let erros: string[] = [];
-
-  // Verificar se já foi executado hoje
-  const executadoHoje = await getOne<any>(
-    `SELECT id FROM cron_execucoes WHERE nome_job = 'processarAniversariantes' AND DATE(executado_em AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE`);
-
-  if (!executadoHoje) {
-    try {
-      const hoje = new Date();
-      const dia = hoje.getDate();
-      const mes = hoje.getMonth() + 1; // Janeiro é 0
-      // Buscar pacientes aniversariantes hoje
-      const pacientes = await getAll<{
-        id: number;
-        nome: string;
-        email: string;
-        data_nascimento: string;
-        nome_medico: string;
-      }>(
-        `SELECT p.id, p.nome, p.email, p.dt_nascimento, u.nome nome_medico
-        FROM paciente p, usuarios u
-       where p.id_usuario = u.id 
-         AND TO_CHAR(p.dt_nascimento::date, 'DD') = $1
-         AND TO_CHAR(p.dt_nascimento::date, 'MM') = $2`,
-        [dia.toString().padStart(2, '0'), mes.toString().padStart(2, '0')]
-      );
-
-      // Enviar emails de felicitações
-      for (const paciente of pacientes) {
-        totalProcessadas++;
-        if (paciente.email) {
-          const assunto = 'Feliz Aniversário!';
-          const corpo = `Olá ${paciente.nome},\n\n\n\n\nDesejo a você um feliz aniversário cheio de saúde e alegria!\n\n\n\nAtenciosamente,\n\n\n\n ${paciente.nome_medico}`;
-
-          try {
-            await enviarEmail(paciente.email, assunto, corpo);
-            log.info(`Email de aniversário enviado para ${paciente.email}`);
-            sucessos++;
-          } catch (error: any) {
-            falhas++;
-            erros.push(`Erro ao enviar email para ${paciente.email}: ${error.message}`);
-            log.error(`Erro ao enviar email para ${paciente.email}: ${error.message}`);
-          }
-        }
-      }
-      res.json({ success: true, message: 'Processamento de aniversariantes concluído' });
-    } catch (error: any) {
-      log.error(`[notificacoesController] Erro ao processar aniversariantes: ${error.message}`);
-      res.status(500).json({ success: false, message: 'Erro ao processar aniversariantes' });
-    }
-
-    // Registrar execução em cron_execucoes
-    const fimExecucao = new Date();
-    const duracaoMs = fimExecucao.getTime() - inicioExecucao.getTime();
-
-    log.info('Processamento dos aniversáriantes', {
-      total_processadas: totalProcessadas,
-      sucessos,
-      falhas,
-      duracao_ms: duracaoMs
-    });
-    await runQuery(
-      `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
-            VALUES ($1, NOW(), $2, $3, $4, $5)`,
-      [
-        'processarAniversariantes',
-        duracaoMs,
-        totalProcessadas,
-        falhas === 0 ? 1 : 0,
-        erros.length > 0 ? erros.join('; ') : null,
-      ]
-    );
-  }
-};
 
 /**
  * Processa a fila de notificações pendentes
@@ -337,14 +172,12 @@ const processarFila = async (req: Request, res: Response) => {
     // Buscar até 50 notificações pendentes que estão prontas para envio
     const notificacoes = await getAll<{
       id: number;
-      id_agendamento: number;
-      tipo: string;
       contador_tentativas: number;
       tipo_notificacao: string;
-      id_usuario?: number;
+      usuario_id?: number;
     }>(
-      `SELECT id, id_agendamento, tipo, contador_tentativas, tipo_notificacao, id_usuario
-       FROM notificacao 
+      `SELECT id,  contador_tentativas, tipo_notificacao, usuario_id
+       FROM sys_notificacao 
        WHERE status = 'Pendente' 
          AND (enviado_em IS NULL OR enviado_em <= NOW())
          AND contador_tentativas < 3
@@ -373,73 +206,32 @@ const processarFila = async (req: Request, res: Response) => {
       totalProcessadas++;
 
       try {
-        // Buscar dados completos do agendamento com JOINs
-        const agendamento = await getOne<DadosAgendamentoCompleto>(
-          `SELECT 
-            a.*,
-            p.nome as paciente_nome, p.email as paciente_email,
-            u.nome as usuario_nome
-           FROM agendamento a
-           INNER JOIN paciente p ON a.id_paciente = p.id
-           INNER JOIN usuarios u ON a.id_usuario = u.id
-           WHERE a.id = $1`,
-          [notificacao.id_agendamento]
-        );
-
-        if (!agendamento) {
-          erros.push(`Agendamento ${notificacao.id_agendamento} não encontrado`);
-          log.error(`Agendamento ${notificacao.id_agendamento} não encontrado`);
-
-          // Marcar notificação como falha
-          await runQuery(
-            `UPDATE notificacao 
+        // Marcar notificação como falha
+        await runQuery(
+          `UPDATE sys_notificacao 
              SET status = 'Falha', 
                  erro_falha = $1, 
                  contador_tentativas = contador_tentativas + 1
              WHERE id = $2`,
-            ['Agendamento foi cancelado ou não encontrado', notificacao.id]
-          );
+          ['Foi cancelado ou não encontrado', notificacao.id]
+        );
 
-          falhas++;
-          continue;
-        }
-
-        // Validar email do paciente
-        if (!agendamento.paciente_email) {
-          erros.push(`Paciente ${agendamento.paciente_nome} não possui email cadastrado`);
-          log.error(`Paciente ${agendamento.paciente_nome} não possui email cadastrado`);
-          await runQuery(
-            `UPDATE notificacao 
-             SET status = 'Falha', 
-                 erro = $1,
-                 contador_tentativas = contador_tentativas + 1,
-                 ultima_tentativa_notificacao = NOW()
-             WHERE id = $2`,
-            ['Paciente sem email cadastrado', notificacao.id]
-          );
-
-          falhas++;
-          continue;
-        }
+        falhas++;
 
         // Buscar template customizado ou usar padrão
         const tipoTemplate = notificacao.tipo_notificacao === 'Confirmacao' ? 'Confirmacao' : 'Lembrete';
-        const template = await buscarTemplate(agendamento.id_usuario, tipoTemplate);
+        const template = await buscarTemplate(notificacao.usuario_id || 0, tipoTemplate);
 
         // Substituir variáveis no template
-        const assunto = substituirVariaveis(template.assunto, agendamento, baseUrl);
-        const corpo = substituirVariaveis(
-          `${template.corpo}\n\n${template.assinatura}`,
-          agendamento,
-          baseUrl
-        );
+        const assunto = template.assunto;
+        const corpo = `${template.corpo}\n\n${template.assinatura}`;
 
-        const enviado = await enviarEmail(agendamento.paciente_email, assunto, corpo);
+        const enviado = await enviarEmail('', assunto, corpo);
 
         if (enviado) {
           // Sucesso: atualizar status para Enviado
           await runQuery(
-            `UPDATE notificacao 
+            `UPDATE sys_notificacao 
              SET status = 'Enviado', 
                  entregue_em = NOW(),
                  contador_tentativas = contador_tentativas + 1,                 
@@ -448,17 +240,8 @@ const processarFila = async (req: Request, res: Response) => {
             [notificacao.id]
           );
 
-          // Atualizar timestamp no agendamento
-          await runQuery(
-            `UPDATE agendamento 
-             SET ultima_tentativa_notificacao = NOW() 
-             WHERE id = $1`,
-            [notificacao.id_agendamento]
-          );
-
           log.info(`Notificação ${notificacao.id} enviada com sucesso`, {
             tipo_notificacao: notificacao.tipo_notificacao,
-            agendamento_id: notificacao.id_agendamento,
             tentativa: notificacao.contador_tentativas + 1
           });
 
@@ -470,7 +253,7 @@ const processarFila = async (req: Request, res: Response) => {
           if (novoContador >= 3) {
             // Limite de tentativas atingido: marcar como falha definitiva
             await runQuery(
-              `UPDATE notificacao 
+              `UPDATE sys_notificacao 
                SET status = 'Falha', 
                    erro_falha = 'Limite de tentativas atingido (3 tentativas)',
                    contador_tentativas = $1
@@ -480,8 +263,7 @@ const processarFila = async (req: Request, res: Response) => {
 
             log.error('Notificação atingiu limite de tentativas', {
               notificacao_id: notificacao.id,
-              agendamento_id: notificacao.id_agendamento,
-              tentativas: novoContador
+                tentativas: novoContador
             });
 
             erros.push(`Notificação ${notificacao.id}: limite de tentativas atingido`);
@@ -492,7 +274,7 @@ const processarFila = async (req: Request, res: Response) => {
             const proximaTentativaISO = format(proximaTentativa, "yyyy-MM-dd HH:mm:ss");
 
             await runQuery(
-              `UPDATE notificacao 
+              `UPDATE sys_notificacao 
                SET contador_tentativas = $1,
                    enviado_em = $2,
                    erro_falha = 'Falha temporária no envio'
@@ -502,7 +284,6 @@ const processarFila = async (req: Request, res: Response) => {
 
             log.error('Notificação reagendada para nova tentativa', {
               notificacao_id: notificacao.id,
-              agendamento_id: notificacao.id_agendamento,
               tentativa: novoContador,
               proxima_tentativa: proximaTentativaISO
             });
@@ -517,14 +298,13 @@ const processarFila = async (req: Request, res: Response) => {
         log.error('Erro ao processar notificação individual', {
           notificacao_id: notificacao.id,
           error: mensagemErro,
-          stack: error instanceof Error ? error.stack : undefined,
-          agendamento_id: notificacao.id_agendamento
+          stack: error instanceof Error ? error.stack : undefined
         });
 
         erros.push(`Notificação ${notificacao.id}: ${mensagemErro}`);
 
         await runQuery(
-          `UPDATE notificacao 
+          `UPDATE sys_notificacao
            SET erro_falha = $1,
                contador_tentativas = contador_tentativas + 1
            WHERE id = $2`,
@@ -547,7 +327,7 @@ const processarFila = async (req: Request, res: Response) => {
     });
 
     await runQuery(
-      `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
+      `INSERT INTO sys_cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
        VALUES ($1, NOW(), $2, $3, $4, $5)`,
       [
         'processarFila',
@@ -581,7 +361,7 @@ const processarFila = async (req: Request, res: Response) => {
     const duracaoMs = fimExecucao.getTime() - inicioExecucao.getTime();
 
     await runQuery(
-      `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
+      `INSERT INTO sys_cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
        VALUES ($1, NOW(), $2, $3, 0, $4)`,
       ['processarFila', duracaoMs, totalProcessadas, mensagemErro]
     );
@@ -606,7 +386,7 @@ const processarFila = async (req: Request, res: Response) => {
 const estatisticas = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const userPerfilId = req.user?.perfil_id;
+    const userPerfilId = req.user?.adm_mindtax
 
     if (!userId) {
       return res.status(401).json({ error: 'Usuário não autenticado' });
@@ -616,9 +396,9 @@ const estatisticas = async (req: AuthRequest, res: Response) => {
     let whereClause = '';
     let params: any[] = [];
 
-    if (userPerfilId !== 1) {
+    if (!userPerfilId) {
       // Não é ADMIN: filtrar por id_usuario via JOIN com agendamento
-      whereClause = `WHERE n.id_usuario = $1`;
+      whereClause = `WHERE n.usuario_id = $1`;
       params = [userId];
     }
 
@@ -628,7 +408,7 @@ const estatisticas = async (req: AuthRequest, res: Response) => {
       total: number;
     }>(
       `SELECT n.status, COUNT(*) as total
-       FROM notificacao n      
+       FROM sys_notificacao n      
        ${whereClause}
        GROUP BY n.status`,
       params
@@ -659,19 +439,19 @@ const estatisticas = async (req: AuthRequest, res: Response) => {
 
     // Buscar estatísticas por tipo
     const estatisticasTipo = await getAll<{
-      tipo: string;
+      tipo_notificacao: string;
       total: number;
     }>(
-      `SELECT n.tipo, COUNT(*) as total
-       FROM notificacao n       
+      `SELECT n.tipo_notificacao, COUNT(*) as total
+       FROM sys_notificacao n       
        ${whereClause}
-       GROUP BY n.tipo`,
+       GROUP BY n.tipo_notificacao`,
       params
     );
 
     const tipoMap: Record<string, number> = {};
     estatisticasTipo.forEach(stat => {
-      tipoMap[stat.tipo] = stat.total;
+      tipoMap[stat.tipo_notificacao] = stat.total;
     });
 
     return res.json({
@@ -698,7 +478,7 @@ const estatisticas = async (req: AuthRequest, res: Response) => {
 const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const userPerfilId = req.user?.perfil_id;
+    const userPerfilId = req.user?.adm_mindtax;
 
     if (!userId) {
       return res.status(401).json({ error: 'Usuário não autenticado' });
@@ -708,7 +488,7 @@ const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
     let whereClause = `WHERE n.status = 'Falha'`;
     let params: any[] = [];
 
-    if (userPerfilId !== 1) {
+    if (!userPerfilId) {
       // Não é ADMIN: reprocessar apenas notificações do próprio usuário
       params.push(userId);
       whereClause += ` AND n.id_usuario = $${params.length}`;
@@ -743,173 +523,28 @@ const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * Executa processamento catch-up sem limite de 50 notificações
- * Útil para processar notificações atrasadas após downtime
- * Apenas ADMIN pode executar
- */
-const catchUp = async (req: AuthRequest, res: Response) => {
-  try {
-    const userPerfilId = req.user?.perfil_id;
-
-    if (userPerfilId !== 1) {
-      return res.status(403).json({
-        error: 'Acesso negado',
-        message: 'Apenas administradores podem executar catch-up',
-      });
-    }
-
-    const inicioExecucao = new Date();
-    let totalProcessadas = 0;
-    let sucessos = 0;
-    let falhas = 0;
-    const erros: string[] = [];
-
-    // Buscar TODAS as notificações pendentes (sem LIMIT)
-    const notificacoes = await getAll<{
-      id: number;
-      id_agendamento: number;
-      tipo: string;
-      contador_tentativas: number;
-      tipo_notificacao: string;
-      id_usuario?: number;
-    }>(
-      `SELECT id, id_agendamento, tipo, contador_tentativas, tipo_notificacao, id_usuario
-       FROM notificacao 
-       WHERE status = 'Pendente' 
-         AND (enviado_em IS NULL OR enviado_em <= NOW())
-         AND contador_tentativas < 3
-       ORDER BY enviado_em ASC, id ASC`
-    );
-
-    if (!notificacoes || notificacoes.length === 0) {
-      return res.json({
-        success: true,
-        message: 'Nenhuma notificação atrasada para processar',
-        processadas: 0,
-      });
-    }
-
-    const baseUrl = await getBaseUrl();
-
-    // Processar todas (mesma lógica do processarFila)
-    for (const notificacao of notificacoes) {
-      totalProcessadas++;
-
-      try {
-        const agendamento = await getOne<DadosAgendamentoCompleto>(
-          `SELECT 
-            a.*,
-            p.nome as paciente_nome, p.email as paciente_email,
-            u.nome as usuario_nome
-           FROM agendamento a
-           INNER JOIN paciente p ON a.id_paciente = p.id
-           INNER JOIN usuarios u ON a.id_usuario = u.id
-           WHERE a.id = $1`,
-          [notificacao.id_agendamento]
-        );
-
-        if (!agendamento || !agendamento.paciente_email) {
-          await runQuery(
-            `UPDATE notificacao 
-             SET status = 'Falha', erro_falha = 'Dados inválidos',
-                 contador_tentativas = contador_tentativas + 1
-             WHERE id = $1`,
-            [notificacao.id]
-          );
-          falhas++;
-          continue;
-        }
-
-        const tipoTemplate = notificacao.tipo_notificacao === 'Confirmacao' ? 'Confirmacao' : 'Lembrete';
-        const template = await buscarTemplate(agendamento.id_usuario, tipoTemplate);
-        const assunto = substituirVariaveis(template.assunto, agendamento, baseUrl);
-        const corpo = substituirVariaveis(
-          `${template.corpo}\n\n${template.assinatura}`,
-          agendamento,
-          baseUrl
-        );
-
-        const enviado = await enviarEmail(agendamento.paciente_email, assunto, corpo);
-
-        if (enviado) {
-          await runQuery(
-            `UPDATE notificacao 
-             SET status = 'Enviado', entregue_em = NOW(),
-                 contador_tentativas = contador_tentativas + 1
-             WHERE id = $1`,
-            [notificacao.id]
-          );
-          sucessos++;
-        } else {
-          const novoContador = notificacao.contador_tentativas + 1;
-          if (novoContador >= 3) {
-            await runQuery(
-              `UPDATE notificacao 
-               SET status = 'Falha', erro_falha = 'Limite de tentativas',
-                   contador_tentativas = $1
-               WHERE id = $2`,
-              [novoContador, notificacao.id]
-            );
-          }
-          falhas++;
-        }
-      } catch (error: any) {
-        log.error(`Erro ao processar notificação ${notificacao.id} no catch-up: ${error.message}`);
-        erros.push(`Notificação ${notificacao.id}: ${error.message}`);
-        falhas++;
-      }
-    }
-
-    const fimExecucao = new Date();
-    const duracaoMs = fimExecucao.getTime() - inicioExecucao.getTime();
-
-    await runQuery(
-      `INSERT INTO cron_execucoes (nome_job, executado_em, duracao_ms, registros_processados, sucesso, erro)
-       VALUES ($1, NOW(), $2, $3, $4, $5)`,
-      ['catchUp', duracaoMs, totalProcessadas, falhas === 0 ? 1 : 0, erros.join('; ') || null]
-    );
-
-    log.info(`Catch-up concluído: ${totalProcessadas} processadas, ${sucessos} enviadas, ${falhas} falhas`);
-
-    return res.json({
-      success: true,
-      message: 'Catch-up concluído',
-      total_processadas: totalProcessadas,
-      sucessos,
-      falhas,
-      duracao_ms: duracaoMs,
-    });
-  } catch (error: any) {
-    log.error(`Erro no catch-up: ${error.message}`);
-    return res.status(500).json({
-      error: 'Erro ao executar catch-up',
-      message: error instanceof Error ? error.message : 'Erro desconhecido',
-    });
-  }
-};
-
-/**
  * Lista notificações com paginação e filtros
  * Filtrado por id_usuario se não for ADMIN
  */
 const listar = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const userPerfilId = req.user?.perfil_id;
+    const userPerfilId = req.user?.adm_mindtax;
 
     if (!userId) {
+      log.error(`Usuário não autenticado tentou acessar lista de notificações: ${userId}`);
       return res.status(401).json({ error: 'Usuário não autenticado' });
     }
 
     const { status, tipo, limite = 50, offset = 0 } = req.query;
 
-    let whereClause = ` pm.chave = 'NODE_ENV' `;
+    let whereClause = ` 1=1 `;
     const params: any[] = [];
 
     // Filtrar por usuário se não ADMIN
-    if (userPerfilId !== 1) {
+    if (!userPerfilId) {
       params.push(userId);
-      whereClause += ` AND a.id_usuario = $${params.length}`;
+      whereClause += ` AND n.usuario_id = $${params.length}`;
     }
 
     // Filtros opcionais
@@ -920,7 +555,7 @@ const listar = async (req: AuthRequest, res: Response) => {
 
     if (tipo) {
       params.push(tipo);
-      whereClause += ` AND n.tipo = $${params.length}`;
+      whereClause += ` AND n.tipo_notificacao = $${params.length}`;
     }
 
     params.push(Number(limite));
@@ -929,33 +564,20 @@ const listar = async (req: AuthRequest, res: Response) => {
     const offsetIdx = params.length;
 
     const notificacoes = await getAll(
-       ` SELECT n.id,
-                n.id_usuario,  
+      ` SELECT n.id,
+                n.usuario_id,  
                 n.tipo_notificacao,
                 n.status,
+                n.destinatario,
                 n.assunto,
                 n.mensagem,
                 n.enviado_em,
-                n.entregue_em,
                 n.erro_falha,
-                n.id_externo,
                 n.contador_tentativas,
                 n.maximo_tentativas,
-                n.criado_em,
-                n.atualizado_em,
-                n.id_agendamento,
-                n.tipo,
-                n.id_paciente,
-                    p.nome as paciente_nome, 
-                    case valor
-                      when 'dev' then p.email
-                      else n.destinatario
-                    end as destinatario,
-                    a.data_inicio
-              FROM notificacao n
-              left JOIN agendamento a ON n.id_agendamento = a.id
-              left JOIN paciente p ON n.id_paciente = p.id
-              left join parametros pm on pm.id = pm.id
+                n.created_at,
+                n.updated_at
+              FROM sys_notificacao n
         WHERE ${whereClause}
         ORDER BY n.enviado_em DESC
         LIMIT $${limiteIdx} OFFSET $${offsetIdx}`,
@@ -976,8 +598,6 @@ export default {
   processarFila,
   estatisticas,
   reprocessarFalhas,
-  catchUp,
   listar,
-  processarAniversariantes,
   enviarEmail,
 };

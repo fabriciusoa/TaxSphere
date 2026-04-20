@@ -4,9 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { getAll, getOne } from '../database/connection';
 import { authController } from '../controllers/authController';
 import { usuariosController } from '../controllers/usuariosController';
-import { perfilController } from '../controllers/perfilController';
 import { parametrosController } from '../controllers/parametrosController';
-import { usuarioParametrosController } from '../controllers/usuarioParametrosController';
 import { loginLogController } from '../controllers/loginLogController';
 import { alterarSenha } from '../controllers/senhaController';
 import notificacoesController from '../controllers/notificacoesController';
@@ -18,15 +16,10 @@ import { requireAdmin } from '../middleware/authorization';
 import { adaptiveLoginGuard, adaptiveAuthRateLimit, clearAllIpFailures } from '../middleware/adaptiveRateLimit';
 import { getRateLimitConfig } from '../utils/parametrosHelper';
 import { chamadosController } from '../controllers/chamadosController';
-import { admPlanosController } from '../controllers/admPlanosController';
-import { admAssinaturaController } from '../controllers/admAssinaturaController';
-import { stripePaymentController } from '../controllers/stripePaymentController';
-import { stripeSubscriptionController } from '../controllers/stripeSubscriptionController';
-import { stripeMetricsController } from '../controllers/stripeMetricsController';
 import { manutencaoController } from '../controllers/manutencaoController';
 import { frontendLogController } from '../controllers/frontendLogController';
 import {
-  perdcompEmpresasController, perdcompCreditosController, perdcompDebitosController,
+  perdcompCreditosController, perdcompDebitosController,
   perdcompPedidosController, perdcompDashboardController, perdcompSimuladorController,
   perdcompAlertasController,
 } from '../controllers/perdcompController';
@@ -34,6 +27,9 @@ import { perdcompIAController } from '../controllers/perdcompIAController';
 import { ecacCertificadoController, ecacSincronizacaoController } from '../controllers/ecacController';
 import { dctfwebController } from '../controllers/dctfwebController';
 import { log } from '../utils/logger';
+import { empresasController } from '../controllers/empresasController';
+import { clientesController } from '../controllers/clientesController';
+import { perfisController } from '../controllers/perfisController';
 
 const router = Router();
 
@@ -219,6 +215,9 @@ router.post('/auth/refresh', authenticateToken, authController.refresh);
 router.get('/auth/me', authenticateToken, authController.me); // sem rate limit: chamado a cada F5
 router.post('/auth/logout', authenticateToken, authController.logout); // sem rate limit: ação de segurança
 
+// Rotas protegidas - Perfil do usuário logado (deve vir ANTES de /:id)
+router.get('/usuarios/me', authenticateToken, usuariosController.buscarMeuPerfil);
+router.put('/usuarios/me', authenticateToken, usuariosController.atualizarMeuPerfil);
 // Rotas protegidas - Usuários (apenas ADMIN)
 router.get('/usuarios', authenticateToken, adaptiveAuthRateLimit, requireAdmin, usuariosController.listar);
 router.get('/usuarios/:id', authenticateToken, requireAdmin, usuariosController.buscarPorId);
@@ -227,13 +226,8 @@ router.put('/usuarios/:id', authenticateToken, requireAdmin, usuariosController.
 router.put('/usuarios/:id/senha', authenticateToken, alterarSenha);
 router.put('/usuarios/:id/desbloquear', authenticateToken, requireAdmin, usuariosController.desbloquear);
 router.delete('/usuarios/:id', authenticateToken, requireAdmin, usuariosController.inativar);
-
-// Rotas protegidas - Perfis (apenas ADMIN)
-router.get('/perfis', authenticateToken, requireAdmin, perfilController.listar);
-router.get('/perfis/:id', authenticateToken, requireAdmin, perfilController.buscarPorId);
-router.post('/perfis', authenticateToken, requireAdmin, perfilController.criar);
-router.put('/perfis/:id', authenticateToken, requireAdmin, perfilController.atualizar);
-router.delete('/perfis/:id', authenticateToken, requireAdmin, perfilController.deletar);
+router.get('/usuarios/:id/perfis', authenticateToken, requireAdmin, usuariosController.buscarPerfisDoUsuario);
+router.put('/usuarios/:id/perfis', authenticateToken, requireAdmin, usuariosController.sincronizarPerfisDoUsuario);
 
 // Rota pública - Stripe Publishable Key (necessária para formulário de pagamento público)
 // IMPORTANTE: Deve vir ANTES das rotas protegidas de parâmetros para não ser capturada por /parametros/:id
@@ -244,41 +238,8 @@ router.get('/parametros', authenticateToken, requireAdmin, parametrosController.
 router.get('/parametros/:id', authenticateToken, requireAdmin, parametrosController.buscarPorId);
 router.put('/parametros/:id', authenticateToken, requireAdmin, parametrosController.atualizar);
 
-// Rotas protegidas - Parâmetros do Usuário
-router.get('/usuario-parametros/me', authenticateToken, usuarioParametrosController.buscarMeus);
-router.get('/usuario-parametros/cores', authenticateToken, usuarioParametrosController.buscarCores);
-router.post('/usuario-parametros', authenticateToken, usuarioParametrosController.criar);
-router.put('/usuario-parametros/me', authenticateToken, usuarioParametrosController.atualizar);
-
-// Rotas protegidas - Parâmetros de outros usuários (ADMIN)
-router.get('/usuario-parametros/usuario/:userId', authenticateToken, requireAdmin, usuarioParametrosController.buscarPorUsuario);
-router.post('/usuario-parametros/usuario/:userId', authenticateToken, requireAdmin, usuarioParametrosController.criarParaUsuario);
-router.put('/usuario-parametros/usuario/:userId', authenticateToken, requireAdmin, usuarioParametrosController.atualizarPorUsuario);
-
 // Rotas protegidas - Log de Login (apenas ADMIN)
 router.get('/login-log', authenticateToken, requireAdmin, loginLogController.listar);
-
-// Rotas protegidas - Perfil do usuário logado
-router.get('/perfil/me', authenticateToken, perfilController.buscarMeuPerfil);
-router.put('/perfil/me', authenticateToken, perfilController.atualizarMeuPerfil);
-
-// Rotas protegidas - Perfil de outros usuários (ADMIN)
-router.get('/perfil/usuario/:userId', authenticateToken, requireAdmin, perfilController.buscarPerfilUsuario);
-
-// Rotas de Planos (Admin)
-router.get('/adm-planos', authenticateToken, admPlanosController.listar);
-router.get('/adm-planos/ativos', admPlanosController.listarAtivos); // Pública
-router.get('/adm-planos/:id', authenticateToken, admPlanosController.buscarPorId);
-router.post('/adm-planos', authenticateToken, requireAdmin, admPlanosController.criar);
-router.put('/adm-planos/:id', authenticateToken, requireAdmin, admPlanosController.atualizar);
-router.delete('/adm-planos/:id', authenticateToken, requireAdmin, admPlanosController.excluir);
-
-// Rotas de Assinaturas
-router.get('/adm-assinaturas', authenticateToken, requireAdmin, admAssinaturaController.listar);
-router.get('/adm-assinaturas/:id', authenticateToken, requireAdmin, admAssinaturaController.buscarPorId);
-router.post('/adm-assinaturas', admAssinaturaController.criar); // Pública para novos clientes
-router.put('/adm-assinaturas/:id', authenticateToken, requireAdmin, admAssinaturaController.atualizar);
-router.delete('/adm-assinaturas/:id', authenticateToken, requireAdmin, admAssinaturaController.excluir);
 
 // Rotas protegidas - Templates de Email
 router.get('/email-templates', authenticateToken, emailTemplatesController.buscarPorUsuario);
@@ -307,15 +268,6 @@ router.post('/chamados/:id/comentarios', authenticateToken, chamadosController.c
 router.post('/chamados/comentarios/anexos', authenticateToken, upload.array('anexos', 5), chamadosController.uploadAnexos);
 router.get('/chamados/anexos/:id', authenticateToken, chamadosController.getAnexo);
 
-// Rotas protegidas - Stripe Payment (Setup Intent)
-router.post('/stripe/setup-intent', authenticateToken, stripePaymentController.criarSetupIntent);
-
-// Rotas protegidas - Stripe Subscription
-router.post('/stripe/subscription', authenticateToken, stripeSubscriptionController.criarSubscription);
-
-// Rotas protegidas - Stripe Metrics (apenas ADMIN)
-router.get('/stripe/metrics', authenticateToken, requireAdmin, stripeMetricsController.obterMetricas);
-
 // Rotas de Health Check
 router.get('/health', healthCheckSimple); // Público — monitoramento externo (uptime, load balancers)
 router.get('/health/full', authenticateToken, requireAdmin, healthCheck); // Protegido — detalhes internos
@@ -329,15 +281,31 @@ router.post('/manutencoes', authenticateToken, requireAdmin, manutencaoControlle
 router.put('/manutencoes/:id', authenticateToken, requireAdmin, manutencaoController.atualizar);
 router.delete('/manutencoes/:id', authenticateToken, requireAdmin, manutencaoController.excluir);
 
-// ============ PERD/Comp ============
+// Perfis de acesso
+router.get('/perfis/menu', authenticateToken, perfisController.arvoreMenu);
+router.get('/perfis', authenticateToken, requireAdmin, perfisController.listar);
+router.get('/perfis/:id', authenticateToken, requireAdmin, perfisController.buscarPorId);
+router.post('/perfis', authenticateToken, requireAdmin, perfisController.criar);
+router.put('/perfis/:id', authenticateToken, requireAdmin, perfisController.atualizar);
+router.delete('/perfis/:id', authenticateToken, requireAdmin, perfisController.excluir);
+
+// Clientes (apenas ADMIN)
+router.get('/clientes', authenticateToken, requireAdmin, clientesController.listar);
+router.get('/clientes/:id', authenticateToken, requireAdmin, clientesController.buscarPorId);
+router.post('/clientes', authenticateToken, requireAdmin, clientesController.criar);
+router.put('/clientes/:id', authenticateToken, requireAdmin, clientesController.atualizar);
+router.patch('/clientes/:id/ativo', authenticateToken, requireAdmin, clientesController.alternarAtivo);
+router.delete('/clientes/:id', authenticateToken, requireAdmin, clientesController.excluir);
 
 // Empresas (uso comum para todos os módulos)
-router.get('/perdcomp/empresas', authenticateToken, perdcompEmpresasController.listar);
-router.get('/perdcomp/empresas/cnpj/:cnpj', authenticateToken, perdcompEmpresasController.buscarCNPJ);
-router.get('/perdcomp/empresas/:id', authenticateToken, perdcompEmpresasController.buscarPorId);
-router.post('/perdcomp/empresas', authenticateToken, perdcompEmpresasController.criar);
-router.put('/perdcomp/empresas/:id', authenticateToken, perdcompEmpresasController.atualizar);
-router.delete('/perdcomp/empresas/:id', authenticateToken, perdcompEmpresasController.excluir);
+router.get('/empresas', authenticateToken, empresasController.listar);
+router.get('/empresas/cnpj/:cnpj', authenticateToken, empresasController.buscarCNPJ);
+router.get('/empresas/:id', authenticateToken, empresasController.buscarPorId);
+router.post('/empresas', authenticateToken, empresasController.criar);
+router.put('/empresas/:id', authenticateToken, empresasController.atualizar);
+router.delete('/empresas/:id', authenticateToken, empresasController.excluir);
+
+// ============ PERD/Comp ============
 
 // Créditos
 router.get('/perdcomp/creditos', authenticateToken, perdcompCreditosController.listar);

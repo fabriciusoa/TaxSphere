@@ -35,8 +35,6 @@ import {
   MenuBook as MenuBookIcon,
   Assessment as AssessmentIcon,
   SupervisorAccount as SupervisorAccountIcon,
-  CorporateFare as CorporateFareIcon,
-  SensorOccupied as SensorOccupiedIcon,
   Build as BuildIcon,
   AccountBalance as AccountBalanceIcon,
   Receipt as ReceiptIcon,
@@ -53,6 +51,7 @@ import {
   SmartToy as SmartToyIcon,
   CloudSync as CloudSyncIcon,
   SpaceDashboard as SpaceDashboardIcon,
+  ManageAccounts as ManageAccountsIcon,
 } from '@mui/icons-material';
 import { manutencaoService } from '../../services/manutencaoService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -98,6 +97,7 @@ export default function MainLayout({ children }: Props) {
 
   // Verifica se o usuário tem acesso a uma funcionalidade específica dentro de um módulo
   const hasFuncionalidade = (moduloNome: string, funcionalidade: string) =>
+    isAdminSystem ||
     userModulos
       .filter(m => m.modulo === moduloNome)
       .flatMap(m => m.user_funcionalidade ?? [])
@@ -105,7 +105,7 @@ export default function MainLayout({ children }: Props) {
 
   // Verifica se o usuário tem acesso a um módulo
   const hasModulo = (moduloNome: string) =>
-    userModulos.some(m => m.modulo === moduloNome);
+    isAdminSystem || userModulos.some(m => m.modulo === moduloNome);
 
   useEffect(() => {
     if (isAdminSystem) return;
@@ -257,6 +257,9 @@ export default function MainLayout({ children }: Props) {
           ...(hasModulo('Empresas') ? [
             { text: 'Empresas', icon: <BusinessIcon />, path: '/configuracoes/empresas' },
           ] : []),
+          ...(hasModulo('Perfis de Acesso') ? [
+            { text: 'Perfis de Acesso', icon: <ManageAccountsIcon />, path: '/sistema/perfis' },
+          ] : []),
           ...(hasModulo('Integração eCAC') ? [
             { text: 'Integração eCAC', icon: <CloudSyncIcon />, path: '/configuracoes/ecac' },
           ] : []),
@@ -275,9 +278,8 @@ export default function MainLayout({ children }: Props) {
         text: 'Administração',
         icon: <SupervisorAccountIcon />,
         submenu: [
-          { text: 'Planos Sistema', icon: <CorporateFareIcon />, path: '/assinatura/planos' },
-          { text: 'Assinaturas', icon: <SensorOccupiedIcon />, path: '/assinatura/assinaturas' },
-          { text: 'Métricas Stripe', icon: <AssessmentIcon />, path: '/assinatura/metricas-stripe' },
+          { text: 'Clientes', icon: <UsuariosIcon />, path: '/clientes' },
+          { text: 'Perfis de Acesso', icon: <ManageAccountsIcon />, path: '/sistema/perfis' },
           { text: 'Relatórios Chamados', icon: <AssessmentIcon />, path: '/suporte/relatorios' },
           { text: 'Notificações', icon: <EmailOutlinedIcon />, path: '/sistema/notificacoes' },
           { text: 'Usuários', icon: <UsuariosIcon />, path: '/sistema/usuarios' },
@@ -637,9 +639,6 @@ function getPageTitle(pathname: string): string {
     '/trocar-senha': 'Trocar Senha',
 
     // Administração
-    '/assinatura/planos': 'Planos do Sistema',
-    '/assinatura/assinaturas': 'Assinaturas',
-    '/assinatura/metricas-stripe': 'Métricas Stripe',
     '/sistema/notificacoes': 'Notificações',
     '/sistema/usuarios': 'Usuários',
     '/sistema/parametros': 'Parâmetros',

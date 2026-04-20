@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction, getAll } from '../database/connection';
 import { Usuario, Parametro, AuthRequest, JWTPayload, UserModulos, UserFuncionalidade } from '../types';

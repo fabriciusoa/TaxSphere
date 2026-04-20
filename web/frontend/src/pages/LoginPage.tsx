@@ -30,14 +30,14 @@ const APP_VERSION = '1.0.0';
 // Design tokens — Synchro / MindTax
 const T = {
   // Brand
-  navy:       '#0a1628',
-  navyMid:    '#0d1f3c',
+  navy:       '#00071A',
+  navyMid:    '#00071A',
   navyLight:  '#0f2347',
   cyan:       '#00c8f0',
   cyanGlow:   'rgba(0, 200, 240, 0.28)',
 
   // Painel esquerdo — dark (form)
-  formBg:     '#0a1628',
+  formBg:     '#00071A',
   inputBg:    'rgba(255, 255, 255, 0.06)',
   inputBorder:'rgba(255, 255, 255, 0.13)',
   inputHover: 'rgba(255, 255, 255, 0.22)',
@@ -204,17 +204,17 @@ export default function LoginPage() {
         }} />
 
         {/* Logo */}
-        <Box sx={{ mb: 7, position: 'relative', zIndex: 1 }}>
+        <Box sx={{ mb: 6, position: 'relative', zIndex: 1 }}>
           <img
-            src="/imagens/logo.png"
+            src="/imagens/logo_ts.jpg"
             alt="MindTax"
             style={{
-              height: 360,
+              height: 260,
               objectFit: 'contain',
               display: 'block',
               margin: '0 auto',
-              maskImage: 'radial-gradient(ellipse 40% 70% at 50% 50%, black 35%, transparent 100%)',
-              WebkitMaskImage: 'radial-gradient(ellipse 40% 70% at 50% 50%, black 35%, transparent 100%)',
+              maskImage: 'radial-gradient(ellipse 70% 70% at 50% 50%, black 35%, transparent 100%)',
+              WebkitMaskImage: 'radial-gradient(ellipse 70% 70% at 50% 50%, black 35%, transparent 100%)',
             }}
           />
         </Box>

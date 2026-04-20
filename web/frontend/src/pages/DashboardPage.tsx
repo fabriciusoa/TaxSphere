@@ -11,7 +11,7 @@ import {
   People as PeopleIcon,
   SupportAgent as SupportIcon,
   Assignment as AssignmentIcon,
-  CardMembership as MembershipIcon,
+ // CardMembership as MembershipIcon,
 } from '@mui/icons-material';
 import { dashboardService, type DashboardIndicadores } from '../services/dashboardService';
 import { manutencaoService, type Manutencao } from '../services/manutencaoService';
@@ -47,9 +47,9 @@ export default function DashboardPage() {
     const carregarIndicadores = async () => {
       try {
         setLoading(true);
-        //const [dados, ativas] = await Promise.all([dashboardService.indicadores(), manutencaoService.ativas()]);
-        //setIndicadores(dados);
-        //setManutencoesAtivas(ativas);
+        const [dados, ativas] = await Promise.all([dashboardService.indicadores(), manutencaoService.ativas()]);
+        setIndicadores(dados);
+        setManutencoesAtivas(ativas);
       } catch (error: any) {
         logger.error('Erro ao carregar indicadores', error);
         setError('Erro ao carregar indicadores');
@@ -64,25 +64,25 @@ export default function DashboardPage() {
   const cards: MetricCard[] = [
     {
       title: 'Chamados Abertos',
-      value: indicadores ? indicadores.qtdeChamadosAbertos.toString() : '—',
+      value: indicadores ? (indicadores.qtdeChamadosAbertos ?? 0).toString() : '—',
       icon: <SupportIcon sx={{ fontSize: 20 }} />,
       accent: '#FFA726',
     },
     {
       title: 'Total de Chamados',
-      value: indicadores ? indicadores.qtdeChamadosTotal.toString() : '—',
+      value: indicadores ? (indicadores.qtdeChamadosTotal ?? 0).toString() : '—',
       icon: <AssignmentIcon sx={{ fontSize: 20 }} />,
       accent: T.cyan,
     },
-    {
+/*    {
       title: 'Assinaturas Ativas',
-      value: indicadores ? indicadores.qtdeAssinaturasAtivas.toString() : '—',
+      value: indicadores ? (indicadores.qtdeAssinaturasAtivas ?? 0).toString() : '—',
       icon: <MembershipIcon sx={{ fontSize: 20 }} />,
       accent: '#66BB6A',
-    },
+    },*/
     {
       title: 'Usuários Ativos',
-      value: indicadores ? indicadores.qtdeUsuariosAtivos.toString() : '—',
+      value: indicadores ? (indicadores.qtdeUsuariosAtivos ?? 0).toString() : '—',
       icon: <PeopleIcon sx={{ fontSize: 20 }} />,
       accent: '#7C4DFF',
     },

@@ -27,7 +27,7 @@ import {
   Stack,
 } from '@mui/material';
 import { Add as AddIcon, Edit as EditIcon, DeleteOutline as DeleteIcon } from '@mui/icons-material';
-import { format, parseISO } from 'date-fns';
+import { toDatetimeLocal, formatDisplay } from '../utils/dateHelpers';
 import { manutencaoService, type Manutencao, type ManutencaoPayload } from '../services/manutencaoService';
 import { logger } from '../utils/logger';
 
@@ -95,18 +95,6 @@ const STATUS_OPTIONS: { value: Manutencao['status']; label: string }[] = [
   { value: 'em_execucao', label: 'Em Execução' },
   { value: 'terminado', label: 'Terminado' },
 ];
-
-function toDatetimeLocal(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  try { return format(parseISO(isoString), "yyyy-MM-dd'T'HH:mm"); }
-  catch (e: any) { logger.error('Erro ao formatar data', e); return ''; }
-}
-
-function formatDisplay(isoString: string | null | undefined): string {
-  if (!isoString) return '—';
-  try { return format(parseISO(isoString), 'dd/MM/yyyy HH:mm'); }
-  catch (e: any) { logger.error('Erro ao formatar data', e); return isoString; }
-}
 
 const EMPTY_FORM: ManutencaoPayload = { descricao: '', dt_inicio: '', dt_fim: null, status: 'planejada' };
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactElement } from 'react';
 import {
   Box, Typography, Paper, Button, TextField, Alert, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -57,7 +57,6 @@ export default function EcacIntegracaoPage() {
   const [syncEmpresa, setSyncEmpresa] = useState<number | ''>('');
   const [syncSenha, setSyncSenha] = useState('');
   const [syncing, setSyncing] = useState(false);
-  const [syncId, setSyncId] = useState<number | null>(null);
   const [syncStatus, setSyncStatus] = useState<SincronizacaoStatus | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -160,8 +159,6 @@ export default function EcacIntegracaoPage() {
       setSyncing(true);
       setSyncStatus(null);
       const result = await ecacService.sincronizacao.iniciar(syncEmpresa as number, syncSenha);
-      setSyncId(result.sync_id);
-
       let pollAttempts = 0;
       const MAX_POLL_ATTEMPTS = 120;
       let consecutiveErrors = 0;
@@ -214,7 +211,7 @@ export default function EcacIntegracaoPage() {
     certificados.find(c => c.id_empresa === idEmpresa && c.ativo);
 
   const statusChip = (status: string) => {
-    const map: Record<string, { color: 'success' | 'warning' | 'error' | 'info' | 'default'; icon: JSX.Element }> = {
+    const map: Record<string, { color: 'success' | 'warning' | 'error' | 'info' | 'default'; icon: ReactElement }> = {
       concluido: { color: 'success', icon: <CheckIcon fontSize="small" /> },
       em_andamento: { color: 'info', icon: <ScheduleIcon fontSize="small" /> },
       erro: { color: 'error', icon: <ErrorIcon fontSize="small" /> },

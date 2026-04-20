@@ -1,15 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box, Typography, Paper, Card, CardContent, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, CircularProgress, Alert, Chip,
+  Box,
+  Typography,
+  Paper,
+  Card,
+  CardContent,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  CircularProgress,
+  Alert,
+  Chip,
 } from '@mui/material';
 import {
-  ConfirmationNumber as TicketIcon, HourglassEmpty as HourglassIcon,
-  CheckCircle as CheckCircleIcon, Assignment as AssignmentIcon, Timer as TimerIcon,
+  ConfirmationNumber as TicketIcon,
+  HourglassEmpty as HourglassIcon,
+  CheckCircle as CheckCircleIcon,
+  Assignment as AssignmentIcon,
+  Timer as TimerIcon,
 } from '@mui/icons-material';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, PieChart, Pie, Cell,
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend,
+  ResponsiveContainer, 
+  PieChart, 
+  Pie, 
+  Cell,
 } from 'recharts';
 import chamadosReportsService from '../services/chamadosReportsService';
 import type { DashboardChamados, EstatisticasChamados } from '../types';
@@ -18,14 +42,14 @@ import { logger } from '../utils/logger';
 
 // Tokens Synchro
 const T = {
-  cyan:       '#00c8f0',
-  cyanDim:    'rgba(0, 200, 240, 0.08)',
+  cyan: '#00c8f0',
+  cyanDim: 'rgba(0, 200, 240, 0.08)',
   cyanBorder: 'rgba(0, 200, 240, 0.18)',
-  textPrimary:'#1a2332',
+  textPrimary: '#1a2332',
   textSecond: '#64748b',
-  border:     'rgba(15, 30, 60, 0.09)',
-  surface:    '#FFFFFF',
-  navy:       '#0a1628',
+  border: 'rgba(15, 30, 60, 0.09)',
+  surface: '#FFFFFF',
+  navy: '#0a1628',
   cardShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 };
 
@@ -71,13 +95,14 @@ function StatCard({ icon, label, value, accent }: StatCardProps) {
 }
 
 const ChamadosReportsPage: React.FC = () => {
-  const [dashboard, setDashboard]     = useState<DashboardChamados | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardChamados | null>(null);
   const [minhasStats, setMinhasStats] = useState<EstatisticasChamados | null>(null);
-  const [loading, setLoading]         = useState(false);
-  const [erro, setErro]               = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
   const { user } = useAuth();
-  const isAdmin = user?.perfil === 'ADMIN';
+  const isAdmin = user?.adm_mindtax === true;
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carregarDados(); }, []);
 
   const carregarDados = async () => {
@@ -128,11 +153,11 @@ const ChamadosReportsPage: React.FC = () => {
 
         {/* Métricas */}
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 2, mb: 4 }}>
-          <StatCard icon={<TicketIcon sx={{ fontSize: 20 }} />}      label="Total de Chamados"       value={estatisticas.total_chamados}    accent={T.cyan} />
-          <StatCard icon={<HourglassIcon sx={{ fontSize: 20 }} />}   label="Abertos"                 value={estatisticas.abertos}           accent="#FFA726" />
-          <StatCard icon={<AssignmentIcon sx={{ fontSize: 20 }} />}  label="Em Andamento"            value={estatisticas.em_andamento}      accent="#29B6F6" />
-          <StatCard icon={<CheckCircleIcon sx={{ fontSize: 20 }} />} label="Resolvidos"              value={estatisticas.resolvidos}        accent="#66BB6A" />
-          <StatCard icon={<TimerIcon sx={{ fontSize: 20 }} />}       label="Tempo Médio Resolução"   value={formatarTempo(estatisticas.tempo_medio_resolucao_horas)} accent="#78BE20" />
+          <StatCard icon={<TicketIcon sx={{ fontSize: 20 }} />} label="Total de Chamados" value={estatisticas.total_chamados} accent={T.cyan} />
+          <StatCard icon={<HourglassIcon sx={{ fontSize: 20 }} />} label="Abertos" value={estatisticas.abertos} accent="#FFA726" />
+          <StatCard icon={<AssignmentIcon sx={{ fontSize: 20 }} />} label="Em Andamento" value={estatisticas.em_andamento} accent="#29B6F6" />
+          <StatCard icon={<CheckCircleIcon sx={{ fontSize: 20 }} />} label="Resolvidos" value={estatisticas.resolvidos} accent="#66BB6A" />
+          <StatCard icon={<TimerIcon sx={{ fontSize: 20 }} />} label="Tempo Médio Resolução" value={formatarTempo(estatisticas.tempo_medio_resolucao_horas)} accent="#78BE20" />
         </Box>
 
         {/* Gráficos */}
@@ -222,11 +247,11 @@ const ChamadosReportsPage: React.FC = () => {
           </Typography>
         </Box>
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 2 }}>
-          <StatCard icon={<TicketIcon sx={{ fontSize: 20 }} />}      label="Total"               value={minhasStats.total_chamados}    accent={T.cyan} />
-          <StatCard icon={<HourglassIcon sx={{ fontSize: 20 }} />}   label="Abertos"             value={minhasStats.abertos}           accent="#FFA726" />
-          <StatCard icon={<AssignmentIcon sx={{ fontSize: 20 }} />}  label="Em Andamento"        value={minhasStats.em_andamento}      accent="#29B6F6" />
-          <StatCard icon={<CheckCircleIcon sx={{ fontSize: 20 }} />} label="Resolvidos"          value={minhasStats.resolvidos}        accent="#66BB6A" />
-          <StatCard icon={<TimerIcon sx={{ fontSize: 20 }} />}       label="Tempo Médio Resolução" value={formatarTempo(minhasStats.tempo_medio_resolucao_horas)} accent="#78BE20" />
+          <StatCard icon={<TicketIcon sx={{ fontSize: 20 }} />} label="Total" value={minhasStats.total_chamados} accent={T.cyan} />
+          <StatCard icon={<HourglassIcon sx={{ fontSize: 20 }} />} label="Abertos" value={minhasStats.abertos} accent="#FFA726" />
+          <StatCard icon={<AssignmentIcon sx={{ fontSize: 20 }} />} label="Em Andamento" value={minhasStats.em_andamento} accent="#29B6F6" />
+          <StatCard icon={<CheckCircleIcon sx={{ fontSize: 20 }} />} label="Resolvidos" value={minhasStats.resolvidos} accent="#66BB6A" />
+          <StatCard icon={<TimerIcon sx={{ fontSize: 20 }} />} label="Tempo Médio Resolução" value={formatarTempo(minhasStats.tempo_medio_resolucao_horas)} accent="#78BE20" />
         </Box>
       </Box>
     );

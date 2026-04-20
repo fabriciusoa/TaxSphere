@@ -33,9 +33,10 @@ import {
   Delete as DeleteIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
-import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa, RegimeTributario } from '../../types/perdcomp';
-import { logger } from '../../utils/logger';
+import { empresasService } from '../services/empresasService';
+import type { RegimeTributario } from '../types/perdcomp';
+import type { Empresas } from '../types/index';
+import { logger } from '../utils/logger';
 
 const UF_LIST = [
   'AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
@@ -43,9 +44,6 @@ const UF_LIST = [
 ];
 
 const REGIMES: RegimeTributario[] = ['Simples Nacional', 'Lucro Presumido', 'Lucro Real'];
-
-const formatBRL = (value: number): string =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
 const formatCNPJ = (cnpj: string): string => {
   const digits = cnpj.replace(/\D/g, '');
@@ -91,7 +89,7 @@ const INITIAL_FORM = {
 };
 
 const EmpresasPage: React.FC = () => {
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState('');
   const [sucesso, setSucesso] = useState('');
@@ -104,7 +102,7 @@ const EmpresasPage: React.FC = () => {
   const [totalRecords, setTotalRecords] = useState(0);
 
   const [openModal, setOpenModal] = useState(false);
-  const [editingEmpresa, setEditingEmpresa] = useState<PerdcompEmpresa | null>(null);
+  const [editingEmpresa, setEditingEmpresa] = useState<Empresas | null>(null);
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -115,7 +113,7 @@ const EmpresasPage: React.FC = () => {
   const carregarEmpresas = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await perdcompService.empresas.listar({
+      const res = await empresasService.listar({
         busca: filtroBusca || undefined,
         regime: filtroRegime || undefined,
         uf: filtroUF || undefined,
@@ -151,7 +149,7 @@ const EmpresasPage: React.FC = () => {
     const timer = setTimeout(() => {
       setBuscandoCNPJ(true);
       setCnpjInfo('');
-      perdcompService.empresas.buscarCNPJ(cnpjDigits)
+      empresasService.buscarCNPJ(cnpjDigits)
         .then((dados) => {
           if (cancelled) return;
           setFormData(prev => ({
@@ -183,7 +181,7 @@ const EmpresasPage: React.FC = () => {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [formData.cnpj, editingEmpresa, openModal]);
 
-  const handleOpenModal = (empresa?: PerdcompEmpresa) => {
+  const handleOpenModal = (empresa?: Empresas) => {
     if (empresa) {
       setEditingEmpresa(empresa);
       setFormData({
@@ -191,7 +189,7 @@ const EmpresasPage: React.FC = () => {
         razao_social: empresa.razao_social,
         nome_fantasia: empresa.nome_fantasia || '',
         inscricao_estadual: empresa.inscricao_estadual || '',
-        regime_tributario: empresa.regime_tributario,
+        regime_tributario: (empresa.regime_tributario || '') as RegimeTributario | '',
         uf: empresa.uf || '',
         municipio: empresa.municipio || '',
       });
@@ -242,7 +240,7 @@ const EmpresasPage: React.FC = () => {
       setSaving(true);
       setModalErro('');
 
-      const payload: Partial<PerdcompEmpresa> = {
+      const payload: Partial<Empresas> = {
         cnpj: formData.cnpj.replace(/\D/g, ''),
         razao_social: formData.razao_social.trim(),
         nome_fantasia: formData.nome_fantasia.trim() || undefined,
@@ -253,10 +251,10 @@ const EmpresasPage: React.FC = () => {
       };
 
       if (editingEmpresa) {
-        await perdcompService.empresas.atualizar(editingEmpresa.id, payload);
+        await empresasService.atualizar(editingEmpresa.id, payload);
         setSucesso('Empresa atualizada com sucesso');
       } else {
-        await perdcompService.empresas.criar(payload);
+        await empresasService.criar(payload);
         setSucesso('Empresa criada com sucesso');
       }
 
@@ -281,12 +279,12 @@ const EmpresasPage: React.FC = () => {
     }
   };
 
-  const handleExcluir = async (empresa: PerdcompEmpresa) => {
+  const handleExcluir = async (empresa: Empresas) => {
     if (!window.confirm(`Deseja realmente excluir a empresa "${empresa.razao_social}"?`)) return;
 
     try {
       setErro('');
-      await perdcompService.empresas.excluir(empresa.id);
+      await empresasService.excluir(empresa.id);
       setSucesso('Empresa excluída com sucesso');
       carregarEmpresas();
     } catch (error: any) {
@@ -385,8 +383,6 @@ const EmpresasPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 600, color: '#64748b' }}>Razão Social</TableCell>
                 <TableCell sx={{ fontWeight: 600, color: '#64748b' }}>Regime</TableCell>
                 <TableCell sx={{ fontWeight: 600, color: '#64748b' }}>UF</TableCell>
-                <TableCell align="center" sx={{ fontWeight: 600, color: '#64748b' }}>Créditos</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 600, color: '#64748b' }}>Saldo Créditos</TableCell>
                 <TableCell align="center" sx={{ fontWeight: 600, color: '#64748b' }}>Status</TableCell>
                 <TableCell align="center" sx={{ fontWeight: 600, color: '#64748b' }}>Ações</TableCell>
               </TableRow>
@@ -409,10 +405,6 @@ const EmpresasPage: React.FC = () => {
                       <Chip label={emp.regime_tributario} size="small" variant="outlined" />
                     </TableCell>
                     <TableCell>{emp.uf || '—'}</TableCell>
-                    <TableCell align="center">{emp.total_creditos ?? 0}</TableCell>
-                    <TableCell align="right" sx={{ color: '#22c55e', fontWeight: 600 }}>
-                      {formatBRL(emp.saldo_creditos ?? 0)}
-                    </TableCell>
                     <TableCell align="center">
                       <Chip
                         label={emp.ativo ? 'Ativo' : 'Inativo'}

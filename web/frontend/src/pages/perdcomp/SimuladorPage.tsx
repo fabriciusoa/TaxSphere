@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Box, Typography, Card, CardContent, Grid, Button, TextField, MenuItem,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Checkbox, CircularProgress, Alert, Paper, Chip,
+  Checkbox, CircularProgress, Alert,
 } from '@mui/material';
 import { PlayArrow as SimularIcon, ArrowForward as ArrowIcon } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
@@ -205,7 +205,7 @@ export default function SimuladorPage() {
             </Box>
           ) : (
             <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={6}>
+              <Grid size={{ xs: 12, md: 6 }}>
                 <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow, height: '100%' }}>
                   <CardContent sx={{ p: 2.5 }}>
                     <Typography sx={{ fontSize: '0.9375rem', fontWeight: 700, color: T.cyan, mb: 2 }}>
@@ -269,7 +269,7 @@ export default function SimuladorPage() {
                 </Card>
               </Grid>
 
-              <Grid item xs={12} md={6}>
+              <Grid size={{ xs: 12, md: 6 }}>
                 <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow, height: '100%' }}>
                   <CardContent sx={{ p: 2.5 }}>
                     <Typography sx={{ fontSize: '0.9375rem', fontWeight: 700, color: '#f59e0b', mb: 2 }}>
@@ -364,7 +364,7 @@ export default function SimuladorPage() {
           </Typography>
 
           <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow }}>
                 <CardContent sx={{ textAlign: 'center', py: 2.5 }}>
                   <Typography sx={{ fontSize: '0.75rem', color: T.slate, fontWeight: 500, mb: 0.5 }}>
@@ -376,7 +376,7 @@ export default function SimuladorPage() {
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow }}>
                 <CardContent sx={{ textAlign: 'center', py: 2.5 }}>
                   <Typography sx={{ fontSize: '0.75rem', color: T.slate, fontWeight: 500, mb: 0.5 }}>
@@ -388,7 +388,7 @@ export default function SimuladorPage() {
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow, backgroundColor: '#f0fdf4' }}>
                 <CardContent sx={{ textAlign: 'center', py: 2.5 }}>
                   <Typography sx={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 500, mb: 0.5 }}>
@@ -411,7 +411,7 @@ export default function SimuladorPage() {
           )}
 
           <Grid container spacing={3} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow }}>
                 <CardContent sx={{ p: 2.5 }}>
                   <Typography sx={{ fontSize: '0.9375rem', fontWeight: 700, color: T.textPrimary, mb: 2 }}>
@@ -447,7 +447,7 @@ export default function SimuladorPage() {
               </Card>
             </Grid>
 
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Card elevation={0} sx={{ borderRadius: '12px', border: `1px solid ${T.border}`, boxShadow: T.cardShadow }}>
                 <CardContent sx={{ p: 2.5 }}>
                   <Typography sx={{ fontSize: '0.9375rem', fontWeight: 700, color: T.textPrimary, mb: 2 }}>

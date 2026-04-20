@@ -22,9 +22,10 @@
     "@types/node": "^20.10.6",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^7.0.5",
+    "@types/pg": "^8.11.10",
     "@types/puppeteer": "^5.4.7",
     "@types/uuid": "^10.0.0",
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "date-fns": "^2.30.0",
@@ -38,10 +39,9 @@
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
+    "pg": "^8.13.3",
     "puppeteer": "^24.34.0",
     "sanitize-html": "^2.17.2",
-    "pg": "^8.13.3",
-    "@types/pg": "^8.11.10",
     "sharp": "^0.33.0",
     "stripe": "^20.4.0",
     "tsx": "^4.7.0",
@@ -52,6 +52,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/sanitize-html": "^2.16.1"
   }
