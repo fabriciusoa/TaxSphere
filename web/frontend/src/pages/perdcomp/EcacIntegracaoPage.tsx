@@ -19,7 +19,7 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import { ecacService, type CertificadoDigital, type SincronizacaoStatus } from '../../services/ecacService';
-import { perdcompService } from '../../services/perdcompService';
+import { empresasService } from '../../services/empresasService';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 

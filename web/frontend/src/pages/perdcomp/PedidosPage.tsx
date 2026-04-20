@@ -23,6 +23,7 @@ import type {
 } from '../../types/perdcomp';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
+import { empresasService } from '../../services/empresasService';
 
 const T = {
   navy: '#0a1628',

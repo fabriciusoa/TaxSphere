@@ -28,6 +28,7 @@ import { perdcompService } from '../../services/perdcompService';
 import type { PerdcompDashboardData} from '../../types/perdcomp';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
+import { empresasService } from '../../services/empresasService';
 
 const formatBRL = (value: number): string =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
