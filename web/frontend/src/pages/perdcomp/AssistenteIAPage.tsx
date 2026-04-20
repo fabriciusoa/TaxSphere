@@ -20,7 +20,8 @@ import {
   Shield as ShieldIcon,
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa, IAChatMessage } from '../../types/perdcomp';
+import type { IAChatMessage } from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -72,7 +73,7 @@ function formatAssistantContent(text: string) {
 }
 
 export default function AssistenteIAPage() {
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [empresaId, setEmpresaId] = useState<number | ''>('');
   const [messages, setMessages] = useState<IAChatMessage[]>([]);
   const [input, setInput] = useState('');

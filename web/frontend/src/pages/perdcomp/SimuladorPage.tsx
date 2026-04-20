@@ -7,7 +7,8 @@ import {
 import { PlayArrow as SimularIcon, ArrowForward as ArrowIcon } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa, PerdcompCredito, PerdcompDebito, SimulacaoResultado } from '../../types/perdcomp';
+import type { PerdcompCredito, PerdcompDebito, SimulacaoResultado } from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -38,7 +39,7 @@ interface DebitoSelecionado {
 export default function SimuladorPage() {
   const navigate = useNavigate();
 
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [empresaId, setEmpresaId] = useState<number | ''>('');
   const [creditos, setCreditos] = useState<PerdcompCredito[]>([]);
   const [debitos, setDebitos] = useState<PerdcompDebito[]>([]);

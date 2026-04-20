@@ -18,9 +18,10 @@ import {
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
 import type {
-  PerdcompPedido, PerdcompEmpresa, PerdcompPedidoItem,
+  PerdcompPedido, PerdcompPedidoItem,
   PerdcompHistorico, PerdcompDocumento, TipoPedido, StatusPedido,
 } from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -80,7 +81,7 @@ export default function PedidosPage() {
   const navigate = useNavigate();
 
   const [pedidos, setPedidos] = useState<PerdcompPedido[]>([]);
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');

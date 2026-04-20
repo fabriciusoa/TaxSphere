@@ -15,9 +15,8 @@ import {
   CompareArrows as CompensacaoIcon,
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
-import type {
-  PerdcompEmpresa, PerdcompCredito, PerdcompDebito, TipoPedido,
-} from '../../types/perdcomp';
+import type { PerdcompCredito, PerdcompDebito, TipoPedido} from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -59,9 +58,9 @@ export default function NovoPedidoPage() {
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [empresasLoading, setEmpresasLoading] = useState(true);
-  const [selectedEmpresa, setSelectedEmpresa] = useState<PerdcompEmpresa | null>(null);
+  const [selectedEmpresa, setSelectedEmpresa] = useState<Empresas | null>(null);
 
   const [tipoPedido, setTipoPedido] = useState<TipoPedido | null>(null);
 
@@ -264,26 +263,6 @@ export default function NovoPedidoPage() {
                       CNPJ: {selectedEmpresa.cnpj} &bull; {selectedEmpresa.regime_tributario}
                       {selectedEmpresa.uf && ` &bull; ${selectedEmpresa.uf}`}
                     </Typography>
-                    <Box sx={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <Box>
-                        <Typography sx={{ fontSize: '0.75rem', color: T.textSecond }}>Saldo de Créditos</Typography>
-                        <Typography sx={{ fontWeight: 700, fontSize: '1.25rem', color: '#2e7d32' }}>
-                          {brl(selectedEmpresa.saldo_creditos || 0)}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography sx={{ fontSize: '0.75rem', color: T.textSecond }}>Total de Débitos</Typography>
-                        <Typography sx={{ fontWeight: 700, fontSize: '1.25rem', color: '#d32f2f' }}>
-                          {brl(selectedEmpresa.total_debitos || 0)}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography sx={{ fontSize: '0.75rem', color: T.textSecond }}>Pedidos</Typography>
-                        <Typography sx={{ fontWeight: 700, fontSize: '1.25rem', color: T.textPrimary }}>
-                          {selectedEmpresa.total_pedidos || 0}
-                        </Typography>
-                      </Box>
-                    </Box>
                   </CardContent>
                 </Card>
               )}

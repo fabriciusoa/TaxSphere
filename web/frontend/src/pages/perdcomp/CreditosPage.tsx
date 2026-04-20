@@ -35,7 +35,8 @@ import {
   Search as SearchIcon,
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa, PerdcompCredito, TipoCredito, OrigemCredito, StatusCredito } from '../../types/perdcomp';
+import type { PerdcompCredito, TipoCredito, OrigemCredito, StatusCredito } from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -98,7 +99,7 @@ const emptyForm: FormData = {
 
 export default function CreditosPage() {
   const [creditos, setCreditos] = useState<PerdcompCredito[]>([]);
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selicLoading, setSelicLoading] = useState(false);

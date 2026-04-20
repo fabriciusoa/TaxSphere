@@ -25,7 +25,8 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompDashboardData, PerdcompEmpresa } from '../../types/perdcomp';
+import type { PerdcompDashboardData} from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const formatBRL = (value: number): string =>
@@ -99,7 +100,7 @@ const KpiCard: React.FC<KpiCardProps> = ({ title, count, subtitle, icon, color }
 );
 
 const PerdcompDashboardPage: React.FC = () => {
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [selectedEmpresaId, setSelectedEmpresaId] = useState<number | ''>('');
   const [data, setData] = useState<PerdcompDashboardData | null>(null);
   const [loading, setLoading] = useState(true);

@@ -20,7 +20,7 @@ import {
 } from '@mui/icons-material';
 import { ecacService, type CertificadoDigital, type SincronizacaoStatus } from '../../services/ecacService';
 import { perdcompService } from '../../services/perdcompService';
-import type { PerdcompEmpresa } from '../../types/perdcomp';
+import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
 
 const T = {
@@ -39,7 +39,7 @@ const formatDate = (d: string) => {
 };
 
 export default function EcacIntegracaoPage() {
-  const [empresas, setEmpresas] = useState<PerdcompEmpresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [certificados, setCertificados] = useState<CertificadoDigital[]>([]);
   const [historico, setHistorico] = useState<SincronizacaoStatus[]>([]);
   const [loading, setLoading] = useState(true);
