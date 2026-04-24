@@ -60,12 +60,13 @@ import { logger } from '../../utils/logger';
 const drawerWidth = 264;
 
 const S = {
-  navy: '#0a1628',
-  navyMid: '#0d1f3c',
-  navyLight: '#0f2347',
-  cyan: '#00c8f0',
-  cyanDim: 'rgba(0, 200, 240, 0.10)',
-  cyanBorder: 'rgba(0, 200, 240, 0.20)',
+  navy: '#050F22',
+  navyMid: '#050F22',
+  navyLight: '#123152',
+  cyan: '#00BFD4',
+  cyanDim: 'rgba(0, 191, 212, 0.12)',
+  cyanBorder: 'rgba(0, 191, 212, 0.24)',
+  emerald: '#2BCB9A',
   white: '#FFFFFF',
   white70: 'rgba(255, 255, 255, 0.70)',
   white40: 'rgba(255, 255, 255, 0.38)',
@@ -73,10 +74,39 @@ const S = {
   white05: 'rgba(255, 255, 255, 0.05)',
   dividerSide: 'rgba(255, 255, 255, 0.07)',
   appBarBg: '#FFFFFF',
-  contentBg: '#F1F5F9',
+  contentBg: '#F4F7FA',
   borderBase: 'rgba(15, 30, 60, 0.10)',
-  textPrimary: '#1a2332',
-  textSecond: '#64748b',
+  textPrimary: '#17324D',
+  textSecond: '#5E748A',
+};
+
+/** Realce do logo: contraste + saturação + brilho leve + glow discreto (cyan / verde marca) */
+const logoImageSx = {
+  width: '100%',
+  maxHeight: 120,
+  objectFit: 'contain' as const,
+  objectPosition: 'center' as const,
+  display: 'block',
+  // Realce do CONTEÚDO (esfera + "TaxSphere")
+  filter: [
+    'saturate(1.75)',
+    'contrast(1.25)',
+    'brightness(1.12)',
+  ].join(' '),
+  // Máscara radial: bordas do JPG fazem fade gradual até transparente,
+  // dissolvendo qualquer diferença de azul entre o retângulo do logo e o navy do painel.
+  WebkitMaskImage:
+    'radial-gradient(ellipse 78% 68% at center, #000 40%, rgba(0,0,0,0.6) 70%, rgba(0,0,0,0) 100%)',
+  maskImage:
+    'radial-gradient(ellipse 78% 68% at center, #000 40%, rgba(0,0,0,0.6) 70%, rgba(0,0,0,0) 100%)',
+  transition: 'filter 320ms ease',
+  '&:hover': {
+    filter: [
+      'saturate(1.95)',
+      'contrast(1.30)',
+      'brightness(1.18)',
+    ].join(' '),
+  },
 };
 
 interface Props {
@@ -291,32 +321,65 @@ export default function MainLayout({ children }: Props) {
   ];
 
   const itemRootSx = (isSelected: boolean) => ({
-    borderRadius: '8px',
+    position: 'relative' as const,
+    borderRadius: '10px',
     mx: 1,
-    mb: 0.25,
+    mb: 0.5,
+    py: 0.75,
     color: isSelected ? S.cyan : S.white70,
-    boxShadow: isSelected ? 'inset 3px 0 0 ' + S.cyan : 'none',
-    backgroundColor: isSelected ? S.cyanDim : 'transparent',
-    '& .MuiListItemIcon-root': { color: isSelected ? S.cyan : S.white40, minWidth: 36 },
+    background: isSelected
+      ? `linear-gradient(90deg, rgba(0,191,212,0.18) 0%, rgba(43,203,154,0.08) 60%, rgba(43,203,154,0) 100%)`
+      : 'transparent',
+    transition: 'all 220ms cubic-bezier(0.4, 0, 0.2, 1)',
+    overflow: 'hidden' as const,
+    '&::before': {
+      content: '""',
+      position: 'absolute' as const,
+      left: 0, top: 8, bottom: 8,
+      width: isSelected ? 3 : 0,
+      borderRadius: '0 3px 3px 0',
+      background: `linear-gradient(180deg, ${S.cyan} 0%, ${S.emerald} 100%)`,
+      boxShadow: isSelected ? `0 0 10px ${S.cyan}` : 'none',
+      transition: 'width 220ms cubic-bezier(0.4, 0, 0.2, 1)',
+    },
+    '& .MuiListItemIcon-root': {
+      color: isSelected ? S.cyan : S.white40,
+      minWidth: 36,
+      transition: 'color 220ms ease, transform 220ms ease',
+    },
     '&:hover': {
-      backgroundColor: isSelected ? S.cyanDim : S.white05,
+      backgroundColor: isSelected ? undefined : 'rgba(255,255,255,0.04)',
       color: S.white,
-      '& .MuiListItemIcon-root': { color: S.white70 },
+      transform: 'translateX(2px)',
+      '& .MuiListItemIcon-root': {
+        color: isSelected ? S.cyan : S.white70,
+        transform: 'scale(1.08)',
+      },
+      '&::before': { width: 3 },
     },
   });
 
   const subItemSx = (isSelected: boolean) => ({
+    position: 'relative' as const,
     pl: 5.5,
-    borderRadius: '8px',
+    borderRadius: '10px',
     mx: 1,
     mb: 0.25,
+    py: 0.5,
     color: isSelected ? S.cyan : S.white70,
-    boxShadow: isSelected ? 'inset 3px 0 0 ' + S.cyan : 'none',
-    backgroundColor: isSelected ? S.cyanDim : 'transparent',
-    '& .MuiListItemIcon-root': { color: isSelected ? S.cyan : S.white40, minWidth: 32, fontSize: '0.85rem' },
+    background: isSelected
+      ? `linear-gradient(90deg, rgba(0,191,212,0.14) 0%, rgba(0,191,212,0) 100%)`
+      : 'transparent',
+    transition: 'all 180ms cubic-bezier(0.4, 0, 0.2, 1)',
+    '& .MuiListItemIcon-root': {
+      color: isSelected ? S.cyan : S.white40,
+      minWidth: 32, fontSize: '0.85rem',
+      transition: 'color 180ms ease',
+    },
     '&:hover': {
-      backgroundColor: isSelected ? S.cyanDim : S.white05,
+      backgroundColor: isSelected ? undefined : 'rgba(255,255,255,0.04)',
       color: S.white,
+      transform: 'translateX(2px)',
       '& .MuiListItemIcon-root': { color: S.white70 },
     },
   });
@@ -329,32 +392,40 @@ export default function MainLayout({ children }: Props) {
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: S.navy }}>
 
-      {/* Logo / Brand */}
-      <Box sx={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        borderBottom: `1px solid ${S.dividerSide}`,
-        py: 1.5,
-        px: 2,
-        backgroundColor: S.navy,
-      }}>
+      {/* Logo / Brand — fundo idêntico ao drawer; realce nas cores do logo */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: S.navy,
+          px: 2,
+          pt: 2.5,
+          pb: 2,
+          isolation: 'isolate',
+        }}
+      >
         <Box
           component="img"
-          src="/logo-mindtax.png"
-          alt="MindTax"
-          sx={{
-            width: '100%',
-            maxHeight: 52,
-            objectFit: 'contain',
-          }}
+          src="/logo_ts.jpg"
+          alt="TaxSphere"
+          sx={logoImageSx}
         />
       </Box>
 
       {/* Menu principal */}
       <Box sx={{
-        flex: 1, overflowY: 'auto', pt: 1, pb: 2,
-        '&::-webkit-scrollbar': { width: 4 },
+        flex: 1, overflowY: 'auto', pt: 1.5, pb: 2,
+        '&::-webkit-scrollbar': { width: 6 },
         '&::-webkit-scrollbar-track': { background: 'transparent' },
-        '&::-webkit-scrollbar-thumb': { background: S.white08, borderRadius: 2 },
+        '&::-webkit-scrollbar-thumb': {
+          background: `linear-gradient(180deg, ${S.cyan}, ${S.emerald})`,
+          borderRadius: 4,
+          opacity: 0.4,
+        },
+        '&::-webkit-scrollbar-thumb:hover': { opacity: 1 },
       }}>
         <List disablePadding>
           {menuItems.map((item) =>
@@ -445,8 +516,10 @@ export default function MainLayout({ children }: Props) {
         display: 'flex', alignItems: 'center', gap: 1.5,
       }}>
         <Avatar sx={{
-          width: 32, height: 32, fontSize: '0.8125rem', fontWeight: 700,
-          backgroundColor: S.cyan, color: S.navy, flexShrink: 0,
+          width: 34, height: 34, fontSize: '0.8125rem', fontWeight: 700,
+          background: `linear-gradient(135deg, ${S.cyan} 0%, ${S.emerald} 100%)`,
+          color: S.navy, flexShrink: 0,
+          boxShadow: `0 0 0 2px ${S.navy}, 0 0 12px rgba(0,191,212,0.45)`,
         }}>
           {user?.nome?.charAt(0)?.toUpperCase()}
         </Avatar>
@@ -471,16 +544,27 @@ export default function MainLayout({ children }: Props) {
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: S.contentBg }}>
 
-      {/* AppBar */}
+      {/* AppBar — glassmorphism moderno */}
       <AppBar
         position="fixed"
         elevation={0}
         sx={{
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           ml: { sm: `${drawerWidth}px` },
-          backgroundColor: S.appBarBg,
+          backgroundColor: 'rgba(255,255,255,0.72)',
+          backdropFilter: 'saturate(180%) blur(14px)',
+          WebkitBackdropFilter: 'saturate(180%) blur(14px)',
           borderBottom: `1px solid ${S.borderBase}`,
           color: S.textPrimary,
+          // Linha de acento gradiente cyan → esmeralda na base do AppBar
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            left: 0, right: 0, bottom: -1,
+            height: 1,
+            background: `linear-gradient(90deg, transparent 0%, ${S.cyan} 30%, ${S.emerald} 70%, transparent 100%)`,
+            opacity: 0.55,
+          },
         }}
       >
         <Toolbar sx={{ minHeight: '64px !important', px: { xs: 2, sm: 3 } }}>
@@ -511,10 +595,34 @@ export default function MainLayout({ children }: Props) {
                 {user?.perfil}
               </Typography>
             </Box>
-            <IconButton onClick={handleUserMenuOpen} size="small" sx={{ p: 0.5 }}>
+            <IconButton
+              onClick={handleUserMenuOpen}
+              size="small"
+              sx={{
+                p: 0.5,
+                position: 'relative',
+                transition: 'transform 220ms ease',
+                '&:hover': { transform: 'scale(1.05)' },
+                '&::before': {
+                  content: '""',
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: '50%',
+                  padding: '2px',
+                  background: `conic-gradient(from 0deg, ${S.cyan}, ${S.emerald}, ${S.cyan})`,
+                  WebkitMask:
+                    'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+                  WebkitMaskComposite: 'xor',
+                  maskComposite: 'exclude',
+                  opacity: 0.9,
+                },
+              }}
+            >
               <Avatar sx={{
                 width: 34, height: 34, fontSize: '0.875rem', fontWeight: 700,
-                backgroundColor: S.cyan, color: S.navy,
+                background: `linear-gradient(135deg, ${S.cyan} 0%, ${S.emerald} 100%)`,
+                color: S.navy,
+                boxShadow: '0 0 0 2px #FFF inset',
               }}>
                 {user?.nome?.charAt(0)?.toUpperCase()}
               </Avatar>
@@ -580,8 +688,9 @@ export default function MainLayout({ children }: Props) {
             display: { xs: 'none', sm: 'block' },
             '& .MuiDrawer-paper': {
               boxSizing: 'border-box', width: drawerWidth,
+              border: 'none',
               backgroundColor: S.navy,
-              borderRight: `1px solid ${S.dividerSide}`,
+              boxShadow: '4px 0 24px -6px rgba(5, 15, 34, 0.35)',
             }
           }}
           open
@@ -590,7 +699,7 @@ export default function MainLayout({ children }: Props) {
         </Drawer>
       </Box>
 
-      {/* Conteúdo principal */}
+      {/* Conteúdo principal — fundo clean com vinheta radial sutil na paleta da marca */}
       <Box
         component="main"
         sx={{
@@ -599,6 +708,12 @@ export default function MainLayout({ children }: Props) {
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           mt: '64px',
           minHeight: 'calc(100vh - 64px)',
+          position: 'relative',
+          backgroundColor: S.contentBg,
+          backgroundImage: [
+            `radial-gradient(1200px 600px at 100% 0%, rgba(0,191,212,0.06), transparent 60%)`,
+            `radial-gradient(900px 500px at 0% 100%, rgba(43,203,154,0.05), transparent 60%)`,
+          ].join(', '),
         }}
       >
         {children}
