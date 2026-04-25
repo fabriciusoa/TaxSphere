@@ -5,31 +5,31 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import PrivateRoute from './components/PrivateRoute';
 import LoginPage from './pages/LoginPage';
 
-const DashboardPage               = lazy(() => import('./pages/DashboardPage'));
-const TrocarSenhaPage             = lazy(() => import('./pages/TrocarSenhaPage'));
-const MeuPerfilPage               = lazy(() => import('./pages/MeuPerfilPage'));
-const UsuariosPage                = lazy(() => import('./pages/UsuariosPage'));
-const ParametrosPage              = lazy(() => import('./pages/ParametrosPage'));
-const ChamadoPage                 = lazy(() => import('./pages/ChamadoPage'));
-const ChamadosReportsPage         = lazy(() => import('./pages/ChamadosReportsPage'));
-const ManualPage                  = lazy(() => import('./pages/ManualPage'));
-const ManutencaoPage              = lazy(() => import('./pages/ManutencaoPage'));
-const NotificacoesPage            = lazy(() => import('./pages/NotificacoesPage'));
-const NotFoundPage                = lazy(() => import('./pages/NotFoundPage'));
-const ModuloEmBreve               = lazy(() => import('./pages/ModuloEmBrevePage'));
-const PerdcompDashboardPage       = lazy(() => import('./pages/perdcomp/PerdcompDashboardPage'));
-const PerdcompEmpresasPage        = lazy(() => import('./pages/EmpresasPage'));
-const PerdcompCreditosPage        = lazy(() => import('./pages/perdcomp/CreditosPage'));
-const PerdcompDebitosPage         = lazy(() => import('./pages/perdcomp/DebitosPage'));
-const PerdcompPedidosPage         = lazy(() => import('./pages/perdcomp/PedidosPage'));
-const PerdcompNovoPedidoPage      = lazy(() => import('./pages/perdcomp/NovoPedidoPage'));
-const PerdcompSimuladorPage       = lazy(() => import('./pages/perdcomp/SimuladorPage'));
-const PerdcompAssistenteIAPage    = lazy(() => import('./pages/perdcomp/AssistenteIAPage'));
-const EcacIntegracaoPage          = lazy(() => import('./pages/perdcomp/EcacIntegracaoPage'));
-const DctfWebDashboardPage        = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
-const DctfWebDeclaracoesPage      = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
-const ClientesPage                = lazy(() => import('./pages/ClientesPage'));
-const PerfisPage                  = lazy(() => import('./pages/PerfisPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const TrocarSenhaPage = lazy(() => import('./pages/TrocarSenhaPage'));
+const MeuPerfilPage = lazy(() => import('./pages/MeuPerfilPage'));
+const UsuariosPage = lazy(() => import('./pages/UsuariosPage'));
+const ParametrosPage = lazy(() => import('./pages/ParametrosPage'));
+const ChamadoPage = lazy(() => import('./pages/ChamadoPage'));
+const ChamadosReportsPage = lazy(() => import('./pages/ChamadosReportsPage'));
+const ManualPage = lazy(() => import('./pages/ManualPage'));
+const ManutencaoPage = lazy(() => import('./pages/ManutencaoPage'));
+const NotificacoesPage = lazy(() => import('./pages/NotificacoesPage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
+const ModuloEmBreve = lazy(() => import('./pages/ModuloEmBrevePage'));
+const PerdcompDashboardPage = lazy(() => import('./pages/perdcomp/PerdcompDashboardPage'));
+const PerdcompEmpresasPage = lazy(() => import('./pages/EmpresasPage'));
+const PerdcompCreditosPage = lazy(() => import('./pages/perdcomp/CreditosPage'));
+const PerdcompDebitosPage = lazy(() => import('./pages/perdcomp/DebitosPage'));
+const PerdcompPedidosPage = lazy(() => import('./pages/perdcomp/PedidosPage'));
+const PerdcompNovoPedidoPage = lazy(() => import('./pages/perdcomp/NovoPedidoPage'));
+const PerdcompSimuladorPage = lazy(() => import('./pages/perdcomp/SimuladorPage'));
+const PerdcompAssistenteIAPage = lazy(() => import('./pages/perdcomp/AssistenteIAPage'));
+const EcacIntegracaoPage = lazy(() => import('./pages/perdcomp/EcacIntegracaoPage'));
+const DctfWebDashboardPage = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
+const DctfWebDeclaracoesPage = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
+const ClientesPage = lazy(() => import('./pages/ClientesPage'));
+const PerfisPage = lazy(() => import('./pages/PerfisPage'));
 
 // Fallback leve exibido enquanto o chunk da página é baixado (< 1 s em LAN/produção)
 function PageLoader() {
@@ -73,13 +73,24 @@ function App() {
                 <Route path="/fiscal/perdcomp/assistente" element={<PerdcompAssistenteIAPage />} />
                 <Route path="/configuracoes/ecac" element={<EcacIntegracaoPage />} />
 
+                {/*RecuperacaoPis Cofins */}
                 <Route path="/fiscal/pis-cofins" element={<ModuloEmBreve />} />
+
+                {/*MIT */}
                 <Route path="/fiscal/mit" element={<ModuloEmBreve />} />
+
                 {/* DCTF Web */}
                 <Route path="/fiscal/dctf-web" element={<DctfWebDashboardPage />} />
                 <Route path="/fiscal/dctf-web/declaracoes" element={<DctfWebDeclaracoesPage />} />
+
+                {/*Gestao de CND */}
                 <Route path="/fiscal/cnds" element={<ModuloEmBreve />} />
+
+                {/*Caixa Postal */}
                 <Route path="/fiscal/ecac" element={<ModuloEmBreve />} />
+
+                {/*Classificacao NCM */}
+                <Route path="/fiscal/classificacao-ncm" element={<ModuloEmBreve />} />
 
                 {/* Suporte */}
                 <Route path="/suporte/chamado" element={<ChamadoPage />} />
@@ -102,11 +113,11 @@ function App() {
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
 
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
-    </AuthProvider>
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }

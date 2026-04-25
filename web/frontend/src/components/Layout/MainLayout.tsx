@@ -203,33 +203,34 @@ export default function MainLayout({ children }: Props) {
   );
 
   const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-
+    ...(hasModulo('Dashboard') ? [
+      { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
+    ] : []),
     // Módulos Fiscais — core do MindTax
     {
       text: 'Soluções Fiscais',
       icon: <AccountBalanceIcon />,
       submenu: [
-        ...(hasModulo('Classificação NCM') ? [
+        ...(hasModulo('PERD/Comp') ? [
           {
             text: 'PERD/Comp', icon: <RequestQuoteIcon />, path: '/fiscal/perdcomp',
             submenu: [
-              ...(hasFuncionalidade('Classificação NCM', 'Painel') ? [
+              ...(hasFuncionalidade('PERD/Comp', 'Painel') ? [
                 { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/perdcomp' },
               ] : []),
-              ...(hasFuncionalidade('Classificação NCM', 'Créditos') ? [
+              ...(hasFuncionalidade('PERD/Comp', 'Créditos') ? [
                 { text: 'Créditos', icon: <AttachMoneyIcon />, path: '/fiscal/perdcomp/creditos' },
               ] : []),
-              ...(hasFuncionalidade('Classificação NCM', 'Débitos') ? [
+              ...(hasFuncionalidade('PERD/Comp', 'Débitos') ? [
                 { text: 'Débitos', icon: <MoneyOffIcon />, path: '/fiscal/perdcomp/debitos' },
               ] : []),
-              ...(hasFuncionalidade('Classificação NCM', 'Pedidos') ? [
+              ...(hasFuncionalidade('PERD/Comp', 'Pedidos') ? [
                 { text: 'Pedidos', icon: <DescriptionIcon />, path: '/fiscal/perdcomp/pedidos' },
               ] : []),
-              ...(hasFuncionalidade('Classificação NCM', 'Simulador') ? [
+              ...(hasFuncionalidade('PERD/Comp', 'Simulador') ? [
                 { text: 'Simulador', icon: <CalculateIcon />, path: '/fiscal/perdcomp/simulador' },
               ] : []),
-              ...(hasFuncionalidade('Classificação NCM', 'Assistente IA') ? [
+              ...(hasFuncionalidade('PERD/Comp', 'Assistente IA') ? [
                 { text: 'Assistente IA', icon: <SmartToyIcon />, path: '/fiscal/perdcomp/assistente' },
               ] : []),
             ],
@@ -259,6 +260,9 @@ export default function MainLayout({ children }: Props) {
         ] : []),
         ...(hasModulo('Caixa Postal eCac') ? [
           { text: 'Caixa Postal eCac', icon: <InboxIcon />, path: '/fiscal/ecac', badge: emBreve }
+        ] : []),
+        ...(hasModulo('Classificação NCM') ? [
+          { text: 'Classificação NCM', icon: <InboxIcon />, path: '/fiscal/classificacao-ncm', badge: emBreve }
         ] : []),
       ]
     },

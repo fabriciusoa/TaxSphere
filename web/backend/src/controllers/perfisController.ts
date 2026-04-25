@@ -14,7 +14,7 @@ export const perfisController = {
          FROM sys_modulo m
          LEFT JOIN sys_funcionalidade f ON f.modulo_id = m.id
          GROUP BY m.id, m.modulo
-         ORDER BY m.modulo`,
+         ORDER BY m.ordenacao`,
 				[]
 			);
 			res.json(modulos);
