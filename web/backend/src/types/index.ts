@@ -6,7 +6,7 @@ export interface Usuario {
   cpf: string;
   nome: string;
   senha: string;
-  adm_mindtax?: boolean;
+  adm_system?: boolean;
   status?: boolean;
   criado: string;
   dt_inativacao: string | null;
@@ -46,14 +46,14 @@ export interface JWTPayload {
   id: number;
   email: string;
   nome?: string;
-  adm_mindtax?: boolean;
+  adm_system?: boolean;
   user_modulos?: UserModulos[];
 }
 
 export interface UserModulos {
   usuario_id: number;
   perfil: string;
-  adm_mindtax?: boolean;
+  adm_system?: boolean;
   modulo_id: number;
   modulo?: string | null;
   user_funcionalidade?: UserFuncionalidade[];

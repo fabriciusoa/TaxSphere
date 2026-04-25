@@ -236,12 +236,12 @@ export const authController = {
       }
 
       // Verifica se o usuário é administrador geral do sistema
-      const perfilADM = await getOne<{ adm_mindtax: boolean }>(
-        'SELECT distinct ap.adm_mindtax FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
+      const perfilADM = await getOne<{ adm_system: boolean }>(
+        'SELECT distinct ap.adm_system FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
         [usuario.id]
       );
       // Verificar se há manutenção em andamento — bloqueia não-admins
-      if (!perfilADM?.adm_mindtax) {
+      if (!perfilADM?.adm_system) {
         const manutencaoAtiva = await getOne<{ descricao: string; dt_fim: string | null }>(
           `SELECT descricao, dt_fim FROM sys_manutencao
            WHERE status = 'em_execucao' AND excluded_at IS NULL
@@ -267,7 +267,7 @@ export const authController = {
       user_modulos = await getAll<UserModulos>(`
             select distinct au.id usuario_id,
                     ap.perfil,
-                    ap.adm_mindtax,
+                    ap.adm_system,
                     sm.id modulo_id,
                     sm.modulo
               from adm_usuarios_perfil aup
@@ -337,7 +337,7 @@ export const authController = {
         id: usuario.id,
         email: usuario.email,
         user_modulos: user_modulos,
-        adm_mindtax: perfilADM?.adm_mindtax || false
+        adm_system: perfilADM?.adm_system || false
       };
 
       const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -363,7 +363,7 @@ export const authController = {
           email: usuario.email,
           cpf: usuario.cpf,
           status: usuario.status,
-          adm_mindtax: perfilADM?.adm_mindtax || false,
+          adm_system: perfilADM?.adm_system || false,
           user_modulos: user_modulos
         }
       });
@@ -419,8 +419,8 @@ export const authController = {
       const sessaoHoras = parseInt(tempoSessao?.valor || '8');
 
       // Verifica se o usuário é administrador geral do sistema
-      const perfilADM = await getOne<{ adm_mindtax: boolean }>(
-        'SELECT distinct ap.adm_mindtax FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
+      const perfilADM = await getOne<{ adm_system: boolean }>(
+        'SELECT distinct ap.adm_system FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
         [usuario.id]
       );
 
@@ -430,7 +430,7 @@ export const authController = {
         user_modulos = await getAll<UserModulos>(`
             select distinct au.id usuario_id,
                     ap.perfil,
-                    ap.adm_mindtax,
+                    ap.adm_system,
                     sm.id modulo_id,
                     sm.modulo
               from adm_usuarios_perfil aup
@@ -480,7 +480,7 @@ export const authController = {
         id: usuario.id,
         email: usuario.email,
         user_modulos: user_modulos,
-        adm_mindtax: perfilADM?.adm_mindtax || false
+        adm_system: perfilADM?.adm_system || false
       };
 
       const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -528,8 +528,8 @@ export const authController = {
       }
 
       // Verifica se o usuário é administrador geral do sistema
-      const perfilADM = await getOne<{ adm_mindtax: boolean }>(
-        'SELECT distinct ap.adm_mindtax FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
+      const perfilADM = await getOne<{ adm_system: boolean }>(
+        'SELECT distinct ap.adm_system FROM adm_usuarios_perfil aup, adm_perfil ap WHERE aup.usuario_id = $1 and aup.perfil_id = ap.id limit 1',
         [usuario.id]
       );
 
@@ -539,7 +539,7 @@ export const authController = {
         user_modulos = await getAll<UserModulos>(`
             select distinct au.id usuario_id,
                     ap.perfil,
-                    ap.adm_mindtax,
+                    ap.adm_system,
                     sm.id modulo_id,
                     sm.modulo
               from adm_usuarios_perfil aup
@@ -589,7 +589,7 @@ export const authController = {
         nome: usuario.nome,
         email: usuario.email,
         cpf: usuario.cpf,
-        adm_mindtax: perfilADM?.adm_mindtax || false,
+        adm_system: perfilADM?.adm_system || false,
         user_modulos: user_modulos,
         status: usuario.status
       });

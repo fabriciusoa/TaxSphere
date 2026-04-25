@@ -453,7 +453,7 @@ const PerfisPage: React.FC = () => {
                       </Box>
                     </TableCell>
                     <TableCell sx={{ fontSize: '0.8125rem', color: T.textSecond }}>
-                      {p.cliente_nome || (p.adm_mindtax ? 'MindTax (Admin)' : '—')}
+                      {p.cliente_nome || (p.adm_system ? 'TaxSphere (Admin)' : '—')}
                     </TableCell>
                     <TableCell align="center" sx={{ fontSize: '0.8125rem', color: T.textSecond }}>
                       —

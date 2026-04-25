@@ -140,7 +140,7 @@ export const chamadosController = {
 		try {
 			const { status, categoria, prioridade, busca, page = 1, limit = 10 } = req.query;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			let whereConditions = ['1=1'];
 			const params: any[] = [];
@@ -232,7 +232,7 @@ export const chamadosController = {
 		try {
 			const { id } = req.params;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			const sql = `
         SELECT 
@@ -315,7 +315,7 @@ export const chamadosController = {
 			const { id } = req.params;
 			const { titulo, descricao, categoria, prioridade, status, usuario_id_atribuido } = req.body;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			// Buscar chamado atual
 			const chamadoAtual = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
@@ -401,7 +401,7 @@ export const chamadosController = {
 		try {
 			const { id } = req.params;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			// Buscar chamado
 			const chamado = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
@@ -434,7 +434,7 @@ export const chamadosController = {
 		try {
 			const { id } = req.params;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			// Verificar se usuário tem permissão para ver este chamado
 			const chamado = await getOne<Chamado>('SELECT * from sys_chamado WHERE id = $1', [id]);
@@ -501,7 +501,7 @@ export const chamadosController = {
 			const { id } = req.params;
 			const { comentario } = req.body;
 			const userId = req.user?.id;
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			if (!comentario || !comentario.trim()) {
 				return res.status(400).json({ error: 'Comentário é obrigatório' });
@@ -746,7 +746,7 @@ export const chamadosController = {
 	 */
 	dashboardAdmin: async (req: AuthRequest, res: Response) => {
 		try {
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 
 			// Verificar se é admin
 			if (!userPerfilId) {

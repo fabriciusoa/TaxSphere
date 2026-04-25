@@ -8,7 +8,7 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
     return res.status(401).json({ error: 'Usuário não autenticado' });
   }
 
-  if (!req.user.adm_mindtax) {
+  if (!req.user.adm_system) {
     log.error(`Usuário ${req.user.id} (${req.user.email}) tentou acessar recurso admin sem permissão`);
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem acessar este recurso.' });
   }
@@ -23,7 +23,7 @@ export function allowedProfiles() {
       return res.status(401).json({ error: 'Usuário não autenticado' });
     }
 
-    if (!req.user.adm_mindtax) {
+    if (!req.user.adm_system) {
       log.error(`Usuário ${req.user.id} (${req.user.email}) sem permissão para acessar este recurso.`);
       return res.status(403).json({ error: 'Acesso negado. Você não tem permissão para acessar este recurso.' });
     }

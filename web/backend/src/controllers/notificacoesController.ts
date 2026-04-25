@@ -386,7 +386,7 @@ const processarFila = async (req: Request, res: Response) => {
 const estatisticas = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const userPerfilId = req.user?.adm_mindtax
+    const userPerfilId = req.user?.adm_system
 
     if (!userId) {
       return res.status(401).json({ error: 'Usuário não autenticado' });
@@ -478,7 +478,7 @@ const estatisticas = async (req: AuthRequest, res: Response) => {
 const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const userPerfilId = req.user?.adm_mindtax;
+    const userPerfilId = req.user?.adm_system;
 
     if (!userId) {
       return res.status(401).json({ error: 'Usuário não autenticado' });
@@ -529,7 +529,7 @@ const reprocessarFalhas = async (req: AuthRequest, res: Response) => {
 const listar = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const userPerfilId = req.user?.adm_mindtax;
+    const userPerfilId = req.user?.adm_system;
 
     if (!userId) {
       log.error(`Usuário não autenticado tentou acessar lista de notificações: ${userId}`);

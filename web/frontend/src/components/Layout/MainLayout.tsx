@@ -121,7 +121,7 @@ export default function MainLayout({ children }: Props) {
   const [openMenus, setOpenMenus] = useState<{ [key: string]: boolean }>({});
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
-  const isAdminSystem = user?.adm_mindtax === true;
+  const isAdminSystem = user?.adm_system === true;
 
   const userModulos = user?.user_modulos || [];
 

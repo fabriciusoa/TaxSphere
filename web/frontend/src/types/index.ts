@@ -121,7 +121,7 @@ export interface PerfilPermissao {
 export interface Perfil {
   id: number;
   perfil: string;
-  adm_mindtax: boolean;
+  adm_system: boolean;
   cliente_id: number | null;
   cliente_nome?: string | null;
   created_at: string;

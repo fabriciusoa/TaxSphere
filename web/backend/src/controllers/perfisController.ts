@@ -36,7 +36,7 @@ export const perfisController = {
 				where.push(`p.perfil ILIKE $${params.length}`);
 			}
 
-			const userPerfilId = req.user?.adm_mindtax;
+			const userPerfilId = req.user?.adm_system;
 			// Verificar se é admin
 			if (!userPerfilId) {
 				const cliente_id = await getOne<any>(`SELECT cliente_id FROM adm_usuarios WHERE id = $1`, [req.user?.id]);
@@ -107,9 +107,9 @@ export const perfisController = {
 
 			const { perfil, permissoes } = resultado.data;
 
-			// Buscar cliente_id do usuário logado (se não for adm_mindtax)
+			// Buscar cliente_id do usuário logado (se não for adm_system)
 			let clienteId: number | null = null;
-			if (!req.user!.adm_mindtax) {
+			if (!req.user!.adm_system) {
 				const usuario = await getOne<any>('SELECT cliente_id FROM adm_usuarios WHERE id = $1', [req.user!.id]);
 				clienteId = usuario?.cliente_id ?? null;
 			}
@@ -121,8 +121,8 @@ export const perfisController = {
 			if (existe) return res.status(409).json({ error: 'Nome de perfil já existe' });
 
 			const row = await runQuery(
-				`INSERT INTO adm_perfil (perfil, cliente_id, adm_mindtax) VALUES ($1, $2, $3) RETURNING id`,
-				[perfil, clienteId, req.user!.adm_mindtax ?? false]
+				`INSERT INTO adm_perfil (perfil, cliente_id, adm_system) VALUES ($1, $2, $3) RETURNING id`,
+				[perfil, clienteId, req.user!.adm_system ?? false]
 			);
 			const perfilId = row.id;
 

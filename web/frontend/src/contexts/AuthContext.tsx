@@ -10,14 +10,14 @@ export interface AuthUser {
   perfil: string;
   perfil_id: number;
   status: string;
-  adm_mindtax: boolean;
+  adm_system: boolean;
   user_modulos: UserModulos[];
 }
 
 export interface UserModulos {
   usuario_id: number;
   perfil: string;
-  adm_mindtax?: boolean;
+  adm_system?: boolean;
   modulo?: string | null;
   user_funcionalidade?: UserFuncionalidade[];
 }

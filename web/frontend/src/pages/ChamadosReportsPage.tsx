@@ -100,7 +100,7 @@ const ChamadosReportsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const { user } = useAuth();
-  const isAdmin = user?.adm_mindtax === true;
+  const isAdmin = user?.adm_system === true;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carregarDados(); }, []);
