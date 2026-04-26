@@ -27,7 +27,7 @@ import { logger } from '../utils/logger';
 
 const APP_VERSION = '1.0.0';
 
-// Design tokens — Synchro / MindTax
+// Design tokens — Synchro / TaxSphere
 const T = {
   // Brand
   navy:       '#00071A',
@@ -207,7 +207,7 @@ export default function LoginPage() {
         <Box sx={{ mb: 6, position: 'relative', zIndex: 1 }}>
           <img
             src="/imagens/logo_ts.jpg"
-            alt="MindTax"
+            alt="TaxSphere"
             style={{
               height: 260,
               objectFit: 'contain',
@@ -232,7 +232,7 @@ export default function LoginPage() {
             Acesse sua conta
           </Typography>
           <Typography sx={{ fontSize: '0.875rem', color: T.textWhite60 }}>
-            Bem-vindo de volta ao MindTax
+            Bem-vindo de volta ao TaxSphere
           </Typography>
         </Box>
 
@@ -345,7 +345,7 @@ export default function LoginPage() {
         {/* Footer */}
         <Box sx={{ mt: 4, textAlign: 'center', position: 'relative', zIndex: 1 }}>
           <Typography sx={{ fontSize: '0.6875rem', color: T.textWhite35, letterSpacing: '0.01em' }}>
-            Versão {APP_VERSION} · © {format(new Date(), 'yyyy')} MindTax
+            Versão {APP_VERSION} · © {format(new Date(), 'yyyy')} TaxSphere
           </Typography>
         </Box>
       </Box>

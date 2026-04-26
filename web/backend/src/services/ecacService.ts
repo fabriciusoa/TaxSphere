@@ -59,7 +59,7 @@ interface TempCertFile {
 
 function writeTempPfx(pfxBuffer: Buffer): TempCertFile {
   const tmpDir = os.tmpdir();
-  const filename = `mindtax-cert-${crypto.randomBytes(8).toString('hex')}.pfx`;
+  const filename = `taxsphere-cert-${crypto.randomBytes(8).toString('hex')}.pfx`;
   const filePath = path.join(tmpDir, filename);
   fs.writeFileSync(filePath, pfxBuffer, { mode: 0o600 });
   return {

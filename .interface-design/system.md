@@ -1,4 +1,4 @@
-# MindTax — Design System
+# TaxSphere — Design System
 **Estilo:** Synchro — autoridade fiscal + inteligência digital  
 **Referência visual:** Split-panel (form esquerdo / brand direito), similar ao Mentis/Vercel
 

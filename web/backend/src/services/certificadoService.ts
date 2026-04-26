@@ -9,7 +9,7 @@ if (!SECRET) {
 
 function deriveKey(): Buffer {
   if (!SECRET) throw new Error('CERT_ENCRYPTION_KEY ou JWT_SECRET não configurado');
-  return crypto.scryptSync(SECRET, 'mindtax-salt-cert', 32);
+  return crypto.scryptSync(SECRET, 'taxsphere-salt-cert', 32);
 }
 
 export interface CertificadoInfo {

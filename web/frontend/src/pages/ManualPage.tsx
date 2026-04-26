@@ -56,7 +56,7 @@ export default function ManualPage() {
         </Typography>
 
         <Typography sx={{ fontSize: '0.9375rem', color: T.textSecond, lineHeight: 1.65, mb: 4 }}>
-          Acesse a documentação completa do MindTax com tutoriais,
+          Acesse a documentação completa do TaxSphere com tutoriais,
           guias passo a passo e informações sobre todas as funcionalidades.
         </Typography>
 

@@ -60,8 +60,8 @@ import { logger } from '../../utils/logger';
 const drawerWidth = 264;
 
 const S = {
-  navy: '#050F22',
-  navyMid: '#050F22',
+  navy: '#00081D',
+  navyMid: '#00081D',
   navyLight: '#123152',
   cyan: '#00BFD4',
   cyanDim: 'rgba(0, 191, 212, 0.12)',
@@ -206,7 +206,7 @@ export default function MainLayout({ children }: Props) {
     ...(hasModulo('Dashboard') ? [
       { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
     ] : []),
-    // Módulos Fiscais — core do MindTax
+    // Módulos Fiscais — core do TaxSphere
     {
       text: 'Soluções Fiscais',
       icon: <AccountBalanceIcon />,
@@ -580,7 +580,7 @@ export default function MainLayout({ children }: Props) {
             <MenuIcon />
           </IconButton>
 
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography sx={{
               fontFamily: '"Inter", system-ui, sans-serif',
               fontSize: '0.9375rem', fontWeight: 600,
@@ -763,5 +763,5 @@ function getPageTitle(pathname: string): string {
     '/sistema/parametros': 'Parâmetros',
     '/sistema/manutencao': 'Manutenção',
   };
-  return map[pathname] ?? 'MindTax';
+  return map[pathname] ?? 'TaxSphere';
 }

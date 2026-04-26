@@ -1,4 +1,4 @@
-# Banco de Dados — MindTax Backend
+# Banco de Dados — TaxSphere Backend
 
 **Banco:** PostgreSQL (hospedado no [Supabase](https://supabase.com))  
 **Driver:** `pg ^8.13.3` + `@types/pg ^8.11.10`  
