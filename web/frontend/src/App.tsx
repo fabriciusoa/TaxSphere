@@ -30,6 +30,7 @@ const DctfWebDashboardPage = lazy(() => import('./pages/dctfweb/DctfWebDashboard
 const DctfWebDeclaracoesPage = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
 const ClientesPage = lazy(() => import('./pages/ClientesPage'));
 const PerfisPage = lazy(() => import('./pages/PerfisPage'));
+const NcmTabelaPage = lazy(() => import('./pages/ncm/NcmTabelaPage'));
 
 // Fallback leve exibido enquanto o chunk da página é baixado (< 1 s em LAN/produção)
 function PageLoader() {
@@ -90,7 +91,7 @@ function App() {
                 <Route path="/fiscal/ecac" element={<ModuloEmBreve />} />
 
                 {/*Classificacao NCM */}
-                <Route path="/fiscal/classificacao-ncm" element={<ModuloEmBreve />} />
+                <Route path="/fiscal/ncm/tabela" element={<NcmTabelaPage />} />
 
                 {/* Suporte */}
                 <Route path="/suporte/chamado" element={<ChamadoPage />} />

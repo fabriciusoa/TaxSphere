@@ -259,3 +259,22 @@ export interface DashboardChamados {
   por_categoria: ChamadoPorCategoria[];
   top_usuarios: TopUsuarioChamados[];
 }
+
+// ============================================
+// TIPOS PARA NCM (NOMENCLATURA COMUM MERCOSUL)
+// ============================================
+
+export interface NcmTabela {
+  id: number;
+  created_at: string;
+  updated_at: string | null;
+  codigo: string;
+  descricao: string;
+  dt_inicio: string | null;
+  dt_fim: string | null;
+  ato_legal: string | null;
+  numero: string | null;
+  ano: number | null;
+  status: boolean;
+  dt_atualizacao: string | null;
+}

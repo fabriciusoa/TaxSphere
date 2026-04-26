@@ -269,4 +269,32 @@ export const perfilUpdateSchema = z.object({
 });
 
 export type PerfilCreateDTO = z.infer<typeof perfilCreateSchema>;
+
+// ============================================
+// SCHEMAS PARA NCM TABELA
+// ============================================
+export const ncmTabelaCreateSchema = z.object({
+  codigo: z.string().min(1, 'Código é obrigatório').max(50, 'Código muito longo'),
+  descricao: z.string().min(1, 'Descrição é obrigatória'),
+  dt_inicio: z.string().nullable().optional(),
+  dt_fim: z.string().nullable().optional(),
+  ato_legal: z.string().nullable().optional(),
+  numero: z.string().nullable().optional(),
+  ano: z.number().int().nullable().optional(),
+  status: z.boolean().optional(),
+});
+
+export const ncmTabelaUpdateSchema = z.object({
+  codigo: z.string().min(1, 'Código é obrigatório').max(50, 'Código muito longo').optional(),
+  descricao: z.string().min(1, 'Descrição é obrigatória').optional(),
+  dt_inicio: z.string().nullable().optional(),
+  dt_fim: z.string().nullable().optional(),
+  ato_legal: z.string().nullable().optional(),
+  numero: z.string().nullable().optional(),
+  ano: z.number().int().nullable().optional(),
+  status: z.boolean().optional(),
+});
+
+export type NcmTabelaCreateDTO = z.infer<typeof ncmTabelaCreateSchema>;
+export type NcmTabelaUpdateDTO = z.infer<typeof ncmTabelaUpdateSchema>;
 export type PerfilUpdateDTO = z.infer<typeof perfilUpdateSchema>;

@@ -262,8 +262,21 @@ export default function MainLayout({ children }: Props) {
           { text: 'Caixa Postal eCac', icon: <InboxIcon />, path: '/fiscal/ecac', badge: emBreve }
         ] : []),
         ...(hasModulo('Classificação NCM') ? [
-          { text: 'Classificação NCM', icon: <InboxIcon />, path: '/fiscal/classificacao-ncm', badge: emBreve }
+          {
+            text: 'Classificação NCM',
+            icon: <InboxIcon />,
+            submenu: [
+              ...(hasFuncionalidade('Classificação NCM', 'Tabela NCM') ? [
+                { text: 'Tabela NCM', icon: <DescriptionIcon />, path: '/fiscal/ncm/tabela' },
+              ] : []),
+              ...(hasFuncionalidade('Classificação NCM', 'Manual') ? [
+                { text: 'Manual', icon: <MenuBookIcon />, path: '/fiscal/ncm/manual' },
+              ] : []),
+            ]
+          },
         ] : []),
+
+
       ]
     },
     // Suporte
@@ -746,7 +759,9 @@ function getPageTitle(pathname: string): string {
     '/fiscal/dctf-web/declaracoes': 'DCTF Web - Declarações',
     '/fiscal/cnds': 'Gestão de CNDs',
     '/fiscal/ecac': 'Caixa Postal eCac',
-
+    //NCM
+    '/fiscal/ncm/tabela': 'Classificação NCM - Tabela',
+    '/fiscal/ncm/manual': 'Classificação NCM - Manual',
     // Suporte
     '/suporte/chamado': 'Chamados',
     '/suporte/manual': 'Manual',

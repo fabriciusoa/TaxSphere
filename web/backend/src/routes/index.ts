@@ -30,6 +30,7 @@ import { log } from '../utils/logger';
 import { empresasController } from '../controllers/empresasController';
 import { clientesController } from '../controllers/clientesController';
 import { perfisController } from '../controllers/perfisController';
+import { ncmTabelaController } from '../controllers/ncmTabelaController';
 
 const router = Router();
 
@@ -296,6 +297,14 @@ router.post('/clientes', authenticateToken, requireAdmin, clientesController.cri
 router.put('/clientes/:id', authenticateToken, requireAdmin, clientesController.atualizar);
 router.patch('/clientes/:id/ativo', authenticateToken, requireAdmin, clientesController.alternarAtivo);
 router.delete('/clientes/:id', authenticateToken, requireAdmin, clientesController.excluir);
+
+// NCM Tabela (apenas ADMIN)
+router.get('/ncm-tabela', authenticateToken, requireAdmin, ncmTabelaController.listar);
+router.get('/ncm-tabela/:id', authenticateToken, requireAdmin, ncmTabelaController.buscarPorId);
+router.post('/ncm-tabela', authenticateToken, requireAdmin, ncmTabelaController.criar);
+router.put('/ncm-tabela/:id', authenticateToken, requireAdmin, ncmTabelaController.atualizar);
+router.patch('/ncm-tabela/:id/status', authenticateToken, requireAdmin, ncmTabelaController.alternarStatus);
+router.delete('/ncm-tabela/:id', authenticateToken, requireAdmin, ncmTabelaController.excluir);
 
 // Empresas (uso comum para todos os módulos)
 router.get('/empresas', authenticateToken, empresasController.listar);
