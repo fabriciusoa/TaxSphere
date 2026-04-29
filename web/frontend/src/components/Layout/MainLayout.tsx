@@ -35,6 +35,7 @@ import {
   MenuBook as MenuBookIcon,
   Assessment as AssessmentIcon,
   SupervisorAccount as SupervisorAccountIcon,
+  SwitchAccount as SwitchAccountIcon,
   Build as BuildIcon,
   AccountBalance as AccountBalanceIcon,
   Receipt as ReceiptIcon,
@@ -153,14 +154,23 @@ export default function MainLayout({ children }: Props) {
   };
 
   const handleUserMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
     setAnchorEl(event.currentTarget);
   };
 
   const handleUserMenuClose = () => setAnchorEl(null);
 
   const handleLogout = async () => {
+    handleUserMenuClose();
     await logout();
     navigate('/login');
+  };
+
+  const handleSwitchUser = async () => {
+    handleUserMenuClose();
+    await logout();
+    navigate('/login?switch=1');
   };
 
   const handleChangePassword = () => {
@@ -510,7 +520,7 @@ export default function MainLayout({ children }: Props) {
         </List>
       </Box>
 
-      {/* Rodapé do sidebar — usuário */}
+      {/* Rodapé do sidebar — usuário (apenas display, sem interação) */}
       <Box sx={{
         px: 2, py: 2,
         borderTop: `1px solid ${S.dividerSide}`,
@@ -587,48 +597,47 @@ export default function MainLayout({ children }: Props) {
             </Typography>
           </Box>
 
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Sessão do usuário — botão HTML puro (sem dependência de MUI/Box) */}
+          <button
+            type="button"
+            onClick={handleUserMenuOpen}
+            aria-label="Menu do usuário"
+            aria-haspopup="menu"
+            aria-expanded={Boolean(anchorEl)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '4px 8px',
+              borderRadius: 999,
+              userSelect: 'none',
+              font: 'inherit',
+              color: 'inherit',
+              pointerEvents: 'auto',
+              zIndex: 9999,
+              position: 'relative',
+            }}
+          >
             <Box sx={{ textAlign: 'right', display: { xs: 'none', sm: 'block' } }}>
-              <Typography sx={{ fontSize: '0.8125rem', fontWeight: 600, color: S.textPrimary, lineHeight: 1.2 }}>
+              <Typography component="span" sx={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: S.textPrimary, lineHeight: 1.2 }}>
                 {user?.nome}
               </Typography>
-              <Typography sx={{ fontSize: '0.6875rem', color: S.textSecond, lineHeight: 1.4 }}>
+              <Typography component="span" sx={{ display: 'block', fontSize: '0.6875rem', color: S.textSecond, lineHeight: 1.4 }}>
                 {user?.perfil}
               </Typography>
             </Box>
-            <IconButton
-              onClick={handleUserMenuOpen}
-              size="small"
-              sx={{
-                p: 0.5,
-                position: 'relative',
-                transition: 'transform 220ms ease',
-                '&:hover': { transform: 'scale(1.05)' },
-                '&::before': {
-                  content: '""',
-                  position: 'absolute',
-                  inset: 0,
-                  borderRadius: '50%',
-                  padding: '2px',
-                  background: `conic-gradient(from 0deg, ${S.cyan}, ${S.emerald}, ${S.cyan})`,
-                  WebkitMask:
-                    'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-                  WebkitMaskComposite: 'xor',
-                  maskComposite: 'exclude',
-                  opacity: 0.9,
-                },
-              }}
-            >
-              <Avatar sx={{
-                width: 34, height: 34, fontSize: '0.875rem', fontWeight: 700,
-                background: `linear-gradient(135deg, ${S.cyan} 0%, ${S.emerald} 100%)`,
-                color: S.navy,
-                boxShadow: '0 0 0 2px #FFF inset',
-              }}>
-                {user?.nome?.charAt(0)?.toUpperCase()}
-              </Avatar>
-            </IconButton>
-          </Box>
+            <Avatar sx={{
+              width: 36, height: 36, fontSize: '0.9rem', fontWeight: 700,
+              background: `linear-gradient(135deg, ${S.cyan} 0%, ${S.emerald} 100%)`,
+              color: S.navy,
+              boxShadow: `0 0 0 2px ${S.cyan}, 0 0 0 4px rgba(0,191,212,0.18)`,
+            }}>
+              {user?.nome?.charAt(0)?.toUpperCase()}
+            </Avatar>
+          </button>
 
           <Menu
             anchorEl={anchorEl}
@@ -656,6 +665,10 @@ export default function MainLayout({ children }: Props) {
               Trocar a senha
             </MenuItem>
             <Divider sx={{ my: 0.5, borderColor: S.borderBase }} />
+            <MenuItem onClick={handleSwitchUser} sx={{ fontSize: '0.875rem', gap: 1.5 }}>
+              <SwitchAccountIcon fontSize="small" sx={{ color: S.cyan }} />
+              Trocar de usuário
+            </MenuItem>
             <MenuItem onClick={handleLogout} sx={{ fontSize: '0.875rem', gap: 1.5, color: '#D32F2F' }}>
               <LogoutIcon fontSize="small" sx={{ color: '#D32F2F' }} />
               Sair
