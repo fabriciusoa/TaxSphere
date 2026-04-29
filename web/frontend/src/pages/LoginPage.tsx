@@ -203,18 +203,17 @@ export default function LoginPage() {
           pointerEvents: 'none',
         }} />
 
-        {/* Logo */}
-        <Box sx={{ mb: 6, position: 'relative', zIndex: 1 }}>
+        {/* Logo — PNG transparente limpo */}
+        <Box sx={{ mb: 6, position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'center' }}>
           <img
-            src="/imagens/logo_ts.jpg"
+            src="/TaxSphere_clean.png"
             alt="TaxSphere"
             style={{
-              height: 260,
+              width: '100%',
+              maxWidth: 320,
+              height: 'auto',
               objectFit: 'contain',
               display: 'block',
-              margin: '0 auto',
-              maskImage: 'radial-gradient(ellipse 70% 70% at 50% 50%, black 35%, transparent 100%)',
-              WebkitMaskImage: 'radial-gradient(ellipse 70% 70% at 50% 50%, black 35%, transparent 100%)',
             }}
           />
         </Box>

@@ -80,32 +80,16 @@ const S = {
   textSecond: '#5E748A',
 };
 
-/** Realce do logo: contraste + saturação + brilho leve + glow discreto (cyan / verde marca) */
+/** Logo PNG transparente — uso direto sem hacks */
 const logoImageSx = {
   width: '100%',
   maxHeight: 120,
   objectFit: 'contain' as const,
   objectPosition: 'center' as const,
   display: 'block',
-  // Realce do CONTEÚDO (esfera + "TaxSphere")
-  filter: [
-    'saturate(1.75)',
-    'contrast(1.25)',
-    'brightness(1.12)',
-  ].join(' '),
-  // Máscara radial: bordas do JPG fazem fade gradual até transparente,
-  // dissolvendo qualquer diferença de azul entre o retângulo do logo e o navy do painel.
-  WebkitMaskImage:
-    'radial-gradient(ellipse 78% 68% at center, #000 40%, rgba(0,0,0,0.6) 70%, rgba(0,0,0,0) 100%)',
-  maskImage:
-    'radial-gradient(ellipse 78% 68% at center, #000 40%, rgba(0,0,0,0.6) 70%, rgba(0,0,0,0) 100%)',
   transition: 'filter 320ms ease',
   '&:hover': {
-    filter: [
-      'saturate(1.95)',
-      'contrast(1.30)',
-      'brightness(1.18)',
-    ].join(' '),
+    filter: 'brightness(1.08) saturate(1.1)',
   },
 };
 
@@ -426,7 +410,7 @@ export default function MainLayout({ children }: Props) {
       >
         <Box
           component="img"
-          src="/logo_ts.jpg"
+          src="/TaxSphere_clean.png"
           alt="TaxSphere"
           sx={logoImageSx}
         />
@@ -716,7 +700,7 @@ export default function MainLayout({ children }: Props) {
         </Drawer>
       </Box>
 
-      {/* Conteúdo principal — fundo clean com vinheta radial sutil na paleta da marca */}
+      {/* Conteúdo principal — vinheta radial + marca d'água da esfera */}
       <Box
         component="main"
         sx={{
@@ -731,9 +715,24 @@ export default function MainLayout({ children }: Props) {
             `radial-gradient(1200px 600px at 100% 0%, rgba(0,191,212,0.06), transparent 60%)`,
             `radial-gradient(900px 500px at 0% 100%, rgba(43,203,154,0.05), transparent 60%)`,
           ].join(', '),
+          // Marca d'água sutil da esfera, centralizada (75% da área)
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            inset: 0,
+            backgroundImage: 'url(/TS_Sphere.png)',
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'center',
+            backgroundSize: 'min(75vh, 75%) auto',
+            opacity: 0.06,
+            pointerEvents: 'none',
+            zIndex: 0,
+          },
         }}
       >
-        {children}
+        <Box sx={{ position: 'relative', zIndex: 1 }}>
+          {children}
+        </Box>
       </Box>
     </Box>
   );
