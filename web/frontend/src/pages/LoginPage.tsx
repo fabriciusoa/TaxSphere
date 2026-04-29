@@ -73,17 +73,24 @@ const inputSx = {
       borderWidth: 1.5,
     },
   },
-  '& .MuiInputLabel-root': {
-    color: T.textWhite60,
-    fontSize: '0.875rem',
-  },
-  '& .MuiInputLabel-root.Mui-focused': {
-    color: T.cyan,
+  // Sem label flutuante — usamos label externo (Typography) acima do input
+  '& .MuiOutlinedInput-notchedOutline legend': {
+    display: 'none',
   },
   '& .MuiInputBase-input': {
     color: T.textWhite,
     '&::placeholder': { color: T.textWhite35 },
   },
+} as const;
+
+// Label externo — padrão moderno (Stripe/Vercel/Linear): claro, fixo acima do input
+const fieldLabelSx = {
+  display: 'block',
+  mb: 0.75,
+  fontSize: '0.8125rem',
+  fontWeight: 600,
+  color: 'rgba(255,255,255,0.92)',
+  letterSpacing: '0.01em',
 } as const;
 
 const SLIDES = [
@@ -249,29 +256,36 @@ export default function LoginPage() {
 
         {/* Form */}
         <Box component="form" onSubmit={handleSubmit} sx={{ flex: 1, position: 'relative', zIndex: 1 }}>
-          <TextField
-            fullWidth
-            label="E-mail"
-            value={usuario}
-            onChange={(e) => setUsuario(e.target.value)}
-            margin="normal"
-            required
-            autoFocus
-            disabled={loading}
-            sx={inputSx}
-          />
+          <Box sx={{ mb: 2.5 }}>
+            <Typography component="label" htmlFor="login-email" sx={fieldLabelSx}>
+              E-mail <Box component="span" sx={{ color: T.cyan }}>*</Box>
+            </Typography>
+            <TextField
+              id="login-email"
+              fullWidth
+              value={usuario}
+              onChange={(e) => setUsuario(e.target.value)}
+              required
+              autoFocus
+              disabled={loading}
+              sx={inputSx}
+            />
+          </Box>
 
-          <TextField
-            label="Senha"
-            type={showPassword ? 'text' : 'password'}
-            value={senha}
-            onChange={(e) => setSenha(e.target.value)}
-            placeholder="Digite sua senha"
-            required
-            fullWidth
-            disabled={loading}
-            margin="normal"
-            sx={inputSx}
+          <Box sx={{ mb: 2.5 }}>
+            <Typography component="label" htmlFor="login-senha" sx={fieldLabelSx}>
+              Senha <Box component="span" sx={{ color: T.cyan }}>*</Box>
+            </Typography>
+            <TextField
+              id="login-senha"
+              type={showPassword ? 'text' : 'password'}
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              placeholder="Digite sua senha"
+              required
+              fullWidth
+              disabled={loading}
+              sx={inputSx}
             slotProps={{
               input: {
                 endAdornment: (
@@ -292,6 +306,7 @@ export default function LoginPage() {
               },
             }}
           />
+          </Box>
 
           <Button
             type="submit"
