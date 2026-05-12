@@ -36,9 +36,8 @@ import {
 } from '@mui/icons-material';
 import { perdcompService } from '../../services/perdcompService';
 import type { PerdcompCredito, TipoCredito, OrigemCredito, StatusCredito } from '../../types/perdcomp';
-import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
-import { empresasService } from '../../services/empresasService';
+import { useEmpresa } from '../../contexts/EmpresaContext';
 
 const T = {
   navy: '#0a1628',
@@ -99,8 +98,8 @@ const emptyForm: FormData = {
 };
 
 export default function CreditosPage() {
+  const { empresaId: filtroEmpresa, empresas } = useEmpresa();
   const [creditos, setCreditos] = useState<PerdcompCredito[]>([]);
-  const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selicLoading, setSelicLoading] = useState(false);
@@ -110,7 +109,6 @@ export default function CreditosPage() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [total, setTotal] = useState(0);
 
-  const [filtroEmpresa, setFiltroEmpresa] = useState<number | ''>('');
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroBusca, setFiltroBusca] = useState('');
@@ -119,15 +117,6 @@ export default function CreditosPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-
-  const carregarEmpresas = useCallback(async () => {
-    try {
-      const resp = await empresasService.listar({ limit: 200 });
-      setEmpresas(resp.data);
-    } catch (err: any) {
-      logger.error('Erro ao carregar empresas', err);
-    }
-  }, []);
 
   const carregarCreditos = useCallback(async () => {
     try {
@@ -150,7 +139,6 @@ export default function CreditosPage() {
     }
   }, [filtroEmpresa, filtroTipo, filtroStatus, filtroBusca, page, rowsPerPage]);
 
-  useEffect(() => { carregarEmpresas(); }, [carregarEmpresas]);
   useEffect(() => { carregarCreditos(); }, [carregarCreditos]);
 
   const handleAtualizarSelic = async () => {
@@ -277,19 +265,6 @@ export default function CreditosPage() {
       </Box>
 
       <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <FormControl size="small" sx={{ minWidth: 200, ...inputSx }}>
-          <InputLabel>Empresa</InputLabel>
-          <Select
-            value={filtroEmpresa}
-            label="Empresa"
-            onChange={(e) => { setFiltroEmpresa(e.target.value as number | ''); setPage(0); }}
-          >
-            <MenuItem value="">Todas</MenuItem>
-            {empresas.map(emp => (
-              <MenuItem key={emp.id} value={emp.id}>{emp.razao_social}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
         <FormControl size="small" sx={{ minWidth: 150, ...inputSx }}>
           <InputLabel>Tipo Crédito</InputLabel>
           <Select value={filtroTipo} label="Tipo Crédito" onChange={(e) => { setFiltroTipo(e.target.value as string); setPage(0); }}>
@@ -324,7 +299,10 @@ export default function CreditosPage() {
             <Table size="small">
               <TableHead>
                 <TableRow sx={{ backgroundColor: T.navy }}>
-                  {['Empresa', 'Tipo Crédito', 'Origem', 'Período', 'Valor Original', 'Valor Atualizado', 'Saldo Disponível', 'Prescrição', 'Status', 'Ações'].map(h => (
+                  {[
+                    ...(!filtroEmpresa ? ['Empresa'] : []),
+                    'Tipo Crédito', 'Origem', 'Período', 'Valor Original', 'Valor Atualizado', 'Saldo Disponível', 'Prescrição', 'Status', 'Ações'
+                  ].map(h => (
                     <TableCell key={h} sx={{ color: '#fff', fontWeight: 600, fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{h}</TableCell>
                   ))}
                 </TableRow>
@@ -332,14 +310,14 @@ export default function CreditosPage() {
               <TableBody>
                 {creditos.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4, color: T.textSecond }}>
+                    <TableCell colSpan={filtroEmpresa ? 9 : 10} sx={{ textAlign: 'center', py: 4, color: T.textSecond }}>
                       Nenhum crédito encontrado.
                     </TableCell>
                   </TableRow>
                 ) : (
                   creditos.map(c => (
                     <TableRow key={c.id} hover sx={{ '&:hover': { backgroundColor: 'rgba(0,200,240,0.04)' } }}>
-                      <TableCell sx={{ fontSize: '0.8125rem' }}>{c.empresa_razao_social || c.id_empresa}</TableCell>
+                      {!filtroEmpresa && <TableCell sx={{ fontSize: '0.8125rem' }}>{c.empresa_razao_social || c.id_empresa}</TableCell>}
                       <TableCell sx={{ fontSize: '0.8125rem' }}>{c.tipo_credito}</TableCell>
                       <TableCell sx={{ fontSize: '0.8125rem' }}>{c.origem_credito}</TableCell>
                       <TableCell sx={{ fontSize: '0.8125rem' }}>{c.periodo_apuracao}</TableCell>

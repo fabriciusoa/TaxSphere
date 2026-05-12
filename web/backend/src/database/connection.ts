@@ -1,6 +1,13 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool, PoolClient, types as pgTypes } from 'pg';
 import dotenv from 'dotenv';
 import { log, flushLogsAndExit } from '../utils/logger';
+
+// PostgreSQL retorna NUMERIC/DECIMAL/BIGINT como string por padrão (precisão arbitrária).
+// Para nossos casos de uso (créditos/débitos com 2 casas decimais), JavaScript Number
+// é suficiente e evita bugs no front (NaN em soma, Zod rejeitando "Dados inválidos").
+pgTypes.setTypeParser(1700, (v: string) => v === null ? null : parseFloat(v)); // NUMERIC
+pgTypes.setTypeParser(20, (v: string) => v === null ? null : parseInt(v, 10));   // BIGINT
+pgTypes.setTypeParser(701, (v: string) => v === null ? null : parseFloat(v));    // FLOAT8
 
 dotenv.config();
 

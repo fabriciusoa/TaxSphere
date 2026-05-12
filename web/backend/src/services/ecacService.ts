@@ -1,80 +1,277 @@
-import puppeteer, { Browser, Page } from 'puppeteer';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import crypto from 'crypto';
+import forge from 'node-forge';
+import path from 'path';
+import fs from 'fs';
+import { execSync } from 'child_process';
 import { log } from '../utils/logger';
 
-const ECAC_LOGIN_URL = 'https://cav.receita.fazenda.gov.br/autenticacao/login';
-const ECAC_DCTFWEB_URL = 'https://dctfweb.cav.receita.fazenda.gov.br/aplicacoesweb/dctfweb/default.aspx';
-const ECAC_SITUACAO_URL = 'https://cav.receita.fazenda.gov.br/ecac/Aplicacao.aspx?id=10015&origem=pesquisa';
+const ECAC_LOGIN_URL = 'https://cav.receita.fazenda.gov.br/autenticacao/Login';
+const ECAC_CONSULTA_URL = 'https://www3.cav.receita.fazenda.gov.br/consprocperdcomp/consulta/processamento';
 
-const NAVIGATION_TIMEOUT = 60000;
-const PAGE_LOAD_DELAY = 3000;
+// e-CAC time policy:
+// - Before 08h: maintenance window (unavailable)
+// - 08h–18h: individual operations allowed
+// - After 18h: batch operations allowed
+const ECAC_BUSINESS_START_HOUR = 8;
+const ECAC_RESTRICTED_END_HOUR = 18;
 
-export interface EcacCredito {
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EcacPerdcompDocumento {
+  numero: string;
+  tipo_documento: string;
   tipo_credito: string;
-  origem_credito: string;
   periodo_apuracao: string;
-  codigo_receita: string;
-  valor_original: number;
-  dt_pagamento_original: string;
-  observacoes: string;
+  data_entrega: string;
+  status_ecac: string;
+  orig_retif: string;
 }
 
-export interface EcacDebito {
-  tipo_tributo: string;
-  codigo_receita: string;
-  periodo_apuracao: string;
-  valor_principal: number;
-  valor_multa: number;
-  valor_juros: number;
-  dt_vencimento: string;
-  observacoes: string;
-}
-
-export interface EcacDctfWebDeclaracao {
-  categoria: string;
-  periodo_apuracao: string;
-  situacao: string;
-  debito_apurado: number;
-  saldo_pagar: number;
-  data_transmissao: string;
-  origem: string;
-}
-
-export interface EcacExtractionResult {
+export interface EcacConsultaResult {
   success: boolean;
-  creditos: EcacCredito[];
-  debitos: EcacDebito[];
-  declaracoes: EcacDctfWebDeclaracao[];
+  documentos: EcacPerdcompDocumento[];
+  total: number;
+  paginas: number;
   errors: string[];
-  screenshots?: string[];
+  sessaoExpirada?: boolean;
 }
 
-interface TempCertFile {
-  path: string;
-  cleanup: () => void;
+// ─────────────────────────────────────────────────────────────────────────────
+// Número PER/DCOMP (portal pode omitir zeros à esquerda ou colar texto extra na célula)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PERDCOMP_NUMERO_FLEX_RE = /(\d{1,5})\.(\d{1,5})\.(\d{6})\.(\d{1,2})\.(\d{1,2})\.(\d{1,3})-(\d{4})/;
+
+/** Normaliza para o formato canônico 5.5.6.n.n.02-1234 usado no banco após importação. */
+export function normalizePerdcompNumero(input: string): string | null {
+  const t = (input || '').replace(/\u00a0/g, ' ').trim();
+  if (!t) return null;
+  const m = t.match(PERDCOMP_NUMERO_FLEX_RE);
+  if (!m) return null;
+  const a = m[1].padStart(5, '0');
+  const b = m[2].padStart(5, '0');
+  const f = m[6].padStart(2, '0');
+  return `${a}.${b}.${m[3]}.${m[4]}.${m[5]}.${f}-${m[7]}`;
 }
 
-function writeTempPfx(pfxBuffer: Buffer): TempCertFile {
-  const tmpDir = os.tmpdir();
-  const filename = `taxsphere-cert-${crypto.randomBytes(8).toString('hex')}.pfx`;
-  const filePath = path.join(tmpDir, filename);
-  fs.writeFileSync(filePath, pfxBuffer, { mode: 0o600 });
-  return {
-    path: filePath,
-    cleanup: () => {
-      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-    },
+function locatorHintsForPerdcomp(canonical: string, rawFromDom?: string): string[] {
+  const hints: string[] = [];
+  const add = (s?: string) => {
+    const x = (s || '').trim();
+    if (x && !hints.includes(x)) hints.push(x);
   };
+  add(rawFromDom);
+  add(canonical);
+  const parts = canonical.match(/^(\d{5})\.(\d{5})\.(\d{6})\.(\d{1,2})\.(\d{1,2})\.(\d{2})-(\d{4})$/);
+  if (parts) {
+    const [, a, b, c, d, e, f, g] = parts;
+    add(`${parseInt(a, 10)}.${parseInt(b, 10)}.${c}.${d}.${e}.${f}-${g}`);
+  }
+  return hints;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cookie encryption helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getCookieKey(): Buffer {
+  const secret = process.env.CERT_ENCRYPTION_KEY || process.env.JWT_SECRET || 'fallback-key-32c';
+  return Buffer.from(secret.padEnd(32, '0').substring(0, 32));
+}
+
+export function decryptSessaoCookies(sessaoCookies: string): any[] {
+  const [ivHex, authTagHex, encHex] = sessaoCookies.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+  const enc = Buffer.from(encHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', getCookieKey(), iv);
+  decipher.setAuthTag(authTag);
+  const json = Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf-8');
+  return JSON.parse(json);
+}
+
+export function encryptSessaoCookies(cookies: any[]): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getCookieKey(), iv);
+  const enc = Buffer.concat([cipher.update(JSON.stringify(cookies), 'utf-8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${enc.toString('hex')}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual authentication
+// Opens a visible browser for the user to log in, captures session cookies.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function autenticarManualmente(
+  pfxBuffer: Buffer,
+  passphrase: string,
+  timeoutMs = 5 * 60 * 1000,
+  onProgress?: (msg: string) => void,
+  afterAuth?: (context: BrowserContext, page: Page) => Promise<void>,
+): Promise<{ sessaoCookies: string; cookiesCount: number; url: string }> {
+  const progress = (msg: string) => { log.info(`[Auth] ${msg}`); onProgress?.(msg); };
+
+  const tempDir = path.join(process.cwd(), 'temp');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const ts = Date.now();
+  const tempPfxPath = path.join(tempDir, `auth_${ts}.pfx`);
+  const tempPs1Path = path.join(tempDir, `install_cert_${ts}.ps1`);
+  fs.writeFileSync(tempPfxPath, pfxBuffer, { mode: 0o600 });
+
+  // Install PFX into Windows Certificate Store so Chrome can use it for any domain
+  let thumbprint = '';
+  try {
+    const safePass = passphrase.replace(/"/g, '`"');
+    const pfxPathFwd = tempPfxPath.replace(/\\/g, '/');
+    const ps1 = [
+      `$pass = ConvertTo-SecureString -String "${safePass}" -Force -AsPlainText`,
+      `$cert = Import-PfxCertificate -FilePath "${pfxPathFwd}" -CertStoreLocation Cert:\\CurrentUser\\My -Password $pass`,
+      `Write-Output $cert.Thumbprint`,
+    ].join('\r\n');
+    fs.writeFileSync(tempPs1Path, ps1, 'utf-8');
+    const out = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${tempPs1Path}"`, { timeout: 15000 }).toString().trim();
+    thumbprint = out.split('\n').pop()?.trim() ?? '';
+    progress(`Certificado instalado no Windows Store (${thumbprint.substring(0, 8)}...)`);
+  } catch (e: any) {
+    log.warn(`[Auth] Falha ao instalar cert no Windows store: ${e.message}`);
+  }
+
+  let browser: Browser | undefined;
+  let usandoChrome = false;
+
+  try {
+    // Prefer real Chrome (reads Windows Certificate Store natively)
+    try {
+      browser = await chromium.launch({
+        channel: 'chrome',
+        headless: false,
+        args: ['--no-sandbox', '--ignore-certificate-errors', '--start-maximized', '--disable-blink-features=AutomationControlled'],
+      });
+      usandoChrome = true;
+      progress('Browser: Google Chrome (usa Windows Certificate Store)');
+    } catch {
+      log.warn('[Auth] Google Chrome não encontrado — usando Playwright Chromium');
+      browser = await chromium.launch({
+        headless: false,
+        args: ['--no-sandbox', '--ignore-certificate-errors', '--start-maximized', '--disable-blink-features=AutomationControlled'],
+      });
+    }
+
+    const context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      viewport: null,
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    });
+
+    // Polyfill do helper __name injetado pelo esbuild/tsx — necessário para que
+    // funções passadas a page.evaluate() não quebrem com "ReferenceError: __name is not defined".
+    await context.addInitScript('globalThis.__name = globalThis.__name || function(fn){return fn;};');
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'plugins', { get: () => Array.from({ length: 5 }, () => ({})) });
+      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+      (window as any).chrome = { runtime: {} };
+    });
+
+    const page = await context.newPage();
+    await page.goto(ECAC_LOGIN_URL, { waitUntil: 'load', timeout: 30000 });
+    await page.bringToFront();
+
+    // Instruction banner visible to the user
+    await page.evaluate((usingChrome: boolean) => {
+      const b = document.createElement('div');
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#1565c0;color:#fff;padding:14px 20px;font:bold 16px/1.4 sans-serif;text-align:center;box-shadow:0 3px 10px rgba(0,0,0,.5)';
+      b.innerHTML = usingChrome
+        ? 'PERDCOMP — Faça login no e-CAC. Clique em <b>Gov.BR → Certificado Digital</b> e selecione o certificado quando solicitado.'
+        : 'PERDCOMP — Faça login no e-CAC com seu certificado digital. Esta janela fecha automaticamente após o login.';
+      document.body.style.setProperty('margin-top', '56px', 'important');
+      document.body.prepend(b);
+    }, usandoChrome).catch(() => {});
+
+    progress('Browser aberto — aguardando login do usuário (5 min)...');
+
+    const deadline = Date.now() + timeoutMs;
+    let authenticated = false;
+    let finalUrl = '';
+
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(2000);
+      const url = page.url();
+      const isAtEcac = (url.includes('cav.receita.fazenda.gov.br') || url.includes('www3.cav.receita.fazenda.gov.br'));
+      const isAuthPage = url.includes('autenticacao') || url.includes('login') || url.includes('Login') ||
+        url.includes('sso.acesso.gov.br') || url.includes('acesso.gov.br') || url.includes('serpro.gov.br');
+
+      if (isAtEcac && !isAuthPage) {
+        authenticated = true;
+        finalUrl = url;
+        break;
+      }
+    }
+
+    if (!authenticated) throw new Error('Timeout: usuário não completou o login no prazo de 5 minutos.');
+
+    progress(`Login detectado: ${finalUrl}`);
+
+    const cookies = await context.cookies([
+      'https://cav.receita.fazenda.gov.br',
+      'https://www3.cav.receita.fazenda.gov.br',
+      'https://sso.acesso.gov.br',
+    ]);
+    progress(`${cookies.length} cookie(s) de sessão capturado(s)`);
+
+    // Run any post-auth work in the same browser session (avoids bot detection on new sessions)
+    if (afterAuth) {
+      try {
+        await afterAuth(context, page);
+      } catch (e: any) {
+        log.warn(`[Auth] afterAuth falhou: ${e.message}`);
+      }
+    }
+
+    return { sessaoCookies: encryptSessaoCookies(cookies), cookiesCount: cookies.length, url: finalUrl };
+
+  } finally {
+    await browser?.close().catch(() => {});
+
+    if (thumbprint) {
+      try {
+        execSync(
+          `powershell -NoProfile -Command "Remove-Item 'Cert:\\CurrentUser\\My\\${thumbprint}' -Force -ErrorAction SilentlyContinue"`,
+          { timeout: 5000 }
+        );
+        log.info('[Auth] Certificado removido do Windows Store');
+      } catch (e: any) {
+        log.warn(`[Auth] Falha ao remover cert: ${e.message}`);
+      }
+    }
+
+    try { fs.unlinkSync(tempPfxPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(tempPs1Path); } catch { /* ignore */ }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EcacService — automated PER/DCOMP document consultation via Playwright
+// ─────────────────────────────────────────────────────────────────────────────
 
 export class EcacService {
   private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
   private page: Page | null = null;
-  private tempCert: TempCertFile | null = null;
+  private sessaoInjetada = false;
+  // Temp PEM files for clientCertificates — Playwright reads these LAZILY during the TLS
+  // handshake, so we cannot delete them in initBrowser. Track and clean up on fechar().
+  private tempPemFiles: string[] = [];
   private onProgress?: (msg: string, pct: number) => void;
+  // Loga o HTML da primeira linha que falhar (uma vez por execução) para
+  // diagnosticar seletores quando o e-CAC mudar a estrutura do botão.
+  private static _htmlLogged = false;
 
   constructor(onProgress?: (msg: string, pct: number) => void) {
     this.onProgress = onProgress;
@@ -85,269 +282,764 @@ export class EcacService {
     this.onProgress?.(msg, pct);
   }
 
-  async iniciar(pfxBuffer: Buffer, passphrase: string): Promise<void> {
-    this.progress('Preparando certificado digital...', 5);
-
-    this.tempCert = writeTempPfx(pfxBuffer);
-
-    this.progress('Iniciando navegador...', 10);
-
-    this.browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--window-size=1366,768',
-        '--ignore-certificate-errors',
-        `--auto-select-certificate-for-urls={"pattern":"*receita.fazenda.gov.br*","filter":{}}`,
-      ],
-    });
-
-    const context = this.browser.defaultBrowserContext();
-    this.page = await context.newPage();
-
-    await this.page.setViewport({ width: 1366, height: 768 });
-    await this.page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
-
-    await this.page.setRequestInterception(true);
-    this.page.on('request', (request) => {
-      const blockedTypes = ['image', 'stylesheet', 'font', 'media'];
-      if (blockedTypes.includes(request.resourceType())) {
-        request.abort();
-      } else {
-        request.continue();
-      }
-    });
+  /**
+   * Reuse an already-authenticated browser context (from the manual login session).
+   * Calling this before consultarPerdcompDocumentos/baixarRecibos skips initBrowser,
+   * so the same browser session that passed human login is used for automation —
+   * bypassing bot detection that triggers on new Playwright-driven sessions.
+   */
+  usarContextoExistente(context: BrowserContext, page: Page): void {
+    this.browser = null; // not owned by us — caller owns the browser lifecycle
+    this.context = context;
+    this.page = page;
+    this.sessaoInjetada = true;
   }
 
-  async autenticarEcac(): Promise<boolean> {
-    if (!this.page || !this.tempCert) throw new Error('Navegador não iniciado');
+  private assertTimeWindow(isBatch: boolean) {
+    const hora = new Date().getHours();
+    if (hora < ECAC_BUSINESS_START_HOUR) {
+      throw new Error(`e-CAC indisponível antes das ${ECAC_BUSINESS_START_HOUR}h (janela de manutenção).`);
+    }
+    if (isBatch && hora < ECAC_RESTRICTED_END_HOUR) {
+      throw new Error(
+        `Operações em lote no e-CAC só são permitidas após as ${ECAC_RESTRICTED_END_HOUR}h. ` +
+        `Horário atual: ${hora}h. Tente novamente após as 18h.`
+      );
+    }
+  }
+
+  private async initBrowser(pfxBuffer: Buffer, passphrase: string, sessaoCookies?: string | null): Promise<void> {
+    // Extract PEM from PFX via node-forge.
+    // Playwright/BoringSSL rejects ICP-Brasil PKCS#12 with legacy RC2/3DES encryption,
+    // but node-forge handles it in pure JavaScript.
+    let certPem = '';
+    let keyPem = '';
+
+    if (passphrase) {
+      try {
+        const p12Asn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, passphrase);
+
+        const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
+        const certBag = certBags[forge.pki.oids.certBag]?.[0];
+        if (certBag?.cert) certPem = forge.pki.certificateToPem(certBag.cert);
+
+        const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+        const keyBag = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
+        if (keyBag?.key) keyPem = forge.pki.privateKeyToPem(keyBag.key);
+      } catch (e) {
+        log.warn(`[eCAC] Falha ao extrair PEM: ${e} — prosseguindo sem clientCertificates`);
+      }
+    }
+
+    const tempDir = path.join(process.cwd(), 'temp');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const ts = Date.now();
+    const certPemPath = path.join(tempDir, `cert_${ts}.pem`);
+    const keyPemPath = path.join(tempDir, `key_${ts}.pem`);
 
     try {
-      this.progress('Acessando portal eCAC...', 15);
-      await this.page.goto(ECAC_LOGIN_URL, { waitUntil: 'networkidle2' });
+      fs.writeFileSync(certPemPath, certPem || '', { mode: 0o600 });
+      fs.writeFileSync(keyPemPath, keyPem || '', { mode: 0o600 });
+      log.info(`[eCAC] PEM extraído — cert=${certPem.length}b key=${keyPem.length}b — clientCertificates ${certPem && keyPem ? 'CONFIGURADO' : 'NÃO configurado (faltando cert ou key)'}`);
 
-      await this.delay(PAGE_LOAD_DELAY);
-      this.progress('Selecionando autenticação por certificado...', 20);
-
-      const certButtonSelectors = [
-        'a[href*="certificado"]',
-        'button:has-text("Certificado")',
-        '[data-type="certificado"]',
-        'a.certificado-digital',
-        '#login-certificate',
-        'a[title*="certificado" i]',
-        'a[title*="Certificado" i]',
-      ];
-
-      let clicked = false;
-      for (const selector of certButtonSelectors) {
+      // Use Microsoft Edge (channel:'msedge') because the captured cookies came
+      // from real Edge — using Chrome here causes a UA/fingerprint mismatch that
+      // e-CAC's anti-fraud detects, redirecting to login on first navigation.
+      // Fall back to Chrome → Chromium if Edge isn't available.
+      try {
+        this.browser = await chromium.launch({
+          channel: 'msedge',
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--ignore-certificate-errors',
+            '--disable-blink-features=AutomationControlled',
+          ],
+        });
+      } catch {
+        log.warn('[eCAC] Microsoft Edge não encontrado — tentando Chrome');
         try {
-          const el = await this.page.$(selector);
-          if (el) {
-            await el.click();
-            clicked = true;
-            break;
-          }
-        } catch { /* try next */ }
+          this.browser = await chromium.launch({
+            channel: 'chrome',
+            headless: true,
+            args: [
+              '--no-sandbox',
+              '--ignore-certificate-errors',
+              '--disable-blink-features=AutomationControlled',
+            ],
+          });
+        } catch {
+          log.warn('[eCAC] Chrome também não encontrado — usando Playwright Chromium (pode ser detectado como bot)');
+          this.browser = await chromium.launch({
+            headless: true,
+            args: [
+              '--no-sandbox',
+              '--ignore-certificate-errors',
+              '--disable-blink-features=AutomationControlled',
+            ],
+          });
+        }
       }
 
-      if (!clicked) {
-        const links = await this.page.$$('a');
-        for (const link of links) {
-          const text = await link.evaluate(el => el.textContent || '');
-          if (text.toLowerCase().includes('certificado')) {
-            await link.click();
-            clicked = true;
-            break;
+      this.context = await this.browser.newContext({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1920, height: 1080 },
+        locale: 'pt-BR',
+        timezoneId: 'America/Sao_Paulo',
+        // Match Edge's UA — the captured cookies are bound to an Edge session;
+        // a Chrome UA here triggers e-CAC anti-fraud (UA != session origin).
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
+        ...(certPem && keyPem ? {
+          clientCertificates: [
+            { origin: 'https://cav.receita.fazenda.gov.br', certPath: certPemPath, keyPath: keyPemPath },
+            { origin: 'https://www3.cav.receita.fazenda.gov.br', certPath: certPemPath, keyPath: keyPemPath },
+            { origin: 'https://sso.acesso.gov.br', certPath: certPemPath, keyPath: keyPemPath },
+          ],
+        } : {}),
+      });
+
+      this.context.setDefaultTimeout(60000);
+
+      // Polyfill do helper __name injetado pelo esbuild/tsx (evita
+      // "ReferenceError: __name is not defined" em page.evaluate).
+      await this.context.addInitScript('globalThis.__name = globalThis.__name || function(fn){return fn;};');
+
+      // Patch automation fingerprints detected by eCac's bot scorer
+      await this.context.addInitScript(() => {
+        // webdriver flag
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        // Realistic plugin list (mimics Chrome with common plugins)
+        const mockPlugins: any = [
+          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+          { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+          { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 },
+        ];
+        Object.defineProperty(navigator, 'plugins', { get: () => Object.assign(mockPlugins, { item: (i: number) => mockPlugins[i], namedItem: (n: string) => mockPlugins.find((p: any) => p.name === n) }) });
+        Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+        // chrome runtime
+        (window as any).chrome = {
+          app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
+          runtime: { OnInstalledReason: {}, OnRestartRequiredReason: {}, PlatformArch: {}, PlatformNaclArch: {}, PlatformOs: {}, RequestUpdateCheckStatus: {} },
+          loadTimes: () => ({}),
+          csi: () => ({}),
+        };
+        // Permissions API — avoid 'denied' for notifications (bot signal)
+        const origQuery = window.navigator.permissions?.query?.bind(window.navigator.permissions);
+        if (origQuery) {
+          (window.navigator.permissions as any).query = (params: any) =>
+            params.name === 'notifications'
+              ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
+              : origQuery(params);
+        }
+        // Realistic screen props
+        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+        Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+        // Remove Playwright-specific globals that leak automation
+        delete (window as any).__playwright;
+        delete (window as any).__pw_manual;
+        delete (window as any)._playwrightWorkerIndex;
+      });
+
+      if (sessaoCookies) {
+        try {
+          const rawCookies = decryptSessaoCookies(sessaoCookies);
+          if (rawCookies.length > 0) {
+            // Inject one-by-one with normalization. Chromium silently drops cookies that
+            // pass addCookies' surface validation but violate stricter rules (e.g. SameSite=None
+            // requires Secure). We diff before/after to detect silent drops.
+            const beforeCount = (await this.context.cookies()).length;
+            let injected = 0;
+            const failures: string[] = [];
+            const droppedSilently: string[] = [];
+            for (const c of rawCookies) {
+              const cookieDomain = String(c.domain || '');
+              const hostname = cookieDomain.replace(/^\./, '');
+              const originalPath = c.path ? String(c.path) : '/';
+              // Chromium rule: SameSite=None cookies MUST be Secure. Force it.
+              const sameSite = ['Strict', 'Lax', 'None'].includes(c.sameSite) ? c.sameSite : 'Lax';
+              const secure = sameSite === 'None' ? true : Boolean(c.secure);
+              // Force path='/' so the cookie is sent on EVERY URL of the host. The original
+              // path (e.g. '/autenticacao') would prevent the cookie from being included
+              // when navigating to '/ecac/' — server would then redirect to login.
+              const path = '/';
+              const url = `https://${hostname}${path}`;
+              const pwCookie: any = {
+                name: String(c.name),
+                value: String(c.value ?? ''),
+                domain: cookieDomain,
+                path,
+                httpOnly: Boolean(c.httpOnly),
+                secure,
+                sameSite,
+                expires: typeof c.expires === 'number' && c.expires > 0 ? c.expires : -1,
+              };
+              if (originalPath !== '/') {
+                log.info(`[eCAC] Cookie ${cookieDomain}:${c.name} path original="${originalPath}" forçado para "/"`);
+              }
+              try {
+                const before = await this.context.cookies(url);
+                await this.context.addCookies([pwCookie]);
+                const after = await this.context.cookies(url);
+                if (after.length > before.length || after.some(x => x.name === pwCookie.name && x.value === pwCookie.value)) {
+                  injected++;
+                } else {
+                  // addCookies didn't throw but Chromium silently dropped it — try fallback with url-only
+                  try {
+                    const fallback = { ...pwCookie };
+                    delete fallback.domain;
+                    fallback.url = url;
+                    await this.context.addCookies([fallback]);
+                    const after2 = await this.context.cookies(url);
+                    if (after2.some(x => x.name === pwCookie.name)) {
+                      injected++;
+                      log.info(`[eCAC] Cookie ${cookieDomain}:${c.name} aceito via fallback url-only`);
+                    } else {
+                      droppedSilently.push(`${cookieDomain}:${c.name} (sameSite=${sameSite},secure=${secure},httpOnly=${pwCookie.httpOnly},len=${pwCookie.value.length})`);
+                    }
+                  } catch {
+                    droppedSilently.push(`${cookieDomain}:${c.name} (sameSite=${sameSite},secure=${secure})`);
+                  }
+                }
+              } catch (err: any) {
+                failures.push(`${cookieDomain}:${c.name} → ${err.message}`);
+              }
+            }
+            this.sessaoInjetada = injected > 0;
+            const afterCount = (await this.context.cookies()).length;
+            log.info(`[eCAC] ${injected}/${rawCookies.length} cookie(s) injetados (contexto: ${beforeCount} → ${afterCount})`);
+            if (failures.length > 0) log.warn(`[eCAC] Cookies que lançaram erro: ${failures.join(' | ')}`);
+            if (droppedSilently.length > 0) log.warn(`[eCAC] Cookies silenciosamente descartados pelo Chromium: ${droppedSilently.join(' | ')}`);
+            // Dump EVERY cookie in context with full attrs so we can see why some don't match URL filters
+            const all = await this.context.cookies();
+            log.info(`[eCAC] Todos os cookies no contexto (${all.length}):`);
+            for (const c of all) {
+              log.info(`  → ${c.domain} | name=${c.name} | path=${c.path} | secure=${c.secure} | httpOnly=${c.httpOnly} | sameSite=${c.sameSite} | expires=${c.expires}`);
+            }
+            const confirmed = await this.context.cookies([
+              'https://cav.receita.fazenda.gov.br',
+              'https://www3.cav.receita.fazenda.gov.br',
+              'https://sso.acesso.gov.br',
+            ]);
+            log.info(`[eCAC] Cookies que casam com URLs e-CAC: ${confirmed.length} → ${confirmed.map(c => `${c.domain}${c.path}:${c.name}`).join(', ')}`);
+          }
+        } catch (e: any) {
+          log.warn(`[eCAC] Falha geral ao injetar cookies: ${e.message ?? e}`);
+        }
+      }
+
+      this.page = await this.context.newPage();
+      // Track PEM files for cleanup in fechar() — Playwright reads them lazily during
+      // TLS handshake, so deleting them now would cause client cert auth to fail and
+      // the server would redirect every request to login.
+      this.tempPemFiles.push(certPemPath, keyPemPath);
+
+      // Log all main-frame navigations and their responses for e-CAC domains so we can
+      // see the actual HTTP redirect chain that produces "session expired".
+      this.page.on('response', (response) => {
+        const url = response.url();
+        if (/cav\.receita|sso\.acesso|gov\.br/.test(url)) {
+          const status = response.status();
+          const location = response.headers()['location'];
+          log.info(`[eCAC/net] ${status} ${url}${location ? ' → ' + location : ''}`);
+        }
+      });
+      this.page.on('requestfailed', (request) => {
+        const url = request.url();
+        if (/cav\.receita|sso\.acesso|gov\.br/.test(url)) {
+          log.warn(`[eCAC/net] FAILED ${request.method()} ${url} — ${request.failure()?.errorText}`);
+        }
+      });
+    } catch (err) {
+      // Only delete on init failure — if init succeeded, files must persist.
+      try { fs.unlinkSync(certPemPath); } catch { /* ignore */ }
+      try { fs.unlinkSync(keyPemPath); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  private async waitForLoading(): Promise<void> {
+    if (!this.page) return;
+    // Wait for the br-loading component to hide
+    try {
+      await this.page.waitForSelector('br-loading', { state: 'hidden', timeout: 30000 });
+    } catch { /* spinner may not appear for fast operations */ }
+    // Also wait for any backdrop div inside it to stop intercepting pointer events
+    await this.page.waitForSelector('br-loading .backdrop', { state: 'hidden', timeout: 8000 }).catch(() => {});
+    await this.page.waitForTimeout(400); // brief settle time after CSS transition
+  }
+
+  /**
+   * Parse the ngx-datatable (or regular HTML table) on the current page.
+   * Identifies columns dynamically by header text.
+   */
+  private async parseResultTable(): Promise<EcacPerdcompDocumento[]> {
+    if (!this.page) return [];
+
+    const tableData = await this.page.evaluate(() => {
+      // Strategy 1: Angular ngx-datatable
+      const ngxRows = document.querySelectorAll('datatable-body-row');
+      if (ngxRows.length > 0) {
+        const headerCells = document.querySelectorAll('datatable-header-cell');
+        const headers = Array.from(headerCells).map(h => (h.textContent || '').trim().toLowerCase());
+
+        return Array.from(ngxRows).map(row => {
+          const cells = row.querySelectorAll('datatable-body-cell');
+          const values = Array.from(cells).map(c => (c.textContent || '').trim());
+          const obj: Record<string, string> = {};
+          headers.forEach((h, i) => { obj[h] = values[i] || ''; });
+          return obj;
+        });
+      }
+
+      // Strategy 2: standard HTML table
+      const tables = document.querySelectorAll('table');
+      for (const table of Array.from(tables)) {
+        const headerRow = table.querySelector('thead tr, tr:first-child');
+        if (!headerRow) continue;
+        const headers = Array.from(headerRow.querySelectorAll('th, td'))
+          .map(h => (h.textContent || '').trim().toLowerCase());
+        if (!headers.some(h =>
+          h.includes('per') || h.includes('dcomp') || h.includes('número') || h.includes('numero')
+        )) continue;
+
+        const bodyRows = table.querySelectorAll('tbody tr, tr:not(:first-child)');
+        return Array.from(bodyRows).map(row => {
+          const cells = row.querySelectorAll('td');
+          const values = Array.from(cells).map(c => (c.textContent || '').trim());
+          const obj: Record<string, string> = {};
+          headers.forEach((h, i) => { obj[h] = values[i] || ''; });
+          return obj;
+        }).filter(r => Object.values(r).some(v => v));
+      }
+
+      return [];
+    });
+
+    if (!tableData || tableData.length === 0) {
+      log.warn('[eCAC] Nenhum dado encontrado na tabela de resultados');
+      return [];
+    }
+
+    log.info(`[eCAC] Tabela: ${tableData.length} linha(s). Headers: ${Object.keys(tableData[0]).join(', ')}`);
+
+    return tableData.map(row => {
+      const keys = Object.keys(row);
+      const find = (patterns: string[]) =>
+        row[keys.find(k => patterns.some(p => k.includes(p))) || ''] || '';
+
+      const rawNumero = find(['número', 'numero', 'per/dcomp', 'perdcomp', 'nro']);
+      return {
+        numero: normalizePerdcompNumero(rawNumero) || rawNumero,
+        tipo_documento: find(['documento', 'tipo doc', 'tipo de doc']),
+        tipo_credito: find(['crédito', 'credito', 'tipo cred']),
+        periodo_apuracao: find(['período', 'periodo', 'apuração', 'apuracao']),
+        data_entrega: find(['data', 'entrega', 'transmis', 'envio']),
+        status_ecac: find(['situação', 'situacao', 'status', 'estado']),
+        orig_retif: find(['orig', 'retif', 'cancelador']),
+      };
+    }).filter(r => r.numero);
+  }
+
+  /**
+   * Try to maximize items per page (Angular Material mat-paginator or native select).
+   */
+  private async tryIncreasePageSize(): Promise<void> {
+    if (!this.page) return;
+    try {
+      const matSelectSelectors = [
+        'mat-select.mat-paginator-page-size-select',
+        'mat-select.mat-mdc-paginator-page-size-select',
+        '.mat-paginator-page-size mat-select',
+        '.mat-mdc-paginator-page-size mat-select',
+        '[class*="page-size"] mat-select',
+        'mat-select',
+      ];
+
+      for (const sel of matSelectSelectors) {
+        const loc = this.page.locator(sel).first();
+        if (await loc.count() === 0) continue;
+
+        await loc.click({ timeout: 5000 });
+        await this.page.waitForTimeout(800);
+
+        const optionSel = 'mat-option, .mat-option, .mat-mdc-option';
+        await this.page.waitForSelector(optionSel, { timeout: 3000 }).catch(() => null);
+        const options = this.page.locator(optionSel);
+        if (await options.count() === 0) { await this.page.keyboard.press('Escape'); continue; }
+
+        const textos = await options.allInnerTexts();
+        const nums = textos.map(t => parseInt(t.trim())).filter(n => !isNaN(n) && n > 0).sort((a, b) => b - a);
+        if (nums.length > 0 && nums[0] > 10) {
+          await options.filter({ hasText: String(nums[0]) }).first().click({ timeout: 5000 });
+          await this.page.waitForTimeout(2000);
+          await this.waitForLoading();
+          log.info(`[eCAC] Itens/pág aumentado para ${nums[0]}`);
+          return;
+        }
+        await this.page.keyboard.press('Escape');
+        break;
+      }
+
+      // Fallback: native HTML select
+      const selects = this.page.locator('select');
+      const selectCount = await selects.count();
+      for (let i = 0; i < selectCount; i++) {
+        const sel = selects.nth(i);
+        const opts = await sel.locator('option').allInnerTexts().catch(() => [] as string[]);
+        const nums = opts.map(t => parseInt(t.trim())).filter(n => !isNaN(n) && n > 10);
+        if (nums.length > 0) {
+          await sel.selectOption(String(Math.max(...nums)));
+          await this.page.waitForTimeout(2000);
+          await this.waitForLoading();
+          log.info(`[eCAC] Itens/pág aumentado para ${Math.max(...nums)} (select nativo)`);
+          return;
+        }
+      }
+    } catch (e: any) {
+      log.warn(`[eCAC] tryIncreasePageSize: ${e.message}`);
+    }
+  }
+
+  /**
+   * Navigate to next results page.
+   * Returns false when on the last page.
+   */
+  private async goNextPage(currentPage: number): Promise<boolean> {
+    if (!this.page) return false;
+
+    // Strategy 1: Angular Material mat-paginator navigation-next button
+    const matNextSelectors = [
+      'button.mat-mdc-paginator-navigation-next',
+      'button.mat-paginator-navigation-next',
+      '[class*="paginator-navigation-next"]',
+      'button[aria-label="Next page"]',
+      'button[aria-label="Próxima página"]',
+      'button[aria-label="Próxima"]',
+    ];
+
+    for (const sel of matNextSelectors) {
+      try {
+        const loc = this.page.locator(sel).first();
+        if (await loc.count() === 0) continue;
+
+        const isDisabled = await loc.evaluate((el: Element) =>
+          el.hasAttribute('disabled') ||
+          (el as HTMLButtonElement).disabled ||
+          el.getAttribute('aria-disabled') === 'true' ||
+          el.classList.contains('mat-button-disabled')
+        ).catch(() => true);
+
+        if (isDisabled) {
+          log.info(`[eCAC] Botão próxima desabilitado (${sel}) — última página`);
+          return false;
+        }
+
+        await loc.click({ timeout: 8000 });
+        log.info(`[eCAC] Clicou próxima via "${sel}"`);
+        return true;
+      } catch { /* try next selector */ }
+    }
+
+    // Strategy 2: Click the next page number directly
+    const nextNum = currentPage + 1;
+    const clicked = await this.page.evaluate((n: number) => {
+      const btns = Array.from(document.querySelectorAll<HTMLElement>(
+        'button:not([disabled]):not(.mat-button-disabled), a:not(.disabled)'
+      ));
+      const btn = btns.find(b => {
+        const txt = (b.textContent || '').trim();
+        if (txt !== String(n)) return false;
+        if (b.getAttribute('aria-current') === 'page') return false;
+        if (b.classList.contains('active') || b.classList.contains('selected')) return false;
+        return true;
+      });
+      if (btn) { btn.click(); return true; }
+      return false;
+    }, nextNum);
+
+    if (clicked) {
+      log.info(`[eCAC] Clicou no número de página ${nextNum}`);
+      return true;
+    }
+
+    // Strategy 3: Read pager label "N – M de Total"
+    const info = await this.page.evaluate(() => {
+      const match = document.body.innerText.match(/(\d[\d.,]*)\s*[-–]\s*(\d[\d.,]*)\s+de\s+(\d[\d.,]*)/i);
+      if (!match) return null;
+      return {
+        fim: parseInt(match[2].replace(/\D/g, '')),
+        total: parseInt(match[3].replace(/\D/g, '')),
+      };
+    });
+
+    if (info && info.fim >= info.total) {
+      log.info(`[eCAC] Última página confirmada pelo pager: ${info.fim}/${info.total}`);
+      return false;
+    }
+
+    // Strategy 4: Last enabled button inside any pagination container
+    const clickedLast = await this.page.evaluate(() => {
+      const containers = Array.from(document.querySelectorAll<HTMLElement>(
+        'mat-paginator, .mat-paginator, .mat-mdc-paginator, [class*="paginator"], [class*="pagination"]'
+      ));
+      for (const container of containers) {
+        const btns = Array.from(container.querySelectorAll<HTMLButtonElement>('button'));
+        const enabled = btns.filter(b => !b.disabled && !b.classList.contains('mat-button-disabled'));
+        if (enabled.length >= 2) {
+          enabled[enabled.length - 1].click();
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (clickedLast) {
+      log.info('[eCAC] Clicou no último botão habilitado da paginação');
+      return true;
+    }
+
+    log.warn('[eCAC] Não foi possível avançar para próxima página');
+    return false;
+  }
+
+  /**
+   * Click the "Consultar" button on the consultation page.
+   */
+  private async clickConsultar(): Promise<void> {
+    if (!this.page) return;
+    try {
+      // Ensure backdrop is gone before attempting click
+      await this.page.waitForSelector('br-loading .backdrop', { state: 'hidden', timeout: 15000 }).catch(() => {});
+      await this.page.waitForTimeout(500);
+
+      // Try known selector first
+      const btn = this.page.locator('button:has-text("Consultar")').first();
+      if (await btn.count() > 0) {
+        // Standard click with generous timeout; fall back to force click if still intercepted
+        try {
+          await btn.click({ timeout: 15000 });
+          log.info('[eCAC] Botão Consultar clicado com sucesso');
+          return;
+        } catch {
+          log.warn('[eCAC] Click padrão interceptado — tentando click forçado via JavaScript');
+          await btn.evaluate((el: HTMLElement) => el.click());
+          return;
+        }
+      }
+
+      // Fallback: scan all buttons for consultation keywords via JS
+      await this.page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], input[type="submit"]'));
+        const el = els.find(e => {
+          const t = (e.textContent || '').toLowerCase().trim();
+          return t === 'consultar' || t === 'pesquisar' || t === 'buscar';
+        });
+        if (el) el.click();
+        else throw new Error('Botão Consultar não encontrado na página');
+      });
+    } catch (e: any) {
+      log.warn(`[eCAC] clickConsultar: ${e.message}`);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Public API
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Consult all PER/DCOMP documents at e-CAC for the authenticated company.
+   *
+   * @param pfxBuffer  - raw (decrypted) PFX bytes
+   * @param passphrase - certificate password
+   * @param sessaoCookies - encrypted session cookies stored in certificados_digitais.sessao_cookies
+   * @param isBatch    - enforces after-18h time window when true
+   */
+  async consultarPerdcompDocumentos(
+    pfxBuffer: Buffer,
+    passphrase: string,
+    sessaoCookies: string | null,
+    isBatch = true,
+  ): Promise<EcacConsultaResult> {
+    const result: EcacConsultaResult = { success: false, documentos: [], total: 0, paginas: 0, errors: [] };
+
+    try {
+      this.assertTimeWindow(isBatch);
+    } catch (e: any) {
+      result.errors.push(e.message);
+      return result;
+    }
+
+    try {
+      if (!this.context) {
+        this.progress('Inicializando navegador com certificado digital...', 5);
+        await this.initBrowser(pfxBuffer, passphrase, sessaoCookies);
+      } else {
+        this.progress('Reutilizando sessão autenticada...', 5);
+      }
+
+      if (!this.page) throw new Error('Página não inicializada');
+
+      // If no session cookies, attempt automated login flow
+      if (!this.sessaoInjetada) {
+        this.progress('Iniciando fluxo de autenticação no e-CAC...', 10);
+        await this.page.goto(ECAC_LOGIN_URL, { waitUntil: 'load', timeout: 60000 });
+
+        const alreadyIn = this.page.url().includes('ecac/Default')
+          || this.page.url().includes('ecac/Aplicacao')
+          || (await this.page.locator('text=Sair').count()) > 0;
+
+        if (!alreadyIn) {
+          // Click Gov.BR button
+          await this.page.evaluate(() => {
+            const els = Array.from(document.querySelectorAll<HTMLElement>(
+              'a, button, input[type="button"], input[type="submit"], input[type="image"], [role="button"]'
+            ));
+            const el = els.find(e => {
+              const text = (e.textContent || '').toLowerCase();
+              const alt = ((e as HTMLImageElement).alt || '').toLowerCase();
+              const src = ((e as HTMLImageElement).src || '').toLowerCase();
+              return text.includes('gov.br') || text.includes('govbr') || alt.includes('gov') || src.includes('govbr');
+            });
+            if (el) el.click();
+          });
+
+          await this.page.waitForNavigation({ waitUntil: 'load', timeout: 45000 }).catch(() => null);
+          await this.page.waitForTimeout(3000);
+
+          // If redirected to SSO, click "Certificado Digital"
+          if (this.page.url().includes('sso.acesso.gov.br') || this.page.url().includes('acesso.gov.br')) {
+            await this.page.evaluate(() => {
+              const els = Array.from(document.querySelectorAll<HTMLElement>('a, button, [role="button"]'));
+              const el = els.find(e => {
+                const t = (e.textContent || '').toLowerCase();
+                return t.includes('certificado digital') || t.includes('certificate');
+              });
+              if (el) el.click();
+            });
+            await this.page.waitForNavigation({ waitUntil: 'load', timeout: 45000 }).catch(() => null);
+            await this.page.waitForTimeout(5000);
           }
         }
       }
 
-      if (!clicked) {
-        log.warn('[eCAC] Não encontrou botão de certificado, tentando acesso direto');
+      // Step 1: Land on the main e-CAC portal so the session is established for ALL subdomains.
+      // Navigating directly to www3.cav.receita.fazenda.gov.br without coming through the portal
+      // leaves Angular waiting for an auth handshake, causing an infinite loading overlay.
+      this.progress('Estabelecendo sessão no portal e-CAC...', 20);
+      await this.page.goto('https://cav.receita.fazenda.gov.br/ecac/', { waitUntil: 'load', timeout: 60000 });
+      await this.page.waitForTimeout(3000);
+
+      // Verify we're authenticated (not redirected to login)
+      const portalUrl = this.page.url().toLowerCase();
+      log.info(`[eCAC/consulta] URL após navegação portal: ${portalUrl}`);
+      if (portalUrl.includes('autenticacao') || portalUrl.includes('login') || portalUrl.includes('sso.acesso.gov.br')) {
+        result.sessaoExpirada = true;
+        throw new Error('Sessão e-CAC expirada. Acesse a aba Certificados e clique em "Autenticar no e-CAC" para renovar a sessão.');
+      }
+      await this.waitForLoading();
+
+      // Step 2: Navigate to the PER/DCOMP consultation page now that the session is active.
+      this.progress('Navegando para consulta de processamento PER/DCOMP...', 30);
+      await this.page.goto(ECAC_CONSULTA_URL, { waitUntil: 'load', timeout: 90000 });
+      await this.page.waitForTimeout(4000); // Allow Angular SPA to bootstrap
+
+      // Detect session expiry: check URL (case-insensitive) and whether we landed on the right domain
+      const detectSessionExpiry = async (context: string) => {
+        if (!this.page) return false;
+        const url = this.page.url().toLowerCase();
+        const onWrongDomain = !url.includes('consprocperdcomp') && !url.includes('www3.cav.receita.fazenda.gov.br');
+        const isLoginPage = url.includes('autenticacao') || url.includes('login') || url.includes('sso.acesso.gov.br') || url.includes('acesso.gov.br');
+        if (onWrongDomain || isLoginPage) {
+          log.warn(`[eCAC] Sessão expirada detectada em ${context}: URL=${this.page.url()}`);
+          return true;
+        }
+        // Also check page body for session expiry indicators
+        const hasLoginIndicator = await this.page.evaluate(() => {
+          const text = (document.body?.textContent || '').toLowerCase();
+          return text.includes('sessão expirada') || text.includes('sessao expirada') ||
+                 text.includes('efetue o login') || text.includes('fazer login') ||
+                 text.includes('acesso não autorizado') || text.includes('acesso nao autorizado') ||
+                 (text.includes('entrar') && text.includes('cpf'));
+        }).catch(() => false);
+        if (hasLoginIndicator) {
+          log.warn(`[eCAC] Sessão expirada detectada por conteúdo de página em ${context}`);
+          return true;
+        }
+        return false;
+      };
+
+      if (await detectSessionExpiry('após navegação inicial')) {
+        result.sessaoExpirada = true;
+        throw new Error('Sessão e-CAC expirada. Acesse a aba Certificados e clique em "Autenticar no e-CAC" para renovar a sessão.');
       }
 
-      this.progress('Aguardando autenticação com certificado...', 30);
-      await this.delay(5000);
+      await this.waitForLoading();
+      this.progress('Página de consulta carregada. Iniciando busca...', 40);
 
-      const currentUrl = this.page.url();
-      const authenticated = currentUrl.includes('ecac') ||
-                           currentUrl.includes('cav.receita') ||
-                           currentUrl.includes('dctfweb') ||
-                           !currentUrl.includes('login');
+      // Click "Consultar" to load all documents
+      await this.clickConsultar();
+      await this.page.waitForTimeout(3000); // wait for Angular to start the request
+      await this.waitForLoading();
 
-      if (authenticated) {
-        this.progress('Autenticação realizada com sucesso', 35);
-        return true;
+      // Check session expiry again after clicking Consultar (some SPAs redirect lazily)
+      if (await detectSessionExpiry('após Consultar')) {
+        result.sessaoExpirada = true;
+        throw new Error('Sessão e-CAC expirada ao executar consulta. Acesse a aba Certificados e clique em "Autenticar no e-CAC" para renovar a sessão.');
       }
 
-      log.warn(`[eCAC] URL pós-login: ${currentUrl}`);
-      return false;
-    } catch (err: any) {
-      log.error(`[eCAC] Erro na autenticação: ${err.message}`);
-      return false;
-    }
-  }
+      // Try to increase items per page to reduce the number of pages
+      await this.tryIncreasePageSize();
 
-  async extrairDCTFWeb(): Promise<EcacDctfWebDeclaracao[]> {
-    if (!this.page) throw new Error('Navegador não iniciado');
+      // Collect all pages
+      const allDocumentos: EcacPerdcompDocumento[] = [];
+      let pageNum = 1;
+      const MAX_PAGES = 50;
 
-    const declaracoes: EcacDctfWebDeclaracao[] = [];
+      while (pageNum <= MAX_PAGES) {
+        const pageResults = await this.parseResultTable();
+        log.info(`[eCAC] Página ${pageNum}: ${pageResults.length} registro(s)`);
 
-    try {
-      this.progress('Acessando DCTFWeb...', 40);
-      await this.page.goto(ECAC_DCTFWEB_URL, { waitUntil: 'networkidle2' });
-      await this.delay(PAGE_LOAD_DELAY);
-
-      this.progress('Extraindo declarações DCTFWeb...', 50);
-
-      const rows = await this.page.$$('table tbody tr, .grid-row, [role="row"]');
-
-      for (const row of rows) {
-        try {
-          const cells = await row.$$('td, [role="gridcell"]');
-          if (cells.length >= 4) {
-            const textos = await Promise.all(
-              cells.map(cell => cell.evaluate(el => (el.textContent || '').trim()))
-            );
-
-            const decl: EcacDctfWebDeclaracao = {
-              categoria: textos[0] || '',
-              periodo_apuracao: this.normalizePeriodo(textos[1] || ''),
-              situacao: textos[2] || '',
-              debito_apurado: this.parseValor(textos[3] || '0'),
-              saldo_pagar: this.parseValor(textos[4] || '0'),
-              data_transmissao: textos[5] || '',
-              origem: 'DCTFWeb',
-            };
-
-            if (decl.periodo_apuracao && decl.debito_apurado > 0) {
-              declaracoes.push(decl);
-            }
+        if (pageResults.length === 0 && pageNum === 1) {
+          // On page 1, extra check: verify we're still on the right page before giving up
+          if (await detectSessionExpiry('página 1 vazia')) {
+            result.sessaoExpirada = true;
+            throw new Error('Sessão e-CAC expirada (resultado vazio na primeira página). Acesse a aba Certificados e clique em "Autenticar no e-CAC" para renovar a sessão.');
           }
-        } catch { /* skip row */ }
+          log.warn('[eCAC] Página 1 retornou 0 resultados — assumindo lista vazia');
+          break;
+        }
+
+        if (pageResults.length === 0 && pageNum > 1) {
+          log.warn(`[eCAC] Página ${pageNum} retornou 0 resultados — encerrando`);
+          break;
+        }
+
+        allDocumentos.push(...pageResults);
+        this.progress(
+          `Página ${pageNum} coletada (${allDocumentos.length} documentos acumulados)`,
+          40 + Math.min(50, pageNum * 3),
+        );
+
+        const hasNext = await this.goNextPage(pageNum);
+        if (!hasNext) {
+          log.info(`[eCAC] Última página atingida (${pageNum})`);
+          break;
+        }
+
+        await this.page.waitForTimeout(2500);
+        await this.waitForLoading();
+        pageNum++;
       }
 
-      this.progress(`${declaracoes.length} declarações encontradas`, 60);
-    } catch (err: any) {
-      log.error(`[eCAC] Erro ao extrair DCTFWeb: ${err.message}`);
-    }
-
-    return declaracoes;
-  }
-
-  async extrairSituacaoFiscal(): Promise<{ creditos: EcacCredito[]; debitos: EcacDebito[] }> {
-    if (!this.page) throw new Error('Navegador não iniciado');
-
-    const creditos: EcacCredito[] = [];
-    const debitos: EcacDebito[] = [];
-
-    try {
-      this.progress('Acessando situação fiscal...', 65);
-      await this.page.goto(ECAC_SITUACAO_URL, { waitUntil: 'networkidle2' });
-      await this.delay(PAGE_LOAD_DELAY);
-
-      this.progress('Extraindo débitos e créditos...', 75);
-
-      const content = await this.page.content();
-
-      const debitRows = await this.page.$$('table.debitos tbody tr, [data-tipo="debito"]');
-      for (const row of debitRows) {
-        try {
-          const cells = await row.$$('td');
-          if (cells.length >= 5) {
-            const t = await Promise.all(cells.map(c => c.evaluate(el => (el.textContent || '').trim())));
-            debitos.push({
-              tipo_tributo: this.mapTipoTributo(t[0] || ''),
-              codigo_receita: t[1] || '',
-              periodo_apuracao: this.normalizePeriodo(t[2] || ''),
-              valor_principal: this.parseValor(t[3] || '0'),
-              valor_multa: this.parseValor(t[4] || '0'),
-              valor_juros: this.parseValor(t[5] || '0'),
-              dt_vencimento: this.normalizeDate(t[6] || ''),
-              observacoes: `Importado eCAC - ${new Date().toISOString().substring(0, 10)}`,
-            });
-          }
-        } catch { /* skip */ }
-      }
-
-      const creditRows = await this.page.$$('table.creditos tbody tr, [data-tipo="credito"]');
-      for (const row of creditRows) {
-        try {
-          const cells = await row.$$('td');
-          if (cells.length >= 4) {
-            const t = await Promise.all(cells.map(c => c.evaluate(el => (el.textContent || '').trim())));
-            creditos.push({
-              tipo_credito: this.mapTipoCredito(t[0] || ''),
-              origem_credito: 'Pagamento Indevido',
-              periodo_apuracao: this.normalizePeriodo(t[1] || ''),
-              codigo_receita: t[2] || '',
-              valor_original: this.parseValor(t[3] || '0'),
-              dt_pagamento_original: this.normalizeDate(t[4] || ''),
-              observacoes: `Importado eCAC - ${new Date().toISOString().substring(0, 10)}`,
-            });
-          }
-        } catch { /* skip */ }
-      }
-
-      this.progress(`${creditos.length} créditos e ${debitos.length} débitos encontrados`, 85);
-    } catch (err: any) {
-      log.error(`[eCAC] Erro ao extrair situação fiscal: ${err.message}`);
-    }
-
-    return { creditos, debitos };
-  }
-
-  convertDeclaracoesToDebitos(declaracoes: EcacDctfWebDeclaracao[]): EcacDebito[] {
-    return declaracoes
-      .filter(d => d.saldo_pagar > 0 && d.situacao !== 'Inativa')
-      .map(d => ({
-        tipo_tributo: this.mapCategoriaTributo(d.categoria),
-        codigo_receita: '',
-        periodo_apuracao: d.periodo_apuracao,
-        valor_principal: d.debito_apurado,
-        valor_multa: 0,
-        valor_juros: Math.max(0, d.saldo_pagar - d.debito_apurado),
-        dt_vencimento: this.calcVencimento(d.periodo_apuracao),
-        observacoes: `DCTFWeb ${d.categoria} - Situação: ${d.situacao} | Importado eCAC ${new Date().toISOString().substring(0, 10)}`,
-      }));
-  }
-
-  async executarExtracao(pfxBuffer: Buffer, passphrase: string): Promise<EcacExtractionResult> {
-    const result: EcacExtractionResult = {
-      success: false, creditos: [], debitos: [], declaracoes: [], errors: [],
-    };
-
-    try {
-      await this.iniciar(pfxBuffer, passphrase);
-
-      const autenticado = await this.autenticarEcac();
-      if (!autenticado) {
-        result.errors.push('Falha na autenticação com certificado digital. Verifique se o certificado está válido e se a senha está correta.');
-        return result;
-      }
-
-      const declaracoes = await this.extrairDCTFWeb();
-      result.declaracoes = declaracoes;
-
-      const debitosDctf = this.convertDeclaracoesToDebitos(declaracoes);
-      result.debitos.push(...debitosDctf);
-
-      try {
-        const { creditos, debitos } = await this.extrairSituacaoFiscal();
-        result.creditos.push(...creditos);
-        result.debitos.push(...debitos);
-      } catch (err: any) {
-        result.errors.push(`Situação fiscal parcial: ${err.message}`);
-      }
-
-      this.progress('Extração concluída com sucesso', 95);
+      result.documentos = allDocumentos;
+      result.total = allDocumentos.length;
+      result.paginas = pageNum;
       result.success = true;
+      this.progress(`Consulta concluída: ${allDocumentos.length} documentos em ${pageNum} página(s)`, 95);
+
     } catch (err: any) {
-      log.error(`[eCAC] Erro geral: ${err.message}`);
+      log.error(`[eCAC] Erro na consulta: ${err.message}`);
       result.errors.push(err.message);
     } finally {
       await this.fechar();
@@ -358,80 +1050,1126 @@ export class EcacService {
   }
 
   async fechar(): Promise<void> {
-    try { if (this.browser) await this.browser.close(); } catch { /* ignore */ }
+    // Only close context/browser when we own them (browser !== null means we created it).
+    // When usarContextoExistente was called, browser is null and the caller owns the lifecycle.
+    if (this.browser !== null) {
+      try { if (this.context) await this.context.close(); } catch { /* ignore */ }
+      try { await this.browser.close(); } catch { /* ignore */ }
+    }
     this.browser = null;
+    this.context = null;
     this.page = null;
-    this.tempCert?.cleanup();
-    this.tempCert = null;
+    // Now safe to delete PEM files — browser is closed, no more TLS handshakes pending
+    for (const f of this.tempPemFiles) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+    this.tempPemFiles = [];
   }
 
-  // ---- Helpers ----
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Recibo PDF download
+  // ─────────────────────────────────────────────────────────────────────────────
 
-  private delay(ms: number): Promise<void> {
-    return new Promise(r => setTimeout(r, ms));
+  /**
+   * Baixa o PDF do recibo (Imprimir Recibo) para uma lista de números de PER/DCOMP.
+   * Mantém uma única sessão de browser para a operação inteira (eficiente para batches grandes).
+   *
+   * Estratégia de captura — qualquer um destes eventos pode disparar quando o usuário
+   * clica em "Imprimir":
+   *   1. download event — download direto do PDF
+   *   2. response — XHR retornando application/pdf (SPA Angular)
+   *   3. popup/page — abertura em nova aba com URL .pdf ou blob:
+   */
+  async baixarRecibos(
+    pfxBuffer: Buffer,
+    passphrase: string,
+    sessaoCookies: string | null,
+    numeros: string[],
+    isBatch = false,
+    onProgress?: (numero: string, idx: number, total: number, ok: boolean) => void,
+    control?: { cancel: boolean; pause: boolean },
+    onRecibo?: (numero: string, pdfBuffer: Buffer) => Promise<void>,
+  ): Promise<{ recibos: Map<string, Buffer>; sessaoExpirada?: boolean; errors: string[]; cancelado?: boolean }> {
+    const result = {
+      recibos: new Map<string, Buffer>(),
+      sessaoExpirada: false,
+      errors: [] as string[],
+    };
+
+    try {
+      this.assertTimeWindow(isBatch);
+    } catch (e: any) {
+      result.errors.push(e.message);
+      return result;
+    }
+
+    // Reseta flag de diagnóstico para que cada execução logue o HTML da primeira linha
+    EcacService._htmlLogged = false;
+
+    try {
+      if (!this.context) {
+        this.progress('Inicializando navegador para baixar recibos...', 5);
+        await this.initBrowser(pfxBuffer, passphrase, sessaoCookies);
+      } else {
+        this.progress('Reutilizando sessão autenticada para baixar recibos...', 5);
+      }
+      if (!this.page || !this.context) throw new Error('Página não inicializada');
+
+      // 1. Estabelecer sessão no portal e-CAC (cross-subdomain)
+      await this.page.goto('https://cav.receita.fazenda.gov.br/ecac/', { waitUntil: 'load', timeout: 60000 });
+      await this.page.waitForTimeout(3000);
+      const portalUrl = this.page.url().toLowerCase();
+      log.info(`[eCAC/recibos] URL após navegação portal: ${portalUrl}`);
+      if (portalUrl.includes('autenticacao') || portalUrl.includes('login') || portalUrl.includes('sso.acesso.gov.br')) {
+        result.sessaoExpirada = true;
+        throw new Error('Sessão e-CAC expirada. Renove a autenticação.');
+      }
+      await this.waitForLoading();
+
+      // 2. Navegar para o app PER/DCOMP Web dentro do e-CAC.
+      // O perdcomp-web é carregado num <iframe> na página do e-CAC. Para automação via
+      // Playwright navegamos diretamente para a URL do iframe, que é um Angular SPA.
+      this.progress('Carregando PER/DCOMP Web...', 15);
+
+      const PERDCOMP_WEB_BASE = 'https://www3.cav.receita.fazenda.gov.br/perdcomp-web/';
+
+      // Tenta navegar para a URL com hash de rota Angular conhecida (Documentos Entregues).
+      // Se o app redirecionar para outra rota, ao menos já partimos do ponto certo.
+      await this.page.goto(PERDCOMP_WEB_BASE, { waitUntil: 'load', timeout: 90000 });
+      await this.page.waitForTimeout(5000);
+      await this.waitForLoading();
+      log.info(`[eCAC/Recibo] URL após goto perdcomp-web: ${this.page.url()}`);
+
+      // Diagnóstico inicial: o que está na página logo após carregar?
+      const snapInicial = await this.page.evaluate(() => ({
+        url: location.href,
+        title: document.title,
+        bodyText: document.body.innerText.replace(/\s+/g, ' ').slice(0, 600),
+        links: Array.from(document.querySelectorAll('a, button')).slice(0, 30).map((e: any) => ({
+          tag: e.tagName,
+          text: (e.textContent || '').trim().slice(0, 60),
+          href: e.getAttribute('href') || '',
+          title: e.getAttribute('title') || '',
+        })).filter((l: any) => l.text || l.href),
+      })).catch(() => null);
+      if (snapInicial) {
+        log.info(`[eCAC/Recibo] Snap inicial — title="${snapInicial.title}" url="${snapInicial.url}"`);
+        log.info(`[eCAC/Recibo] Snap body: ${snapInicial.bodyText}`);
+        log.info(`[eCAC/Recibo] Snap links (${snapInicial.links.length}): ${JSON.stringify(snapInicial.links).slice(0, 1500)}`);
+      }
+
+      // 2a. Clicar em "Visualizar Documentos" no menu lateral
+      // O sidebar da perdcomp-web tem dois itens: "Novo Documento" e "Visualizar Documentos".
+      // Precisamos clicar em "Visualizar Documentos" para acessar a lista de documentos.
+      let clickedVisualizarDocs = false;
+      const vizSelectors = [
+        'a:has-text("Visualizar Documentos")',
+        'button:has-text("Visualizar Documentos")',
+        '[class*="menu"] a:has-text("Visualizar")',
+        '[class*="sidebar"] a:has-text("Visualizar")',
+        '[class*="nav"] a:has-text("Visualizar")',
+        'li a:has-text("Visualizar")',
+      ];
+      for (const sel of vizSelectors) {
+        try {
+          const loc = this.page.locator(sel).first();
+          if (await loc.count() > 0) {
+            await loc.click({ timeout: 6000 });
+            log.info(`[eCAC/Recibo] Clicou "Visualizar Documentos" via: ${sel}`);
+            clickedVisualizarDocs = true;
+            break;
+          }
+        } catch { /* try next */ }
+      }
+      if (!clickedVisualizarDocs) {
+        // Fallback via getByRole
+        try {
+          await this.page.getByRole('link', { name: /visualizar/i }).first().click({ timeout: 5000 });
+          log.info(`[eCAC/Recibo] Clicou "Visualizar Documentos" via getByRole`);
+          clickedVisualizarDocs = true;
+        } catch { /* not found */ }
+      }
+      if (clickedVisualizarDocs) {
+        await this.page.waitForTimeout(3000);
+        await this.waitForLoading();
+        log.info(`[eCAC/Recibo] URL após Visualizar Documentos: ${this.page.url()}`);
+      } else {
+        log.warn('[eCAC/Recibo] Não foi possível clicar em "Visualizar Documentos"');
+      }
+
+      // 2b. Clicar na aba "Documentos Entregues"
+      // A página tem duas abas: "Rascunhos" e "Documentos Entregues".
+      // O botão de imprimir só existe na aba Documentos Entregues.
+      let clickedEntregues = false;
+      const entregueSelectors = [
+        'a:has-text("Documentos Entregues")',
+        'button:has-text("Documentos Entregues")',
+        '[role="tab"]:has-text("Documentos Entregues")',
+        '[class*="tab"]:has-text("Entregues")',
+        'a:has-text("Entregues")',
+        'button:has-text("Entregues")',
+      ];
+      for (const sel of entregueSelectors) {
+        try {
+          const loc = this.page.locator(sel).first();
+          if (await loc.count() > 0) {
+            await loc.click({ timeout: 6000 });
+            log.info(`[eCAC/Recibo] Clicou "Documentos Entregues" via: ${sel}`);
+            clickedEntregues = true;
+            break;
+          }
+        } catch { /* try next */ }
+      }
+      if (clickedEntregues) {
+        await this.page.waitForTimeout(3000);
+        await this.waitForLoading();
+        log.info(`[eCAC/Recibo] URL após Documentos Entregues: ${this.page.url()}`);
+      } else {
+        log.warn('[eCAC/Recibo] Não foi possível clicar na aba "Documentos Entregues"');
+      }
+
+      // Aguarda a tabela aparecer — em vez de <table>, a perdcomp-web v2.1.0 usa
+      // componentes Angular (mat-table/p-table). Aguarda por número PER/DCOMP no body.
+      try {
+        await this.page.waitForFunction(() => {
+          return /\d{1,5}\.\d{1,5}\.\d{6}\.\d{1,2}\.\d{1,2}\.\d{1,3}-\d{4}/.test(document.body.innerText);
+        }, { timeout: 20000 });
+        log.info('[eCAC/Recibo] Conteúdo de Documentos Entregues carregado (números PER/DCOMP detectados no body)');
+      } catch {
+        log.warn('[eCAC/Recibo] Timeout aguardando dados de Documentos Entregues — prosseguindo');
+      }
+
+      // Diagnóstico pós-navegação
+      const snapPos = await this.page.evaluate(() => ({
+        url: location.href,
+        bodyText: document.body.innerText.replace(/\s+/g, ' ').slice(0, 800),
+        tableRows: document.querySelectorAll('table tbody tr, datatable-body-row').length,
+        tables: Array.from(document.querySelectorAll('table')).map((t: any) => ({
+          id: t.id, cls: (t.getAttribute('class') || '').slice(0, 80),
+          ths: Array.from(t.querySelectorAll('th')).map((h: any) => (h.textContent || '').trim()).join(' | '),
+          rows: t.querySelectorAll('tbody tr').length,
+        })),
+      })).catch(() => null);
+      if (snapPos) {
+        log.info(`[eCAC/Recibo] Snap pós-nav — url="${snapPos.url}" tableRows=${snapPos.tableRows}`);
+        log.info(`[eCAC/Recibo] Snap pós-nav body: ${snapPos.bodyText}`);
+        if (snapPos.tables.length > 0) {
+          log.info(`[eCAC/Recibo] Tabelas: ${JSON.stringify(snapPos.tables).slice(0, 1500)}`);
+        }
+      }
+
+      await this.tryIncreasePageSize();
+
+      // 3. Para cada linha da grade, cruza com pendentes (chave normalizada) e baixa o PDF
+      let pageNum = 1;
+      const MAX_PAGES = 50;
+      const pendentesPorNorm = new Map<string, string>();
+      for (const n of numeros) {
+        const norm = normalizePerdcompNumero(n) || n;
+        pendentesPorNorm.set(norm, n);
+      }
+      const totalPendentesIni = pendentesPorNorm.size;
+
+      while (pageNum <= MAX_PAGES && pendentesPorNorm.size > 0) {
+        const rowInfos = await this.page.evaluate(() => {
+          const flexRe = /(\d{1,5})\.(\d{1,5})\.(\d{6})\.(\d{1,2})\.(\d{1,2})\.(\d{1,3})-(\d{4})/;
+          const norm = (m: RegExpMatchArray) => {
+            const a = m[1].padStart(5, '0');
+            const b = m[2].padStart(5, '0');
+            const f = m[6].padStart(2, '0');
+            return `${a}.${b}.${m[3]}.${m[4]}.${m[5]}.${f}-${m[7]}`;
+          };
+          const scan = (text: string) => {
+            const t = text.replace(/\u00a0/g, ' ');
+            const m = t.match(flexRe);
+            if (!m) return null;
+            return { normalized: norm(m), rawSubstring: m[0] };
+          };
+          const out: { normalized: string; rawSubstring: string }[] = [];
+
+          // Priority 1: Angular ngx-datatable rows
+          const ngxRows = document.querySelectorAll('datatable-body-row');
+          if (ngxRows.length > 0) {
+            for (const row of Array.from(ngxRows)) {
+              const text = (row as HTMLElement).innerText || '';
+              const hit = scan(text);
+              if (hit) out.push(hit);
+            }
+            return out;
+          }
+
+          // Priority 2: Standard HTML table rows (any table)
+          const tableRows = document.querySelectorAll('table tbody tr');
+          if (tableRows.length > 0) {
+            for (const row of Array.from(tableRows)) {
+              const text = (row as HTMLElement).innerText || '';
+              const hit = scan(text);
+              if (hit) out.push(hit);
+            }
+            if (out.length > 0) return out;
+          }
+
+          // Priority 3: Any element that might be a repeatable row (div/li with the PER/DCOMP pattern)
+          const allEls = document.querySelectorAll('[class*="row" i], li, .item, .record');
+          for (const el of Array.from(allEls)) {
+            const text = (el as HTMLElement).innerText || '';
+            const hit = scan(text);
+            if (hit) {
+              // Avoid duplicates from nested elements
+              if (!out.some(o => o.normalized === hit.normalized)) {
+                out.push(hit);
+              }
+            }
+          }
+
+          // Priority 4: Scan entire page body (last resort \u2014 catches any structure)
+          if (out.length === 0) {
+            const pageText = document.body.innerText || '';
+            const allMatches = [...pageText.matchAll(/(\d{1,5})\.(\d{1,5})\.(\d{6})\.(\d{1,2})\.(\d{1,2})\.(\d{1,3})-(\d{4})/g)];
+            for (const m of allMatches) {
+              const normalized = norm(m as unknown as RegExpMatchArray);
+              if (!out.some(o => o.normalized === normalized)) {
+                out.push({ normalized, rawSubstring: m[0] });
+              }
+            }
+          }
+
+          return out;
+        });
+
+        log.info(`[eCAC/Recibo] Página ${pageNum}: ${rowInfos.length} linha(s) com número PER/DCOMP`);
+
+        if (rowInfos.length === 0) {
+          // Diagnóstico abrangente: mostra URL atual + primeiros elementos com conteúdo
+          const diagInfo = await this.page.evaluate(() => {
+            const url = location.href;
+            const bodyText = document.body.innerText.replace(/\s+/g, ' ').slice(0, 500);
+            const allRows = document.querySelectorAll('datatable-body-row, table tbody tr, [class*="row" i]:not(body):not(div.row)');
+            const firstRowHtml = allRows[0] ? (allRows[0] as HTMLElement).outerHTML.replace(/\s+/g, ' ').slice(0, 400) : '';
+            const firstRowText = allRows[0] ? (allRows[0] as HTMLElement).innerText.replace(/\s+/g, ' ').slice(0, 300) : '';
+            const tableHeaders = Array.from(document.querySelectorAll('th, datatable-header-cell')).map(h => (h.textContent || '').trim()).filter(Boolean);
+            return { url, bodyText, rowCount: allRows.length, firstRowHtml, firstRowText, tableHeaders };
+          }).catch(() => null);
+          if (diagInfo) {
+            log.warn(`[eCAC/Recibo] Pág ${pageNum} ZERO linhas detectadas. URL=${diagInfo.url} rowCount=${diagInfo.rowCount}`);
+            log.warn(`[eCAC/Recibo] Body: ${diagInfo.bodyText}`);
+            if (diagInfo.tableHeaders.length > 0) log.warn(`[eCAC/Recibo] Headers da tabela: ${diagInfo.tableHeaders.join(' | ')}`);
+            if (diagInfo.firstRowText) log.warn(`[eCAC/Recibo] Primeira linha texto: ${diagInfo.firstRowText}`);
+            if (diagInfo.firstRowHtml) log.warn(`[eCAC/Recibo] Primeira linha HTML: ${diagInfo.firstRowHtml}`);
+          }
+        }
+
+        for (const { normalized, rawSubstring } of rowInfos) {
+          // Cancel: encerra imediatamente
+          if (control?.cancel) {
+            log.info('[eCAC/Recibo] Cancelamento solicitado pelo usuário');
+            (result as any).cancelado = true;
+            return result;
+          }
+          // Pause: aguarda em loop até retomar ou cancelar
+          if (control?.pause) {
+            const pctAtual = 15 + Math.floor(((totalPendentesIni - pendentesPorNorm.size) / numeros.length) * 80);
+            this.progress('Pausado pelo usuário', pctAtual);
+            while (control?.pause && !control?.cancel) {
+              await this.page.waitForTimeout(1000);
+            }
+          }
+          if (control?.cancel) {
+            (result as any).cancelado = true;
+            return result;
+          }
+
+          const original = pendentesPorNorm.get(normalized);
+          if (!original) continue;
+
+          const hints = locatorHintsForPerdcomp(normalized, rawSubstring);
+          const ok = await this.baixarReciboParaNumero(original, result.recibos, hints);
+          pendentesPorNorm.delete(normalized);
+          const done = totalPendentesIni - pendentesPorNorm.size;
+          onProgress?.(original, done, numeros.length, ok);
+          this.progress(
+            `Recibo ${done}/${numeros.length} (${original})`,
+            15 + Math.floor((done / numeros.length) * 80),
+          );
+          if (ok && onRecibo) {
+            // Progressive persistence — fire callback so the controller can save the PDF
+            // to the DB immediately, making it available for download in the UI without
+            // waiting for the entire batch to finish.
+            const pdf = result.recibos.get(original);
+            if (pdf) {
+              try {
+                await onRecibo(original, pdf);
+              } catch (e: any) {
+                log.warn(`[eCAC/Recibo] onRecibo callback falhou para ${original}: ${e.message}`);
+              }
+            }
+          }
+          if (!ok) result.errors.push(`Falha ao baixar recibo de ${original}`);
+        }
+
+        if (pendentesPorNorm.size === 0) break;
+        if (control?.cancel) { (result as any).cancelado = true; return result; }
+        const hasNext = await this.goNextPage(pageNum);
+        if (!hasNext) {
+          log.info(`[eCAC/Recibo] Última página atingida (${pageNum}); ${pendentesPorNorm.size} pendente(s) não encontrado(s)`);
+          break;
+        }
+        await this.page.waitForTimeout(2500);
+        await this.waitForLoading();
+        pageNum++;
+      }
+
+      if (pendentesPorNorm.size > 0) {
+        const amostra = Array.from(pendentesPorNorm.values()).slice(0, 5).join(', ');
+        // Esses documentos foram importados anteriormente (provavelmente via programa
+        // desktop antigo da Receita, pré-2015) mas não estão mais visíveis no PERDCOMP
+        // Web atual. Não é erro — apenas informativo: o recibo PDF não pode ser baixado
+        // automaticamente. Conforme negócio: docs antigos do programa desktop não têm
+        // necessidade de baixa via crawler.
+        result.errors.push(
+          `${pendentesPorNorm.size} documento(s) só existem no programa antigo da Receita ` +
+          `(pré-PERDCOMP Web), recibos não disponíveis para download automático. ` +
+          `Amostra: ${amostra}${pendentesPorNorm.size > 5 ? '...' : ''}`,
+        );
+      }
+
+      this.progress(`Concluído: ${result.recibos.size} recibo(s) baixado(s)`, 95);
+    } catch (err: any) {
+      log.error(`[eCAC/Recibo] Erro: ${err.message}`);
+      result.errors.push(err.message);
+    } finally {
+      await this.fechar();
+      this.progress('Processo finalizado', 100);
+    }
+
+    return result;
   }
 
-  private parseValor(text: string): number {
-    const clean = text.replace(/[R$\s.]/g, '').replace(',', '.');
-    const num = parseFloat(clean);
-    return isNaN(num) ? 0 : num;
+  /**
+   * Baixa o PDF de UM documento específico, identificado pelo número, na página corrente.
+   *
+   * FLUXO CORRETO (confirmado pelo usuário em como_baixaR_recibo.png):
+   *   1. Clicar no "+" na primeira coluna para EXPANDIR a linha
+   *   2. No painel "Informações da Declaração" que aparece, clicar em "Imprimir Recibo"
+   *      (texto laranja, ou no ícone de impressora abaixo dele)
+   *   3. Uma nova aba/popup abre com o PDF (response application/pdf vindo do SERPRO)
+   *
+   * @param matchHints textos que aparecem na linha (ex.: número como no portal + forma canônica).
+   */
+  private async baixarReciboParaNumero(
+    numero: string,
+    out: Map<string, Buffer>,
+    matchHints?: string[],
+  ): Promise<boolean> {
+    if (!this.page || !this.context) return false;
+
+    const canon = normalizePerdcompNumero(numero) || numero;
+    const hintList = [...new Set([
+      ...(matchHints || []),
+      ...locatorHintsForPerdcomp(canon, (matchHints && matchHints[0]) || undefined),
+    ])].filter((h): h is string => typeof h === 'string' && h.trim().length > 0);
+
+    let captured: Buffer | null = null;
+    let capturedSource = '';
+
+    // Captura PDFs vindos como download (Content-Disposition: attachment)
+    const onDownload = async (download: any) => {
+      if (captured) return;
+      try {
+        const p = await download.path();
+        if (p) {
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 100) {
+            captured = buf;
+            capturedSource = 'main.download';
+            log.info(`[eCAC/Recibo] PDF capturado via main download (${buf.length} bytes)`);
+          }
+        }
+      } catch (e: any) {
+        log.warn(`[eCAC/Recibo] onDownload erro: ${e.message}`);
+      }
+    };
+
+    // Captura PDFs vindos como response application/pdf na página principal
+    const onResponse = async (response: any) => {
+      if (captured) return;
+      try {
+        const ct = (response.headers()['content-type'] || '').toLowerCase();
+        const cd = (response.headers()['content-disposition'] || '').toLowerCase();
+        if (ct.includes('application/pdf') || cd.includes('.pdf')) {
+          const body = await response.body();
+          if (body && body.length > 100) {
+            captured = body;
+            capturedSource = 'main.response';
+            log.info(`[eCAC/Recibo] PDF capturado via main response: ${response.url()} (${body.length} bytes)`);
+          }
+        }
+      } catch { /* ignore */ }
+    };
+
+    // Popup/nova aba: a perdcomp-web abre o recibo numa nova janela. A URL pode ser
+    // direta (PDF response) ou pode ser uma página que renderiza o PDF via PDF.js.
+    // Atacamos listeners ANTES de qualquer await — o response inicial pode chegar muito rápido.
+    const onPopup = async (popup: any) => {
+      if (captured) return;
+      try {
+        // 1. Listener de download na popup (caso o PDF venha como download forçado)
+        popup.on('download', async (dl: any) => {
+          if (captured) return;
+          try {
+            const p = await dl.path();
+            if (p) {
+              const buf = fs.readFileSync(p);
+              if (buf && buf.length > 100) {
+                captured = buf;
+                capturedSource = 'popup.download';
+                log.info(`[eCAC/Recibo] PDF capturado via popup download (${buf.length} bytes)`);
+              }
+            }
+          } catch { /* ignore */ }
+        });
+
+        // 2. Listener de response — captura QUALQUER response application/pdf na popup
+        popup.on('response', async (resp: any) => {
+          if (captured) return;
+          try {
+            const ct = (resp.headers()['content-type'] || '').toLowerCase();
+            const cd = (resp.headers()['content-disposition'] || '').toLowerCase();
+            if (ct.includes('application/pdf') || cd.includes('.pdf')) {
+              const body = await resp.body();
+              if (body && body.length > 100) {
+                captured = body;
+                capturedSource = 'popup.response';
+                log.info(`[eCAC/Recibo] PDF capturado via popup response: ${resp.url()} (${body.length} bytes)`);
+              }
+            }
+          } catch { /* ignore */ }
+        });
+
+        // 3. Aguarda a popup carregar o conteúdo
+        await popup.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+        const url = popup.url();
+        log.info(`[eCAC/Recibo] Popup aberto: ${url}`);
+
+        // 4. Se já temos PDF capturado (via response/download), beleza
+        if (captured) {
+          await popup.close().catch(() => {});
+          return;
+        }
+
+        // 5. Aguarda mais um pouco — alguns PDFs são carregados via XHR após domcontentloaded
+        for (let i = 0; i < 16 && !captured; i++) {
+          await popup.waitForTimeout(500);
+        }
+
+        // 6. Se ainda não capturou e a URL é navegável, tenta HTTP GET com cookies
+        if (!captured && url && url !== 'about:blank' && !url.startsWith('chrome-extension://')) {
+          try {
+            const resp = await this.context!.request.get(url, { timeout: 15000 });
+            const ct = (resp.headers()['content-type'] || '').toLowerCase();
+            const body = await resp.body();
+            if (body && body.length > 100 && (ct.includes('pdf') || body.slice(0, 5).toString() === '%PDF-')) {
+              captured = Buffer.from(body);
+              capturedSource = 'popup.http_get';
+              log.info(`[eCAC/Recibo] PDF capturado via HTTP GET da popup: ${url} (${captured.length} bytes)`);
+            }
+          } catch (e: any) {
+            log.warn(`[eCAC/Recibo] HTTP GET popup falhou: ${e.message}`);
+          }
+        }
+
+        await popup.close().catch(() => {});
+      } catch (e: any) {
+        log.warn(`[eCAC/Recibo] onPopup erro: ${e.message}`);
+      }
+    };
+
+    // Listener context-level: captura responses application/pdf em QUALQUER page
+    // do contexto (incluindo popups que abram após este ponto). É a rede de segurança
+    // mais ampla — se nenhum dos outros listeners pegar, este pega.
+    const onContextResponse = async (response: any) => {
+      if (captured) return;
+      try {
+        const ct = (response.headers()['content-type'] || '').toLowerCase();
+        const cd = (response.headers()['content-disposition'] || '').toLowerCase();
+        if (ct.includes('application/pdf') || cd.includes('.pdf')) {
+          const body = await response.body();
+          if (body && body.length > 100) {
+            captured = body;
+            capturedSource = 'context.response';
+            log.info(`[eCAC/Recibo] PDF capturado via context response: ${response.url()} (${body.length} bytes)`);
+          }
+        }
+      } catch { /* ignore */ }
+    };
+
+    this.page.on('download', onDownload);
+    this.page.on('response', onResponse);
+    this.context.on('page', onPopup);
+    this.context.on('response', onContextResponse);
+
+    try {
+      // ─────────────────────────────────────────────────────────────────────────
+      // LOCALIZAÇÃO DA LINHA — estrutura-agnóstica via JS evaluate.
+      //
+      // O perdcomp-web v2.1.0 NÃO usa <table>/<tr> padrão (provavelmente Angular
+      // Material <mat-table> ou PrimeNG com componentes customizados). Por isso
+      // o seletor `tr:has-text()` falha mesmo quando o número está na página.
+      //
+      // Estratégia: encontra o elemento que contém o número como texto, sobe na
+      // árvore DOM até encontrar um "row-like" container (irmãos com mesma tag),
+      // e marca esse elemento com data-ts-row="<numero>" para que o Playwright
+      // possa interagir com ele via seletor estável.
+      // ─────────────────────────────────────────────────────────────────────────
+      let rowMarker: string | null = null;
+      for (const hint of hintList) {
+        const found = await this.page.evaluate((targetNumero: string) => {
+          // Procura QUALQUER elemento que tenha o número como parte do seu texto
+          const allEls = Array.from(document.querySelectorAll('*')) as HTMLElement[];
+          let target: HTMLElement | null = null;
+          for (const el of allEls) {
+            // Pega só o texto direto deste nó (text nodes filhos), não dos descendentes
+            const ownText = Array.from(el.childNodes)
+              .filter(n => n.nodeType === 3)
+              .map(n => (n.textContent || '').trim())
+              .join(' ');
+            if (ownText.includes(targetNumero)) {
+              target = el;
+              break;
+            }
+          }
+          if (!target) {
+            // Fallback: procura o número em qualquer elemento que contenha o texto
+            // (incluindo via descendentes) mas com o menor número de descendentes
+            // (i.e., o mais "folha" possível)
+            let best: HTMLElement | null = null;
+            let bestSize = Infinity;
+            for (const el of allEls) {
+              if ((el.textContent || '').includes(targetNumero)) {
+                const size = el.querySelectorAll('*').length;
+                if (size < bestSize) {
+                  best = el;
+                  bestSize = size;
+                }
+              }
+            }
+            target = best;
+          }
+          if (!target) return null;
+
+          // Sobe na árvore até encontrar um "row" — elemento cujo pai tem
+          // múltiplos filhos com a mesma tag (indicando linhas irmãs)
+          let p: HTMLElement = target;
+          let rowEl: HTMLElement | null = null;
+          for (let i = 0; i < 15 && p.parentElement; i++) {
+            const parent = p.parentElement;
+            const sameTagSiblings = Array.from(parent.children).filter(c => c.tagName === p.tagName);
+            // Critérios para ser linha: pelo menos 2 irmãos com mesma tag,
+            // e o elemento parece ter "células" (filhos diretos múltiplos)
+            if (sameTagSiblings.length >= 2 && p.children.length >= 2 && p.tagName !== 'BODY' && p.tagName !== 'HTML') {
+              rowEl = p;
+              break;
+            }
+            p = parent;
+          }
+          // Fallback: usa o pai imediato do elemento de texto
+          if (!rowEl && target.parentElement && target.parentElement.tagName !== 'BODY') {
+            rowEl = target.parentElement;
+          }
+          if (!rowEl) rowEl = target;
+
+          // Marca o elemento com data-ts-row para Playwright localizá-lo
+          const marker = 'ts-row-' + Math.random().toString(36).slice(2, 10);
+          rowEl.setAttribute('data-ts-row', marker);
+          return {
+            marker,
+            tag: rowEl.tagName,
+            cls: (rowEl.getAttribute('class') || '').slice(0, 80),
+            childCount: rowEl.children.length,
+            text: (rowEl.textContent || '').replace(/\s+/g, ' ').slice(0, 200),
+          };
+        }, hint);
+        if (found) {
+          rowMarker = found.marker;
+          log.info(`[eCAC/Recibo] Linha localizada para ${numero}: tag=${found.tag} cls="${found.cls}" filhos=${found.childCount}`);
+          if (!EcacService._htmlLogged) {
+            log.warn(`[eCAC/Recibo] Texto da linha: ${found.text}`);
+          }
+          break;
+        }
+      }
+
+      if (!rowMarker) {
+        log.warn(`[eCAC/Recibo] Linha não encontrada para ${numero} (dicas: ${hintList.slice(0, 3).join(' | ')})`);
+        return false;
+      }
+
+      const row = this.page.locator(`[data-ts-row="${rowMarker}"]`);
+
+      const urlAntes = this.page.url();
+      let clicked = false;
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // DIAGNÓSTICO (apenas na primeira linha): captura HTML completo da linha
+      // e elementos relacionados a "imprimir" para identificar seletores reais.
+      // ─────────────────────────────────────────────────────────────────────────
+      if (!EcacService._htmlLogged) {
+        try {
+          const fullRow = await row.evaluate((el: any) => el.outerHTML).catch(() => '');
+          if (fullRow) {
+            const compact = String(fullRow).replace(/\s+/g, ' ');
+            const chunkSize = 2000;
+            for (let i = 0; i < compact.length && i < 10000; i += chunkSize) {
+              log.warn(`[eCAC/Recibo] HTML linha (parte ${Math.floor(i/chunkSize)+1}): ${compact.slice(i, i + chunkSize)}`);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // ESTRATÉGIA 1 (PRIMÁRIA — confirmada pelo usuário em como_baixaR_recibo.png):
+      // 1a. Clicar no "+" da primeira coluna para expandir a linha
+      // 1b. No painel expandido "Informações da Declaração", clicar em "Imprimir Recibo"
+      //     ou no ícone de impressora abaixo do texto
+      // ─────────────────────────────────────────────────────────────────────────
+
+      // 1a. Expandir a linha clicando no "+" (estrutura-agnóstico via JS)
+      let expanded = false;
+      try {
+        const expandResult = await this.page.evaluate((marker: string) => {
+          const rowEl = document.querySelector(`[data-ts-row="${marker}"]`) as HTMLElement | null;
+          if (!rowEl) return { clicked: false, reason: 'row marker not found' };
+
+          // A primeira "célula" é o primeiro filho direto da linha
+          const firstCell = rowEl.firstElementChild as HTMLElement | null;
+          if (!firstCell) return { clicked: false, reason: 'no first child cell' };
+
+          // Procura clicável dentro da primeira célula
+          // Preferência: <a> ou <button>, depois elementos com classes plus/expand,
+          // depois imagens/ícones, por último a própria célula.
+          const candidates: HTMLElement[] = [];
+          const collect = (el: Element) => {
+            const tag = el.tagName;
+            if (tag === 'A' || tag === 'BUTTON') {
+              candidates.unshift(el as HTMLElement);  // prioridade alta
+            } else if ((el as any).onclick || el.getAttribute('ng-click') || el.getAttribute('(click)')) {
+              candidates.unshift(el as HTMLElement);
+            } else {
+              const cls = (el.getAttribute('class') || '').toLowerCase();
+              if (cls.includes('plus') || cls.includes('expan') || cls.includes('toggle')) {
+                candidates.unshift(el as HTMLElement);
+              } else if (tag === 'IMG' || tag === 'I' || tag === 'SPAN' || tag === 'svg') {
+                candidates.push(el as HTMLElement); // prioridade média
+              }
+            }
+            for (const child of Array.from(el.children)) collect(child);
+          };
+          collect(firstCell);
+
+          // Adiciona a própria firstCell como último recurso
+          candidates.push(firstCell);
+
+          if (candidates.length === 0) {
+            // Fallback total: clica no row inteiro
+            rowEl.click();
+            return { clicked: true, via: 'rowEl', tag: rowEl.tagName };
+          }
+
+          const target = candidates[0];
+          target.click();
+          return {
+            clicked: true,
+            via: 'firstCell-child',
+            tag: target.tagName,
+            cls: (target.getAttribute('class') || '').slice(0, 60),
+          };
+        }, rowMarker);
+
+        if (expandResult.clicked) {
+          expanded = true;
+          log.info(`[eCAC/Recibo] Expandiu linha de ${numero} via ${(expandResult as any).via} tag=${(expandResult as any).tag}`);
+        } else {
+          log.warn(`[eCAC/Recibo] Não foi possível expandir linha de ${numero}: ${(expandResult as any).reason}`);
+        }
+      } catch (e: any) {
+        log.warn(`[eCAC/Recibo] Falha ao expandir linha de ${numero}: ${e?.message || e}`);
+      }
+
+      // Aguarda o painel expandido renderizar (Angular animation)
+      if (expanded) {
+        await this.page.waitForTimeout(1500);
+
+        // 1b. Diagnóstico: na primeira expansão, captura HTML do painel para identificar seletores
+        if (!EcacService._htmlLogged) {
+          try {
+            const panelInfo = await this.page.evaluate(() => {
+              // Procura "Imprimir Recibo" e captura o elemento + pais + irmãos
+              const allEls = Array.from(document.querySelectorAll('*'));
+              const target = allEls.find(el => {
+                const t = (el.textContent || '').trim();
+                return t === 'Imprimir Recibo' || (t.includes('Imprimir Recibo') && t.length < 50 && el.children.length < 5);
+              });
+              if (!target) return { found: false, html: '' };
+              // Captura ancestral até 3 níveis acima
+              let ancestor = target as HTMLElement;
+              for (let i = 0; i < 3 && ancestor.parentElement; i++) {
+                ancestor = ancestor.parentElement;
+              }
+              return {
+                found: true,
+                targetTag: target.tagName,
+                targetCls: target.getAttribute('class') || '',
+                targetHref: target.getAttribute('href') || '',
+                ancestorHtml: ancestor.outerHTML.replace(/\s+/g, ' ').slice(0, 3000),
+              };
+            }).catch(() => null);
+            if (panelInfo) {
+              log.warn(`[eCAC/Recibo] DIAG painel: found=${panelInfo.found} tag=${(panelInfo as any).targetTag} cls="${(panelInfo as any).targetCls}" href="${(panelInfo as any).targetHref}"`);
+              if (panelInfo.found) {
+                log.warn(`[eCAC/Recibo] DIAG ancestor HTML: ${(panelInfo as any).ancestorHtml}`);
+              }
+            }
+            EcacService._htmlLogged = true;
+          } catch { /* ignore */ }
+        }
+
+        // 1c. CLICAR em "Imprimir Recibo" usando JS evaluate.
+        //
+        // Estrutura real (descoberta nos logs): o texto "Imprimir Recibo" está num
+        // <label> que NÃO é o clicável. O clicável (<a>/<button>) está em outro
+        // container irmão (ou ancestral comum), separado por vários níveis de div.
+        //
+        // Estratégia: encontra "Imprimir Recibo" no DOM, sobe até um PAINEL
+        // (ancestral grande, geralmente o container expandido da linha) e busca
+        // TODOS os clicáveis dentro desse painel. Filtra os mais prováveis
+        // (com classe/title/href contendo print/imprim/recibo) e clica.
+        const clickResult = await this.page.evaluate((rowMarkerArg: string) => {
+          // Acha o elemento da linha marcada — ESSENCIAL para escopar a busca,
+          // já que múltiplos painéis podem estar abertos simultaneamente.
+          const rowEl = document.querySelector(`[data-ts-row="${rowMarkerArg}"]`) as HTMLElement | null;
+          if (!rowEl) return { clicked: false, reason: 'rowMarker não encontrado no DOM' };
+
+          // Calcula DOM-distance entre dois elementos (ancestral comum + delta)
+          const domDistance = (a: HTMLElement, b: HTMLElement): number => {
+            const ancA: HTMLElement[] = [];
+            let p: HTMLElement | null = a;
+            while (p) { ancA.push(p); p = p.parentElement; }
+            const setA = new Set(ancA);
+            let dist = 0;
+            p = b;
+            while (p && !setA.has(p)) { dist++; p = p.parentElement; }
+            if (!p) return 9999;
+            return dist + ancA.indexOf(p);
+          };
+
+          // Procura TODOS os elementos com texto "Imprimir Recibo"
+          const allEls = Array.from(document.querySelectorAll('*')) as HTMLElement[];
+          const allReciboTextEls = allEls.filter(el => {
+            const ownText = Array.from(el.childNodes)
+              .filter(n => n.nodeType === 3)
+              .map(n => (n.textContent || '').trim())
+              .join(' ').trim();
+            return ownText === 'Imprimir Recibo' || (ownText.includes('Imprimir Recibo') && ownText.length < 60);
+          });
+
+          if (allReciboTextEls.length === 0) {
+            const wide = allEls.filter(el => {
+              const t = (el.textContent || '').trim();
+              return t.includes('Imprimir Recibo') && t.length < 50 && el.children.length <= 2;
+            });
+            allReciboTextEls.push(...wide);
+          }
+
+          if (allReciboTextEls.length === 0) {
+            return { clicked: false, reason: 'texto "Imprimir Recibo" não encontrado no DOM' };
+          }
+
+          // CRÍTICO: escolhe o "Imprimir Recibo" MAIS PRÓXIMO da linha marcada.
+          // Isso evita clicar no painel da linha anterior (que ainda pode estar aberto).
+          const reciboTextEls = allReciboTextEls
+            .map(el => ({ el, dist: domDistance(rowEl, el) }))
+            .sort((a, b) => a.dist - b.dist)
+            .map(x => x.el);
+
+          // Loga as distâncias para debug (só primeiras 3)
+          const distInfo = allReciboTextEls
+            .map(el => domDistance(rowEl, el))
+            .sort((a, b) => a - b)
+            .slice(0, 3);
+          (window as any).__lastReciboSearchDist = distInfo;
+
+          // Para cada elemento com texto, sobe até um ANCESTRAL GRANDE (painel)
+          // e procura clicáveis dentro dele
+          const tryClickAround = (textEl: HTMLElement) => {
+            // 1. Se for clicável, clica nele
+            if (textEl.tagName === 'A' || textEl.tagName === 'BUTTON' ||
+                (textEl as any).onclick || textEl.getAttribute('ng-click') || textEl.hasAttribute('(click)')) {
+              textEl.click();
+              return { via: 'self:' + textEl.tagName, tag: textEl.tagName };
+            }
+
+            // 2. Sobe até 10 níveis procurando um painel/container
+            let panel: HTMLElement = textEl;
+            for (let i = 0; i < 10 && panel.parentElement; i++) {
+              panel = panel.parentElement;
+              if (panel.tagName === 'BODY') break;
+            }
+            // Volta um pouco se subiu demais (até 4 níveis acima do texto)
+            let panelCandidate: HTMLElement = textEl;
+            for (let i = 0; i < 4 && panelCandidate.parentElement; i++) {
+              panelCandidate = panelCandidate.parentElement;
+            }
+
+            // 3. Coleta TODOS os clicáveis dentro do painel
+            const collectClickables = (root: HTMLElement) => {
+              const result: HTMLElement[] = [];
+              const all = root.querySelectorAll('a, button, [onclick], [ng-click], [class*="print" i], [class*="imprim" i], [class*="recibo" i]');
+              for (const el of Array.from(all)) result.push(el as HTMLElement);
+              return result;
+            };
+
+            const candidates = collectClickables(panelCandidate);
+            if (candidates.length === 0) {
+              // Sobe mais e tenta de novo
+              const candidates2 = collectClickables(panel);
+              candidates.push(...candidates2);
+            }
+
+            // 4. Calcula "distância DOM" entre cada candidato e o texto
+            // (quanto menor a distância, mais provável que seja o botão certo)
+            const domDistance = (a: HTMLElement, b: HTMLElement): number => {
+              // Encontra ancestral comum mais próximo
+              const ancA: HTMLElement[] = [];
+              let p: HTMLElement | null = a;
+              while (p) { ancA.push(p); p = p.parentElement; }
+              const setA = new Set(ancA);
+              let dist = 0;
+              p = b;
+              while (p && !setA.has(p)) { dist++; p = p.parentElement; }
+              if (!p) return 9999;
+              const idx = ancA.indexOf(p);
+              return dist + idx;
+            };
+
+            // 5. Filtra candidatos: prefere os com indicação de "imprim/print/recibo"
+            // OU posicionados próximos ao texto
+            const scored = candidates.map(c => {
+              const title = (c.getAttribute('title') || '').toLowerCase();
+              const aria = (c.getAttribute('aria-label') || '').toLowerCase();
+              const cls = (c.getAttribute('class') || '').toLowerCase();
+              const href = (c.getAttribute('href') || '').toLowerCase();
+              const ngClick = (c.getAttribute('ng-click') || c.getAttribute('(click)') || '').toLowerCase();
+              const text = (c.textContent || '').trim().toLowerCase();
+              const imgSrc = (c.querySelector('img')?.getAttribute('src') || '').toLowerCase();
+
+              let score = 0;
+              const haystack = `${title} ${aria} ${cls} ${href} ${ngClick} ${imgSrc}`;
+              if (haystack.includes('imprim') || haystack.includes('print')) score += 100;
+              if (haystack.includes('recibo')) score += 50;
+              if (text.includes('imprimir') || text.includes('recibo')) score += 30;
+              if (c.tagName === 'A') score += 5;
+              if (c.tagName === 'BUTTON') score += 5;
+              // Penaliza distância (quanto mais perto, melhor)
+              const dist = domDistance(textEl, c);
+              score -= dist;
+
+              return { el: c, score, dist, info: {
+                tag: c.tagName,
+                cls: cls.slice(0, 60),
+                title,
+                aria,
+                href,
+                text: text.slice(0, 30),
+                imgSrc: imgSrc.slice(0, 40),
+              } };
+            });
+
+            scored.sort((a, b) => b.score - a.score);
+
+            // 6. Clica no melhor candidato (excluindo o próprio textEl se incluído)
+            for (const cand of scored) {
+              if (cand.el === textEl) continue;
+              cand.el.click();
+              return {
+                via: 'panel-search',
+                tag: cand.el.tagName,
+                cls: cand.info.cls,
+                title: cand.info.title,
+                href: cand.info.href,
+                imgSrc: cand.info.imgSrc,
+                text: cand.info.text,
+                score: cand.score,
+                dist: cand.dist,
+                totalCandidates: scored.length,
+              };
+            }
+
+            return null;
+          };
+
+          // Tenta com cada texto "Imprimir Recibo" encontrado
+          for (const textEl of reciboTextEls) {
+            const result = tryClickAround(textEl);
+            if (result) return { clicked: true, ...result };
+          }
+
+          // Último recurso: clica no próprio texto
+          reciboTextEls[0].click();
+          return {
+            clicked: true,
+            via: 'fallback:' + reciboTextEls[0].tagName,
+            tag: reciboTextEls[0].tagName,
+            reason: 'nenhum clicável encontrado, clicou no próprio texto',
+            searchDistances: (window as any).__lastReciboSearchDist || [],
+          };
+        }, rowMarker);
+
+        // Loga distâncias para diagnóstico
+        if ((clickResult as any).searchDistances) {
+          log.info(`[eCAC/Recibo] DEBUG distâncias 'Imprimir Recibo' até rowMarker: ${JSON.stringify((clickResult as any).searchDistances)}`);
+        }
+
+        if (clickResult.clicked) {
+          clicked = true;
+          log.info(`[eCAC/Recibo] CLICK SUCCESS via=${(clickResult as any).via} tag=${(clickResult as any).tag} href="${(clickResult as any).href}" para ${numero}`);
+        } else {
+          log.warn(`[eCAC/Recibo] CLICK FAIL: ${(clickResult as any).reason} para ${numero}`);
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // ESTRATÉGIA 2 (FALLBACK): se a expansão+click não funcionou, tenta o ícone "Imprimir" na última coluna
+      // ─────────────────────────────────────────────────────────────────────────
+      if (!clicked) {
+        try {
+          const printBtn = row.locator(
+            'td:last-child a, td:last-child button, ' +
+            'button[title*="primir" i], a[title*="primir" i], ' +
+            '[aria-label*="primir" i], button:has(i.fa-print), a:has(i.fa-print)'
+          ).first();
+          if (await printBtn.count() > 0) {
+            await printBtn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+            await printBtn.click({ timeout: 8000 });
+            clicked = true;
+            log.info(`[eCAC/Recibo] FALLBACK: clicou ícone Imprimir da coluna para ${numero}`);
+          }
+        } catch (e: any) {
+          log.warn(`[eCAC/Recibo] Estratégia 2 falhou: ${e?.message || e}`);
+        }
+      }
+
+      // Se não encontrou na linha, dispara diagnóstico do painel
+      if (!clicked) {
+        // Diagnóstico só na primeira falha — captura todo o texto e botões do painel/modal aberto
+        if (!EcacService._htmlLogged) {
+          try {
+            const panelInfo = await this.page.evaluate(() => {
+              // Procura por modal/painel/dialog visível
+              const containers = Array.from(document.querySelectorAll('[role="dialog"], .modal, .panel, .br-modal, .br-side-menu, aside, [class*="painel" i], [class*="lateral" i]'));
+              const visible = containers.find((el: any) => {
+                const r = el.getBoundingClientRect();
+                return r.width > 100 && r.height > 100;
+              });
+              const target = visible || document.body;
+              const text = (target as HTMLElement).innerText.replace(/\s+/g, ' ').slice(0, 1500);
+              const buttons = Array.from(target.querySelectorAll('button, a')).slice(0, 40).map((b: any) => ({
+                tag: b.tagName,
+                title: b.getAttribute('title') || '',
+                aria: b.getAttribute('aria-label') || '',
+                cls: (b.getAttribute('class') || '').slice(0, 80),
+                text: (b.textContent || '').trim().slice(0, 50),
+              })).filter((b: any) => b.text || b.title || b.aria);
+              return { text, buttons, found: !!visible, tag: target.tagName };
+            }).catch(() => null);
+            if (panelInfo) {
+              log.warn(`[eCAC/Recibo] Painel após clique (found=${panelInfo.found}, tag=${panelInfo.tag}). Texto: ${panelInfo.text}`);
+              log.warn(`[eCAC/Recibo] Botões no painel: ${JSON.stringify(panelInfo.buttons).slice(0, 2500)}`);
+            }
+            EcacService._htmlLogged = true;
+          } catch { /* ignore */ }
+        }
+      }
+
+      if (!clicked) {
+        log.warn(`[eCAC/Recibo] Nenhum botão de impressão encontrado para ${numero}`);
+        // Volta para a listagem se houve navegação
+        await this.voltarParaListagem(urlAntes).catch(() => {});
+        return false;
+      }
+
+      // Aguarda até 25s pela captura (popups podem demorar a fechar)
+      for (let i = 0; i < 50 && !captured; i++) {
+        await this.page.waitForTimeout(500);
+      }
+
+      // CRÍTICO: colapsa TODAS as linhas expandidas via JS para que a próxima
+      // iteração não encontre "Imprimir Recibo" do painel anterior.
+      // O perdcomp-web usa div-based table, não <table>, então usamos o marker.
+      try {
+        await this.page.evaluate((marker: string) => {
+          const rowEl = document.querySelector(`[data-ts-row="${marker}"]`) as HTMLElement | null;
+          if (!rowEl) return;
+          // Clica na primeira célula da linha para colapsar (mesma ação de expandir)
+          const firstCell = rowEl.firstElementChild as HTMLElement | null;
+          if (!firstCell) return;
+          // Procura o mesmo tipo de clicável usado para expandir
+          const collectClickables = (root: HTMLElement) => {
+            const result: HTMLElement[] = [];
+            const all = root.querySelectorAll('a, button, [onclick], [ng-click], [class*="minus" i], [class*="plus" i], [class*="toggle" i]');
+            for (const el of Array.from(all)) result.push(el as HTMLElement);
+            return result;
+          };
+          const candidates = collectClickables(firstCell);
+          if (candidates.length > 0) candidates[0].click();
+          else firstCell.click();
+        }, rowMarker).catch(() => {});
+        await this.page.waitForTimeout(500);
+      } catch { /* ignore */ }
+
+      // Volta para a listagem para que a próxima linha seja processada
+      await this.voltarParaListagem(urlAntes).catch(() => {});
+
+      if (captured) {
+        out.set(numero, captured);
+        log.info(`[eCAC/Recibo] PDF capturado para ${numero} (${(captured as Buffer).length} bytes)`);
+        return true;
+      } else {
+        log.warn(`[eCAC/Recibo] Timeout aguardando PDF para ${numero}`);
+        return false;
+      }
+    } finally {
+      this.page.off('download', onDownload);
+      this.page.off('response', onResponse);
+      this.context.off('page', onPopup);
+      this.context.off('response', onContextResponse);
+      if (captured) {
+        log.info(`[eCAC/Recibo] ✓ ${numero}: PDF capturado via ${capturedSource} (${(captured as Buffer).length} bytes)`);
+      } else {
+        log.warn(`[eCAC/Recibo] ✗ ${numero}: NENHUM PDF capturado após click`);
+      }
+    }
   }
 
-  private normalizePeriodo(text: string): string {
-    const match = text.match(/(\d{2})[\/\-](\d{4})/);
-    if (match) return `${match[1]}/${match[2]}`;
-    const match2 = text.match(/(\d{4})[\/\-](\d{2})/);
-    if (match2) return `${match2[2]}/${match2[1]}`;
-    return text;
-  }
+  /**
+   * Fecha o painel/modal aberto pela ação "Exibir Relacionados" para que a
+   * próxima linha possa ser processada. Caso tenha havido navegação real
+   * (URL diferente), tenta voltar.
+   */
+  private async voltarParaListagem(urlOriginal: string): Promise<void> {
+    if (!this.page) return;
+    try {
+      const currentUrl = this.page.url();
 
-  private normalizeDate(text: string): string {
-    const match = text.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
-    if (match) return `${match[3]}-${match[2]}-${match[1]}`;
-    return text;
-  }
+      // Se a URL mudou (navegação real), volta para a listagem de Documentos Entregues
+      if (currentUrl !== urlOriginal) {
+        await this.page.goBack({ timeout: 8000 }).catch(() => {});
+        await this.page.waitForTimeout(1500);
+      }
 
-  private calcVencimento(periodo: string): string {
-    const match = periodo.match(/(\d{2})\/(\d{4})/);
-    if (!match) return '';
-    const mes = parseInt(match[1]);
-    const ano = parseInt(match[2]);
-    const proxMes = mes === 12 ? 1 : mes + 1;
-    const proxAno = mes === 12 ? ano + 1 : ano;
-    return `${proxAno}-${String(proxMes).padStart(2, '0')}-20`;
-  }
-
-  private mapTipoTributo(text: string): string {
-    const upper = text.toUpperCase();
-    if (upper.includes('PIS')) return 'PIS';
-    if (upper.includes('COFINS')) return 'COFINS';
-    if (upper.includes('IRPJ')) return 'IRPJ';
-    if (upper.includes('CSLL')) return 'CSLL';
-    if (upper.includes('IPI')) return 'IPI';
-    if (upper.includes('INSS') || upper.includes('PREVIDENC')) return 'INSS';
-    if (upper.includes('IRRF')) return 'IRRF';
-    return text || 'OUTROS';
-  }
-
-  private mapTipoCredito(text: string): string {
-    const upper = text.toUpperCase();
-    if (upper.includes('PIS')) return 'PIS';
-    if (upper.includes('COFINS')) return 'COFINS';
-    if (upper.includes('IRPJ')) return 'IRPJ';
-    if (upper.includes('CSLL')) return 'CSLL';
-    if (upper.includes('IPI')) return 'IPI';
-    if (upper.includes('INSS')) return 'INSS';
-    if (upper.includes('IRRF')) return 'IRRF';
-    if (upper.includes('CIDE')) return 'CIDE';
-    if (upper.includes('IOF')) return 'IOF';
-    return 'OUTROS';
-  }
-
-  private mapCategoriaTributo(cat: string): string {
-    const upper = cat.toUpperCase();
-    if (upper.includes('GERAL') || upper.includes('MENSAL')) return 'IRPJ';
-    if (upper.includes('13')) return 'INSS';
-    if (upper.includes('ANUAL')) return 'CSLL';
-    return 'OUTROS';
+      // Limpa data-ts-row markers para evitar conflito na próxima iteração
+      await this.page.evaluate(() => {
+        document.querySelectorAll('[data-ts-row]').forEach(el => el.removeAttribute('data-ts-row'));
+      }).catch(() => {});
+    } catch { /* ignore */ }
   }
 }

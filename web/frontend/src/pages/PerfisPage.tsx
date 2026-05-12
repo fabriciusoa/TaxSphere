@@ -85,6 +85,19 @@ const ACTION_LABELS: Record<Action, string> = {
   excluir: 'Excluir',
 };
 
+const hasMojibake = (value: string) => /Ã.|Â.|�/.test(value);
+
+const normalizeLabel = (value: string) => {
+  if (!value || !hasMojibake(value)) return value;
+  try {
+    const bytes = Uint8Array.from(value, (char) => char.charCodeAt(0) & 0xff);
+    const decoded = new TextDecoder('utf-8').decode(bytes);
+    return decoded || value;
+  } catch {
+    return value;
+  }
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const PerfisPage: React.FC = () => {
@@ -302,13 +315,13 @@ const PerfisPage: React.FC = () => {
                   {modulosAbertos[modulo.id] ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
                 </IconButton>
                 <Typography sx={{ fontSize: '0.8125rem', fontWeight: 700, color: T.textPrimary }}>
-                  {modulo.modulo}
+                  {normalizeLabel(modulo.modulo)}
                 </Typography>
               </Box>
               {/* Checkbox selecionar tudo no módulo */}
               {ACTIONS.map(a => (
                 <Box key={a} sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                  <Tooltip title={`${ACTION_LABELS[a]} tudo em ${modulo.modulo}`}>
+                  <Tooltip title={`${ACTION_LABELS[a]} tudo em ${normalizeLabel(modulo.modulo)}`}>
                     <Checkbox
                       size="small"
                       checked={modulo.funcionalidades.every(f => permMap[f.id]?.[a])}
@@ -348,7 +361,7 @@ const PerfisPage: React.FC = () => {
                   }}
                 >
                   <Typography sx={{ fontSize: '0.8125rem', color: T.textSecond, pl: 3, display: 'flex', alignItems: 'center' }}>
-                    {func.funcionalidade}
+                    {normalizeLabel(func.funcionalidade)}
                   </Typography>
                   {ACTIONS.map(a => (
                     <Box key={a} sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>

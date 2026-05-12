@@ -56,3 +56,20 @@ web/frontend/.vite/
 # Cobertura de testes
 # ─────────────────────────────────────────
 coverage/
+
+# ─────────────────────────────────────────
+# Dados locais / artefatos de dev (não versionar)
+# ─────────────────────────────────────────
+.claude/
+/PERDCOMP/
+temp_img/
+web/backend/temp/
+web/frontend/.next/
+web/frontend/next-env.d.ts
+web/logs/
+
+# Scripts SQL e utilitários com credenciais de desenvolvimento
+restore_password.sql
+set_simple_password.sql
+update_user.sql
+web/backend/scripts/set_user_password.mjs

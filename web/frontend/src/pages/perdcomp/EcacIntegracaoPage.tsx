@@ -17,11 +17,14 @@ import {
   CloudDownload as ImportIcon,
   Verified as VerifiedIcon,
   Warning as WarningIcon,
+  Key as KeyIcon,
+  LogoutOutlined as LogoutIcon,
 } from '@mui/icons-material';
-import { ecacService, type CertificadoDigital, type SincronizacaoStatus } from '../../services/ecacService';
+import { ecacService, type CertificadoDigital, type SincronizacaoStatus, type EcacPerdcompDocumento } from '../../services/ecacService';
 import { empresasService } from '../../services/empresasService';
 import { type Empresas } from '../../types/index';
 import { logger } from '../../utils/logger';
+import { useEmpresa } from '../../contexts/EmpresaContext';
 
 const T = {
   navy: '#0a1628',
@@ -39,9 +42,12 @@ const formatDate = (d: string) => {
 };
 
 export default function EcacIntegracaoPage() {
+  const { empresaId: filtroDocEmpresa, setEmpresaId: setFiltroDocEmpresa, empresas: ctxEmpresas } = useEmpresa();
   const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [certificados, setCertificados] = useState<CertificadoDigital[]>([]);
   const [historico, setHistorico] = useState<SincronizacaoStatus[]>([]);
+  const [ecacDocs, setEcacDocs] = useState<EcacPerdcompDocumento[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
   const [sucesso, setSucesso] = useState('');
@@ -52,6 +58,11 @@ export default function EcacIntegracaoPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadInfo, setUploadInfo] = useState('');
+
+  const [senhaOpen, setSenhaOpen] = useState(false);
+  const [senhaCertId, setSenhaCertId] = useState<number | null>(null);
+  const [novaSenha, setNovaSenha] = useState('');
+  const [savingSenha, setSavingSenha] = useState(false);
 
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncEmpresa, setSyncEmpresa] = useState<number | ''>('');
@@ -83,6 +94,20 @@ export default function EcacIntegracaoPage() {
 
   useEffect(() => { carregarDados(); }, [carregarDados]);
 
+  const carregarDocumentos = useCallback(async () => {
+    setLoadingDocs(true);
+    try {
+      const docs = await ecacService.perdcompDocumentos.listar(filtroDocEmpresa || undefined);
+      setEcacDocs(docs);
+    } catch (err: any) {
+      logger.error('Erro ao carregar documentos e-CAC', err);
+    } finally {
+      setLoadingDocs(false);
+    }
+  }, [filtroDocEmpresa]);
+
+  useEffect(() => { carregarDocumentos(); }, [carregarDocumentos]);
+
   useEffect(() => {
     if (sucesso) { const t = setTimeout(() => setSucesso(''), 5000); return () => clearTimeout(t); }
   }, [sucesso]);
@@ -107,7 +132,7 @@ export default function EcacIntegracaoPage() {
     if (!uploadFile || !uploadSenha) return;
     try {
       setUploading(true);
-      const result = await ecacService.certificados.validar(uploadFile, uploadSenha);
+      const result = await ecacService.certificados.validarArquivo(uploadFile, uploadSenha);
       if (result.valid && result.info) {
         const info = result.info;
         setUploadInfo(
@@ -139,6 +164,33 @@ export default function EcacIntegracaoPage() {
       setErro(err.response?.data?.error || 'Erro ao cadastrar certificado');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleAtualizarSenha = async () => {
+    if (!senhaCertId || !novaSenha) return;
+    setSavingSenha(true);
+    try {
+      await ecacService.certificados.atualizarSenha(senhaCertId, novaSenha);
+      setSucesso('Senha atualizada. Certificado pronto para uso pelo RPA.');
+      setSenhaOpen(false);
+      setNovaSenha('');
+      setSenhaCertId(null);
+    } catch (err: any) {
+      setErro(err.response?.data?.error || 'Erro ao atualizar senha');
+    } finally {
+      setSavingSenha(false);
+    }
+  };
+
+  const handleLimparSessao = async (id: number) => {
+    if (!window.confirm('Limpar cookies de sessão? O sistema fará nova autenticação na próxima execução.')) return;
+    try {
+      await ecacService.certificados.limparSessao(id);
+      setSucesso('Sessão removida com sucesso');
+      carregarDados();
+    } catch (err: any) {
+      setErro(err.response?.data?.error || 'Erro ao limpar sessão');
     }
   };
 
@@ -321,6 +373,16 @@ export default function EcacIntegracaoPage() {
                 <TableCell>{formatDate(cert.validade_de)} a {formatDate(cert.validade_ate)}</TableCell>
                 <TableCell align="center">{certStatusChip(cert)}</TableCell>
                 <TableCell align="center">
+                  <Tooltip title="Configurar senha para RPA">
+                    <IconButton size="small" onClick={() => { setSenhaCertId(cert.id); setSenhaOpen(true); }} sx={{ color: '#f59e0b' }}>
+                      <KeyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Limpar sessão eCAC">
+                    <IconButton size="small" onClick={() => handleLimparSessao(cert.id)} sx={{ color: '#8b5cf6' }}>
+                      <LogoutIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                   <Tooltip title="Excluir certificado">
                     <IconButton size="small" onClick={() => handleExcluirCert(cert.id)} sx={{ color: '#ef4444' }}>
                       <DeleteIcon fontSize="small" />
@@ -369,6 +431,118 @@ export default function EcacIntegracaoPage() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Documentos PER/DCOMP Importados */}
+      <Box display="flex" justifyContent="space-between" alignItems="center" mt={4} mb={1.5}>
+        <Typography variant="h6" fontWeight={600} color={T.navy}>
+          Documentos PER/DCOMP Importados do e-CAC
+        </Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <FormControl size="small" sx={{ minWidth: 240 }}>
+            <InputLabel>Filtrar por Empresa</InputLabel>
+            <Select value={filtroDocEmpresa} label="Filtrar por Empresa"
+              onChange={e => setFiltroDocEmpresa(e.target.value as number | '')}
+              sx={{ borderRadius: '10px' }}>
+              <MenuItem value="">Todas as empresas</MenuItem>
+              {ctxEmpresas.map(emp => (
+                <MenuItem key={emp.id} value={emp.id}>{emp.razao_social}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Tooltip title="Recarregar">
+            <IconButton size="small" onClick={carregarDocumentos} disabled={loadingDocs}
+              sx={{ color: T.cyan }}>
+              <SyncIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Box>
+      <TableContainer component={Paper} sx={{ borderRadius: 3, mb: 3 }}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Número</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Empresa</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Tipo Doc.</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Tipo Crédito</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Período Apuração</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Data Entrega</TableCell>
+              <TableCell align="center" sx={{ fontWeight: 600, color: T.textSecond }}>Status e-CAC</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: T.textSecond }}>Orig./Retif.</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {loadingDocs ? (
+              <TableRow>
+                <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
+                  <CircularProgress size={24} sx={{ color: T.cyan }} />
+                </TableCell>
+              </TableRow>
+            ) : ecacDocs.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} align="center" sx={{ py: 4, color: T.textSecond }}>
+                  {filtroDocEmpresa
+                    ? 'Nenhum documento importado para esta empresa.'
+                    : 'Nenhum documento importado do e-CAC ainda. Use "Buscar no e-CAC" no Dashboard.'}
+                </TableCell>
+              </TableRow>
+            ) : ecacDocs.map(doc => (
+              <TableRow key={doc.id} hover>
+                <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600 }}>
+                  {doc.numero}
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.8rem' }}>{doc.razao_social || `Empresa #${doc.id_empresa}`}</TableCell>
+                <TableCell sx={{ fontSize: '0.8rem' }}>{doc.tipo_documento || '—'}</TableCell>
+                <TableCell sx={{ fontSize: '0.8rem' }}>{doc.tipo_credito || '—'}</TableCell>
+                <TableCell sx={{ fontSize: '0.8rem' }}>{doc.periodo_apuracao || '—'}</TableCell>
+                <TableCell sx={{ fontSize: '0.8rem' }}>
+                  {doc.data_entrega ? new Date(doc.data_entrega).toLocaleDateString('pt-BR') : '—'}
+                </TableCell>
+                <TableCell align="center">
+                  <Chip label={doc.status_ecac || '—'} size="small"
+                    color={
+                      doc.status_ecac === 'Ativo' || doc.status_ecac === 'Em Análise' ? 'info'
+                      : doc.status_ecac === 'Deferido' ? 'success'
+                      : doc.status_ecac === 'Indeferido' ? 'error'
+                      : 'default'
+                    } />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.8rem' }}>{doc.orig_retif || '—'}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {ecacDocs.length > 0 && (
+          <Box px={2} py={1} sx={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+            <Typography variant="caption" color="text.secondary">
+              {ecacDocs.length} documento(s) importado(s) do e-CAC
+            </Typography>
+          </Box>
+        )}
+      </TableContainer>
+
+      {/* Dialog Atualizar Senha */}
+      <Dialog open={senhaOpen} onClose={() => !savingSenha && setSenhaOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 600, color: T.navy }}>Configurar Senha para RPA</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={1}>
+            <Alert severity="info" sx={{ borderRadius: 2, fontSize: '0.85rem' }}>
+              A senha será armazenada de forma cifrada (AES-256) para uso exclusivo pelo módulo de automação RPA ao acessar o e-CAC.
+            </Alert>
+            <TextField label="Senha do Certificado" type="password"
+              value={novaSenha} onChange={e => setNovaSenha(e.target.value)}
+              fullWidth required InputProps={{ sx: { borderRadius: '10px' } }} />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setSenhaOpen(false)} disabled={savingSenha}>Cancelar</Button>
+          <Button variant="contained" onClick={handleAtualizarSenha}
+            disabled={savingSenha || !novaSenha}
+            sx={{ bgcolor: '#f59e0b', '&:hover': { bgcolor: '#d97706' }, borderRadius: '10px' }}>
+            {savingSenha ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : 'Salvar Senha'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Dialog Upload */}
       <Dialog open={uploadOpen} onClose={() => !uploading && setUploadOpen(false)} maxWidth="sm" fullWidth>

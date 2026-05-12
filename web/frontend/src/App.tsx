@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { EmpresaProvider } from './contexts/EmpresaContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import PrivateRoute from './components/PrivateRoute';
 import LoginPage from './pages/LoginPage';
@@ -21,11 +22,12 @@ const PerdcompDashboardPage = lazy(() => import('./pages/perdcomp/PerdcompDashbo
 const PerdcompEmpresasPage = lazy(() => import('./pages/EmpresasPage'));
 const PerdcompCreditosPage = lazy(() => import('./pages/perdcomp/CreditosPage'));
 const PerdcompDebitosPage = lazy(() => import('./pages/perdcomp/DebitosPage'));
-const PerdcompPedidosPage = lazy(() => import('./pages/perdcomp/PedidosPage'));
-const PerdcompNovoPedidoPage = lazy(() => import('./pages/perdcomp/NovoPedidoPage'));
 const PerdcompSimuladorPage = lazy(() => import('./pages/perdcomp/SimuladorPage'));
-const PerdcompAssistenteIAPage = lazy(() => import('./pages/perdcomp/AssistenteIAPage'));
 const EcacIntegracaoPage = lazy(() => import('./pages/perdcomp/EcacIntegracaoPage'));
+const PerdcompDocumentosPage = lazy(() => import('./pages/perdcomp/DocumentosPage'));
+const PerdcompWizardPage = lazy(() => import('./pages/perdcomp/PerdcompWizardPage'));
+const RelatoriosPage = lazy(() => import('./pages/perdcomp/RelatoriosPage'));
+const CertificadosPage = lazy(() => import('./pages/CertificadosPage'));
 const DctfWebDashboardPage = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
 const DctfWebDeclaracoesPage = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
 const ClientesPage = lazy(() => import('./pages/ClientesPage'));
@@ -38,8 +40,8 @@ function PageLoader() {
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
       <div style={{
         width: 40, height: 40,
-        border: '3px solid #e0e0e0',
-        borderTop: '3px solid #1976d2',
+        border: '3px solid #dfe6ee',
+        borderTop: '3px solid #00bfd4',
         borderRadius: '50%',
         animation: 'spin 0.8s linear infinite'
       }} />
@@ -52,6 +54,7 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        <EmpresaProvider>
         <BrowserRouter>
           <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -64,15 +67,17 @@ function App() {
                 {/* Soluções Fiscais */}
                 <Route path="/fiscal/classificacao-ncm" element={<ModuloEmBreve />} />
 
-                {/* PERD/Comp */}
+                {/* PER/DComp */}
                 <Route path="/fiscal/perdcomp" element={<PerdcompDashboardPage />} />
                 <Route path="/fiscal/perdcomp/creditos" element={<PerdcompCreditosPage />} />
                 <Route path="/fiscal/perdcomp/debitos" element={<PerdcompDebitosPage />} />
-                <Route path="/fiscal/perdcomp/pedidos" element={<PerdcompPedidosPage />} />
-                <Route path="/fiscal/perdcomp/pedidos/novo" element={<PerdcompNovoPedidoPage />} />
                 <Route path="/fiscal/perdcomp/simulador" element={<PerdcompSimuladorPage />} />
-                <Route path="/fiscal/perdcomp/assistente" element={<PerdcompAssistenteIAPage />} />
+                <Route path="/fiscal/perdcomp/documentos" element={<PerdcompDocumentosPage />} />
+                <Route path="/fiscal/perdcomp/documentos/novo" element={<PerdcompWizardPage />} />
+                <Route path="/fiscal/perdcomp/documentos/:id/editar" element={<PerdcompWizardPage />} />
+                <Route path="/fiscal/perdcomp/relatorios" element={<RelatoriosPage />} />
                 <Route path="/configuracoes/ecac" element={<EcacIntegracaoPage />} />
+                <Route path="/configuracoes/certificados" element={<CertificadosPage />} />
 
                 {/*RecuperacaoPis Cofins */}
                 <Route path="/fiscal/pis-cofins" element={<ModuloEmBreve />} />
@@ -118,6 +123,7 @@ function App() {
             </Routes>
           </Suspense>
         </BrowserRouter>
+        </EmpresaProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

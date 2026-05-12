@@ -3,36 +3,36 @@ import { createTheme } from '@mui/material/styles';
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#00A3E0',      //  Blue (azul principal)
-      light: '#33B5E6',     // Azul claro
-      dark: '#0082B3',      // Azul escuro
+      main: '#00BFD4',      // Azul/teal principal (logo)
+      light: '#4ED9E5',
+      dark: '#008C9E',
       contrastText: '#FFFFFF'
     },
     secondary: {
-      main: '#78BE20',      //  Green (verde principal)
-      light: '#93CB4C',     // Verde claro
-      dark: '#609816',      // Verde escuro
+      main: '#2BCB9A',      // Verde do logo
+      light: '#65DDB7',
+      dark: '#1D9C76',
       contrastText: '#FFFFFF'
     },
     error: {
       main: '#D32F2F'       // Vermelho para erros
     },
     warning: {
-      main: '#FFA726'       // Laranja para avisos
+      main: '#F39C4A'       // Laranja sóbrio para avisos
     },
     info: {
-      main: '#29B6F6'       // Azul claro para informações
+      main: '#23B4C8'       // Teal informativo
     },
     success: {
-      main: '#66BB6A'       // Verde para sucesso
+      main: '#2AA876'       // Verde sóbrio para sucesso
     },
     background: {
-      default: '#F5F5F5',   // Cinza claro para fundo geral
+      default: '#F4F7FA',   // Fundo clean
       paper: '#FFFFFF'       // Branco para cards/papéis
     },
     text: {
-      primary: '#333333',   // Texto principal (cinza escuro)
-      secondary: '#666666'  // Texto secundário (cinza médio)
+      primary: '#17324D',
+      secondary: '#5E748A'
     }
   },
   typography: {
@@ -92,7 +92,53 @@ const theme = createTheme({
       defaultProps: {
         variant: 'outlined'       // Variante padrão com borda
       }
-    }
+    },
+    // ── Abas com visual moderno: pílulas arredondadas, fundo suave,
+    //    aba ativa com cor primária preenchida e elevação leve.
+    MuiTabs: {
+      styleOverrides: {
+        root: {
+          minHeight: 44,
+          padding: 6,
+          backgroundColor: '#F1F5F9',
+          borderRadius: 12,
+          display: 'inline-flex',
+          border: '1px solid #E2E8F0',
+        },
+        flexContainer: {
+          gap: 4,
+        },
+        indicator: {
+          display: 'none', // visual de pílulas — sem barra de indicador
+        },
+      },
+    },
+    MuiTab: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+          fontSize: '0.875rem',
+          minHeight: 32,
+          padding: '6px 16px',
+          borderRadius: 8,
+          color: '#5E748A',
+          transition: 'background-color 120ms ease, color 120ms ease, box-shadow 120ms ease',
+          '&:hover': {
+            color: '#17324D',
+            backgroundColor: 'rgba(0, 191, 212, 0.08)',
+          },
+          '&.Mui-selected': {
+            color: '#FFFFFF',
+            backgroundColor: '#00BFD4',
+            boxShadow: '0 2px 6px rgba(0, 191, 212, 0.35)',
+          },
+          '&.Mui-selected:hover': {
+            backgroundColor: '#00ACBF',
+          },
+        },
+      },
+    },
   }
 });
 

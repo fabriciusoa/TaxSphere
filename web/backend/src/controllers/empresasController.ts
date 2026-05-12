@@ -152,8 +152,12 @@ export const empresasController = {
       if (existe) return res.status(409).json({ error: 'CNPJ já cadastrado' });
 
       const { id: lastID } = await runQuery(
-        `INSERT INTO adm_empresas (usuario_responsavel_id, cnpj, razao_social, nome_fantasia, inscricao_estadual, regime_tributario, uf, municipio, cliente_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-        [req.user!.id, cnpj, razao_social, nome_fantasia || null, inscricao_estadual || null, regime_tributario, uf || null, municipio || null, 0]
+        `INSERT INTO adm_empresas
+           (usuario_responsavel_id, cnpj, razao_social, nome_fantasia, inscricao_estadual,
+            regime_tributario, uf, municipio)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [req.user!.id, cnpj, razao_social, nome_fantasia || null, inscricao_estadual || null,
+         regime_tributario, uf || null, municipio || null]
       );
 
       const empresa = await getOne<any>('SELECT * FROM adm_empresas WHERE id = $1', [lastID]);

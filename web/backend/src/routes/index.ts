@@ -20,11 +20,14 @@ import { manutencaoController } from '../controllers/manutencaoController';
 import { frontendLogController } from '../controllers/frontendLogController';
 import {
   perdcompCreditosController, perdcompDebitosController,
-  perdcompPedidosController, perdcompDashboardController, perdcompSimuladorController,
-  perdcompAlertasController,
+  perdcompDashboardController, perdcompSimuladorController,
 } from '../controllers/perdcompController';
-import { perdcompIAController } from '../controllers/perdcompIAController';
 import { ecacCertificadoController, ecacSincronizacaoController } from '../controllers/ecacController';
+import {
+  perdcompDocumentosController, creditoTributarioController, debitoDocumentoController,
+  responsavelPreenchimentoController, recibosController,
+} from '../controllers/perdcompDocumentosController';
+import { perdcompRelatoriosController } from '../controllers/perdcompRelatoriosController';
 import { dctfwebController } from '../controllers/dctfwebController';
 import { log } from '../utils/logger';
 import { empresasController } from '../controllers/empresasController';
@@ -314,7 +317,7 @@ router.post('/empresas', authenticateToken, empresasController.criar);
 router.put('/empresas/:id', authenticateToken, empresasController.atualizar);
 router.delete('/empresas/:id', authenticateToken, empresasController.excluir);
 
-// ============ PERD/Comp ============
+// ============ PER/DComp ============
 
 // Créditos
 router.get('/perdcomp/creditos', authenticateToken, perdcompCreditosController.listar);
@@ -331,25 +334,14 @@ router.post('/perdcomp/debitos', authenticateToken, perdcompDebitosController.cr
 router.put('/perdcomp/debitos/:id', authenticateToken, perdcompDebitosController.atualizar);
 router.delete('/perdcomp/debitos/:id', authenticateToken, perdcompDebitosController.excluir);
 
-// Pedidos
-router.get('/perdcomp/pedidos', authenticateToken, perdcompPedidosController.listar);
-router.get('/perdcomp/pedidos/:id', authenticateToken, perdcompPedidosController.buscarPorId);
-router.post('/perdcomp/pedidos', authenticateToken, perdcompPedidosController.criar);
-router.put('/perdcomp/pedidos/:id/status', authenticateToken, perdcompPedidosController.atualizarStatus);
-router.delete('/perdcomp/pedidos/:id', authenticateToken, perdcompPedidosController.excluir);
-
-// Dashboard, Simulador, Alertas
+// Dashboard
 router.get('/perdcomp/dashboard', authenticateToken, perdcompDashboardController.obter);
-router.post('/perdcomp/simulador', authenticateToken, perdcompSimuladorController.simular);
-router.get('/perdcomp/alertas', authenticateToken, perdcompAlertasController.listar);
-router.put('/perdcomp/alertas/:id/lido', authenticateToken, perdcompAlertasController.marcarLido);
-router.post('/perdcomp/alertas/gerar', authenticateToken, perdcompAlertasController.gerarAlertas);
 
-// IA
-router.post('/perdcomp/ia/analisar', authenticateToken, perdcompIAController.analisar);
-router.post('/perdcomp/ia/sugerir', authenticateToken, perdcompIAController.sugerir);
-router.post('/perdcomp/ia/risco', authenticateToken, perdcompIAController.risco);
-router.post('/perdcomp/ia/chat', authenticateToken, perdcompIAController.chat);
+// Simulador (Manual e Automático)
+router.post('/perdcomp/simulador',             authenticateToken, perdcompSimuladorController.simular);
+router.post('/perdcomp/simulador/automatico',  authenticateToken, perdcompSimuladorController.automatico);
+router.get ('/perdcomp/simulador/historico',   authenticateToken, perdcompSimuladorController.sugerirHistorico);
+router.post('/perdcomp/simulador/parse-texto', authenticateToken, perdcompSimuladorController.parseTexto);
 
 // ============ DCTF Web ============
 router.get('/dctfweb/dashboard', authenticateToken, dctfwebController.dashboard);
@@ -364,11 +356,12 @@ router.put('/dctfweb/declaracoes/:id/pago', authenticateToken, dctfwebController
 // ============ eCAC - Certificados Digitais ============
 const uploadCert = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
+  // Aceita qualquer MIME — browsers/SOs enviam tipos variados para .pfx/.p12.
+  // A validação real do conteúdo é feita no controller pelo certificadoService.
   fileFilter: (_req, file, cb) => {
-    const ext = file.originalname.toLowerCase();
-    if (ext.endsWith('.pfx') || ext.endsWith('.p12') ||
-        file.mimetype === 'application/x-pkcs12' || file.mimetype === 'application/octet-stream') {
+    const name = file.originalname.toLowerCase();
+    if (name.endsWith('.pfx') || name.endsWith('.p12')) {
       cb(null, true);
     } else {
       cb(new Error('Apenas arquivos .pfx ou .p12 são aceitos'));
@@ -378,12 +371,69 @@ const uploadCert = multer({
 
 router.get('/ecac/certificados', authenticateToken, ecacCertificadoController.listar);
 router.post('/ecac/certificados', authenticateToken, uploadCert.single('certificado'), ecacCertificadoController.upload);
-router.post('/ecac/certificados/validar', authenticateToken, uploadCert.single('certificado'), ecacCertificadoController.validar);
+router.post('/ecac/certificados/validar', authenticateToken, uploadCert.single('certificado'), ecacCertificadoController.validarArquivo);
+router.get('/ecac/certificados/:id/validar', authenticateToken, ecacCertificadoController.validarPorId);
+router.post('/ecac/certificados/:id/autenticar', authenticateToken, ecacCertificadoController.autenticar);
 router.delete('/ecac/certificados/:id', authenticateToken, ecacCertificadoController.excluir);
+router.patch('/ecac/certificados/:id/senha', authenticateToken, ecacCertificadoController.atualizarSenha);
+router.delete('/ecac/certificados/:id/sessao', authenticateToken, ecacCertificadoController.limparSessao);
+router.get('/ecac/certificados/:id/sessao', authenticateToken, ecacCertificadoController.statusSessao);
+router.post('/ecac/certificados/:id/instalar-certificado', authenticateToken, ecacCertificadoController.instalarCertificado);
+router.post('/ecac/certificados/:id/capturar-sessao-edge', authenticateToken, ecacCertificadoController.capturarSessaoEdge);
 
 // eCAC - Sincronização
 router.post('/ecac/sincronizar', authenticateToken, ecacSincronizacaoController.sincronizar);
+// Importação automática usando sessão previamente autenticada (acionada pelo Dashboard)
+router.post('/ecac/importar-automatico', authenticateToken, ecacSincronizacaoController.sincronizarAutomatico);
+router.get('/ecac/sincronizacoes/ativa', authenticateToken, ecacSincronizacaoController.ativa);
+router.post('/ecac/sincronizacoes/:id/pausar', authenticateToken, ecacSincronizacaoController.pausar);
+router.post('/ecac/sincronizacoes/:id/retomar', authenticateToken, ecacSincronizacaoController.retomar);
+router.post('/ecac/sincronizacoes/:id/cancelar', authenticateToken, ecacSincronizacaoController.cancelar);
 router.get('/ecac/sincronizacoes/:id', authenticateToken, ecacSincronizacaoController.status);
 router.get('/ecac/sincronizacoes', authenticateToken, ecacSincronizacaoController.historico);
+// eCAC - Documentos PER/DCOMP importados
+router.get('/ecac/perdcomp-documentos', authenticateToken, ecacSincronizacaoController.listarDocumentos);
+router.get('/ecac/perdcomp-documentos/:id/recibo.pdf', authenticateToken, ecacSincronizacaoController.baixarReciboPdf);
+router.get('/ecac/perdcomp-documentos/:id/debitos', authenticateToken, ecacSincronizacaoController.listarDebitosCompensados);
+router.post('/ecac/baixar-recibos', authenticateToken, ecacSincronizacaoController.baixarRecibos);
+router.post('/ecac/sincronizar-saldos', authenticateToken, ecacSincronizacaoController.sincronizarSaldos);
+
+// ============ PER/DCOMP — Documentos Oficiais (novo módulo) ============
+
+router.get('/perdcomp/documentos', authenticateToken, perdcompDocumentosController.listar);
+router.get('/perdcomp/documentos/:id', authenticateToken, perdcompDocumentosController.buscarPorId);
+router.post('/perdcomp/documentos', authenticateToken, perdcompDocumentosController.criar);
+router.put('/perdcomp/documentos/:id', authenticateToken, perdcompDocumentosController.atualizar);
+router.patch('/perdcomp/documentos/:id/status', authenticateToken, perdcompDocumentosController.atualizarStatus);
+router.delete('/perdcomp/documentos/:id', authenticateToken, perdcompDocumentosController.excluir);
+router.get('/perdcomp/documentos/:id/historico', authenticateToken, perdcompDocumentosController.historico);
+
+// Crédito Tributário do documento
+router.put('/perdcomp/documentos/:id/credito', authenticateToken, creditoTributarioController.salvar);
+
+// Débitos do documento
+router.get('/perdcomp/documentos/:id/debitos', authenticateToken, debitoDocumentoController.listar);
+router.post('/perdcomp/documentos/:id/debitos', authenticateToken, debitoDocumentoController.criar);
+router.put('/perdcomp/documentos/:id/debitos/:debitoId', authenticateToken, debitoDocumentoController.atualizar);
+router.delete('/perdcomp/documentos/:id/debitos/:debitoId', authenticateToken, debitoDocumentoController.excluir);
+
+// Responsável pelo preenchimento
+router.put('/perdcomp/documentos/:id/responsavel', authenticateToken, responsavelPreenchimentoController.salvar);
+
+// Recibos (geral + por documento)
+router.get('/perdcomp/recibos', authenticateToken, recibosController.listar);
+router.get('/perdcomp/documentos/:id/recibos', authenticateToken, recibosController.listar);
+router.post('/perdcomp/documentos/:id/recibos', authenticateToken, recibosController.criar);
+router.delete('/perdcomp/documentos/:id/recibos/:reciboId', authenticateToken, recibosController.excluir);
+
+// ============ Relatórios PER/DCOMP (consolidados e-CAC + sistema) ============
+
+router.get('/perdcomp/relatorios/dashboard', authenticateToken, perdcompRelatoriosController.dashboard);
+router.get('/perdcomp/relatorios/saldos-disponiveis', authenticateToken, perdcompRelatoriosController.saldosDisponiveis);
+router.get('/perdcomp/relatorios/prescricao', authenticateToken, perdcompRelatoriosController.prescricao);
+router.get('/perdcomp/relatorios/retrabalho', authenticateToken, perdcompRelatoriosController.retrabalho);
+router.get('/perdcomp/relatorios/compensacoes-em-risco', authenticateToken, perdcompRelatoriosController.compensacoesEmRisco);
+router.get('/perdcomp/relatorios/controle-consolidado', authenticateToken, perdcompRelatoriosController.controleConsolidado);
+
 
 export default router;

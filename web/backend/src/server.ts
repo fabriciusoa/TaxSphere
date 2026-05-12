@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import cron from 'node-cron';
 import routes from './routes';
 import './database/connection';
+import { ensurePerdcompSchema } from './database/ensurePerdcompSchema';
 import notificacoesController from './controllers/notificacoesController';
 import { getParametro } from './utils/parametrosHelper';
 import { log } from './utils/logger';
@@ -116,6 +117,13 @@ app.get('/health', (req, res) => {
 
 // Iniciar servidor
 app.listen(PORT, async () => {
+  try {
+    await ensurePerdcompSchema();
+    log.info('[PERDCOMP] Schema garantido com sucesso');
+  } catch (error: any) {
+    log.error(`[PERDCOMP] Falha ao garantir schema: ${error.message}`);
+  }
+
   log.info(`Servidor rodando na porta ${PORT}`);
   log.info(`Health check: http://${SERVER_NAME}:${PORT}/health`);
   log.info(`API disponível em: http://${SERVER_NAME}:${PORT}/api`);

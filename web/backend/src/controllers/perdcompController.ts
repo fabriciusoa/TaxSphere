@@ -1,20 +1,13 @@
 import { Response } from 'express';
 import { AuthRequest } from '../types';
-import { getAll, getOne, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../database/connection';
+import { getAll, getOne, runQuery } from '../database/connection';
 import { log } from '../utils/logger';
 import { selicService } from '../services/selicService';
 import { perdcompRegraService } from '../services/perdcompRegraService';
 import {
-  empresaCreateSchema, empresaUpdateSchema,
   creditoCreateSchema, creditoUpdateSchema,
   debitoCreateSchema, debitoUpdateSchema,
-  pedidoCreateSchema, pedidoStatusSchema,
-  simuladorSchema,
 } from '../validators/perdcompSchemas';
-
-function getCurrentTimestamp() {
-  return new Date().toISOString().replace('T', ' ').substring(0, 19);
-}
 
 function calcularPrescricao(dtPagamento: string): string {
   const dt = new Date(dtPagamento);
@@ -35,286 +28,88 @@ async function registrarHistorico(params: {
   );
 }
 
-// ============ BUSCA CNPJ (APIs externas) ============
-
-async function tentarCNPJA(cnpj: string): Promise<any | null> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const response = await fetch(`https://open.cnpja.com/office/${cnpj}`, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!response.ok) return null;
-    const data = await response.json() as any;
-
-    let regime = 'Lucro Real';
-    if (data.company?.simples?.optant) regime = 'Simples Nacional';
-
-    return {
-      cnpj,
-      razao_social: data.company?.name || '',
-      nome_fantasia: data.alias || '',
-      uf: data.address?.state || '',
-      municipio: data.address?.city || '',
-      inscricao_estadual: '',
-      regime_tributario: regime,
-      endereco: data.address
-        ? `${data.address.street || ''}, ${data.address.number || 'S/N'} - ${data.address.district || ''}, ${data.address.city || ''}/${data.address.state || ''} - CEP: ${data.address.zip || ''}`
-        : '',
-      atividade_principal: data.mainActivity?.text || '',
-      situacao: data.status?.text || '',
-      natureza_juridica: data.company?.nature?.text || '',
-      capital_social: data.company?.equity || null,
-      email: data.emails?.[0]?.address || '',
-      telefone: data.phones?.[0] ? `(${data.phones[0].area}) ${data.phones[0].number}` : '',
-    };
-  } catch (err: any) {
-    log.warn(`CNPJA falhou para ${cnpj}: ${err.message}`);
-    return null;
-  }
-}
-
-async function tentarOpenCNPJ(cnpj: string): Promise<any | null> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const response = await fetch(`https://api.opencnpj.org/${cnpj}`, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!response.ok) return null;
-    const data = await response.json() as any;
-
-    let regime = 'Lucro Real';
-    if (data.opcao_simples === 'Sim' || data.opcao_mei === 'Sim') regime = 'Simples Nacional';
-
-    return {
-      cnpj,
-      razao_social: data.razao_social || '',
-      nome_fantasia: data.nome_fantasia || '',
-      uf: data.uf || '',
-      municipio: data.municipio || '',
-      inscricao_estadual: '',
-      regime_tributario: regime,
-      endereco: [data.logradouro, data.numero, data.complemento, data.bairro, data.municipio, data.uf, data.cep ? `CEP: ${data.cep}` : '']
-        .filter(Boolean).join(', '),
-      atividade_principal: data.cnae_principal || '',
-      situacao: data.situacao_cadastral || '',
-      natureza_juridica: '',
-      capital_social: data.capital_social ? parseFloat(data.capital_social.replace(',', '.')) : null,
-      email: data.email || '',
-      telefone: data.telefones?.[0] ? `(${data.telefones[0].ddd}) ${data.telefones[0].numero}` : '',
-    };
-  } catch (err: any) {
-    log.warn(`OpenCNPJ falhou para ${cnpj}: ${err.message}`);
-    return null;
-  }
-}
-
-// ============ EMPRESAS ============
-
-export const perdcompEmpresasController = {
-  listar: async (req: AuthRequest, res: Response) => {
-    try {
-      const { busca, regime, uf, ativo, page = 1, limit = 20 } = req.query;
-      let where = ['1=1'];
-      const params: any[] = [];
-
-      if (busca) {
-        const b = `%${busca}%`;
-        params.push(b); where.push(`e.razao_social LIKE $${params.length}`);
-        params.push(b); where.push(`e.cnpj LIKE $${params.length}`);
-        params.push(b); where.push(`e.nome_fantasia LIKE $${params.length}`);
-        // agrupando as 3 condições como OR (substituir as 3 últimas por 1 OR)
-        const last3 = where.splice(-3);
-        where.push(`(${last3.join(' OR ')})`);
-      }
-      if (regime) { params.push(regime); where.push(`e.regime_tributario = $${params.length}`); }
-      if (uf) { params.push(uf); where.push(`e.uf = $${params.length}`); }
-      if (ativo !== undefined) { params.push(ativo === 'true' ? 1 : 0); where.push(`e.ativo = $${params.length}`); }
-
-      const offset = (Number(page) - 1) * Number(limit);
-      const countResult = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_empresas e WHERE ${where.join(' AND ')}`, params
-      );
-
-      const listParams = [...params];
-      listParams.push(Number(limit)); const limitIdx = listParams.length;
-      listParams.push(offset); const offsetIdx = listParams.length;
-
-      const empresas = await getAll<any>(
-        `SELECT e.*,
-          (SELECT COUNT(*) FROM perdcomp_creditos c WHERE c.id_empresa = e.id AND c.status IN ('Disponível','Parcialmente Utilizado')) as total_creditos,
-          (SELECT COALESCE(SUM(c.saldo_disponivel), 0) FROM perdcomp_creditos c WHERE c.id_empresa = e.id AND c.status IN ('Disponível','Parcialmente Utilizado')) as saldo_creditos,
-          (SELECT COUNT(*) FROM perdcomp_debitos d WHERE d.id_empresa = e.id AND d.status IN ('Pendente','Parcialmente Compensado')) as total_debitos,
-          (SELECT COUNT(*) FROM perdcomp_pedidos p WHERE p.id_empresa = e.id) as total_pedidos
-        FROM perdcomp_empresas e WHERE ${where.join(' AND ')}
-        ORDER BY e.razao_social LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-        listParams
-      );
-
-      res.json({
-        data: empresas,
-        pagination: { page: Number(page), limit: Number(limit), total: countResult?.total || 0, totalPages: Math.ceil((countResult?.total || 0) / Number(limit)) }
-      });
-    } catch (error: any) {
-      log.error(`Erro ao listar empresas: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  buscarPorId: async (req: AuthRequest, res: Response) => {
-    try {
-      const empresa = await getOne<any>(
-        `SELECT e.*,
-          (SELECT COALESCE(SUM(c.saldo_disponivel), 0) FROM perdcomp_creditos c WHERE c.id_empresa = e.id AND c.status IN ('Disponível','Parcialmente Utilizado')) as saldo_creditos,
-          (SELECT COUNT(*) FROM perdcomp_creditos c WHERE c.id_empresa = e.id) as total_creditos,
-          (SELECT COUNT(*) FROM perdcomp_debitos d WHERE d.id_empresa = e.id) as total_debitos,
-          (SELECT COUNT(*) FROM perdcomp_pedidos p WHERE p.id_empresa = e.id) as total_pedidos
-        FROM perdcomp_empresas e WHERE e.id = $1`,
-        [req.params.id]
-      );
-      if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
-      res.json(empresa);
-    } catch (error: any) {
-      log.error(`Erro ao buscar empresa: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  criar: async (req: AuthRequest, res: Response) => {
-    try {
-      const resultado = empresaCreateSchema.safeParse(req.body);
-      if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
-
-      const { cnpj, razao_social, nome_fantasia, inscricao_estadual, regime_tributario, uf, municipio } = resultado.data;
-      const existe = await getOne<any>('SELECT id FROM perdcomp_empresas WHERE cnpj = $1', [cnpj]);
-      if (existe) return res.status(409).json({ error: 'CNPJ já cadastrado' });
-
-      const { id: lastID } = await runQuery(
-        `INSERT INTO perdcomp_empresas (id_usuario_responsavel, cnpj, razao_social, nome_fantasia, inscricao_estadual, regime_tributario, uf, municipio) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-        [req.user!.id, cnpj, razao_social, nome_fantasia || null, inscricao_estadual || null, regime_tributario, uf || null, municipio || null]
-      );
-
-      const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [lastID]);
-      res.status(201).json(empresa);
-    } catch (error: any) {
-      log.error(`Erro ao criar empresa: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  atualizar: async (req: AuthRequest, res: Response) => {
-    try {
-      const resultado = empresaUpdateSchema.safeParse(req.body);
-      if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
-
-      const empresa = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
-      if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
-
-      const campos = resultado.data;
-      const sets: string[] = [];
-      const vals: any[] = [];
-      for (const [key, value] of Object.entries(campos)) {
-        if (value !== undefined) { vals.push(value); sets.push(`${key} = $${vals.length}`); }
-      }
-      if (sets.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
-
-      sets.push("atualizado_em = NOW()");
-      vals.push(req.params.id);
-      await runQuery(`UPDATE perdcomp_empresas SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
-
-      const atualizada = await getOne<any>('SELECT * FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
-      res.json(atualizada);
-    } catch (error: any) {
-      log.error(`Erro ao atualizar empresa: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  excluir: async (req: AuthRequest, res: Response) => {
-    try {
-      const empresa = await getOne<any>('SELECT id FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
-      if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
-
-      const temPedidos = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedidos WHERE id_empresa = $1', [req.params.id]);
-      if (temPedidos && temPedidos.cnt > 0) {
-        return res.status(409).json({ error: 'Empresa possui pedidos vinculados. Inative ao invés de excluir.' });
-      }
-
-      await runQuery('DELETE FROM perdcomp_creditos WHERE id_empresa = $1', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_debitos WHERE id_empresa = $1', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_empresas WHERE id = $1', [req.params.id]);
-      res.json({ message: 'Empresa excluída com sucesso' });
-    } catch (error: any) {
-      log.error(`Erro ao excluir empresa: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  buscarCNPJ: async (req: AuthRequest, res: Response) => {
-    try {
-      const cnpj = (req.params.cnpj || '').replace(/\D/g, '');
-      if (cnpj.length !== 14) return res.status(400).json({ error: 'CNPJ deve ter 14 dígitos' });
-
-      // API 1: CNPJA Open (resposta mais rica)
-      let resultado = await tentarCNPJA(cnpj);
-
-      // API 2: OpenCNPJ (fallback, estrutura diferente)
-      if (!resultado) {
-        resultado = await tentarOpenCNPJ(cnpj);
-      }
-
-      if (!resultado) {
-        return res.status(404).json({ error: 'CNPJ não encontrado em nenhuma base de dados' });
-      }
-
-      res.json(resultado);
-    } catch (error: any) {
-      log.error(`Erro ao buscar CNPJ: ${error.message}`);
-      res.status(500).json({ error: 'Erro ao consultar dados do CNPJ' });
-    }
-  },
-};
 
 // ============ CRÉDITOS ============
 
 export const perdcompCreditosController = {
+  /**
+   * Lista créditos disponíveis lendo de `saldos_credito` (tabela alimentada pela
+   * sincronização e-CAC), seguindo o modelo da planilha "Controle de Créditos":
+   * - PER/DCOMP Inicial, Empresa, CNPJ, Período, Tipo
+   * - Valor Inicial, Utilizado, Saldo, SELIC, Saldo Atualizado
+   * - Data Prescrição + Status Atenção (cor) baseado em dias restantes
+   *
+   * Mantém retrocompatibilidade com o fluxo manual via `perdcomp_creditos`
+   * (que referencia perdcomp_empresas, não adm_empresas).
+   */
   listar: async (req: AuthRequest, res: Response) => {
     try {
-      const { id_empresa, tipo_credito, status, periodo, busca, page = 1, limit = 20 } = req.query;
-      let where = ['1=1'];
-      const params: any[] = [];
+      const { id_empresa, tipo_credito, status, busca, page = 1, limit = 20 } = req.query;
 
-      if (id_empresa) { params.push(id_empresa); where.push(`c.id_empresa = $${params.length}`); }
-      if (tipo_credito) { params.push(tipo_credito); where.push(`c.tipo_credito = $${params.length}`); }
-      if (status) { params.push(status); where.push(`c.status = $${params.length}`); }
-      if (periodo) { params.push(periodo); where.push(`c.periodo_apuracao = $${params.length}`); }
+      const where = ['1=1'];
+      const params: any[] = [];
+      if (id_empresa) { params.push(id_empresa); where.push(`sc.id_empresa = $${params.length}`); }
+      if (tipo_credito) { params.push(tipo_credito); where.push(`sc.tipo_credito = $${params.length}`); }
+      if (status === 'Disponível') where.push(`sc.saldo_disponivel > 0`);
+      else if (status === 'Esgotado') where.push(`sc.saldo_disponivel <= 0`);
       if (busca) {
         const b = `%${busca}%`;
-        params.push(b); where.push(`e.razao_social LIKE $${params.length}`);
-        params.push(b); where.push(`e.cnpj LIKE $${params.length}`);
-        params.push(b); where.push(`c.codigo_receita LIKE $${params.length}`);
-        const last3 = where.splice(-3);
-        where.push(`(${last3.join(' OR ')})`);
+        params.push(b); params.push(b); params.push(b);
+        where.push(`(e.razao_social ILIKE $${params.length-2} OR e.cnpj ILIKE $${params.length-1} OR sc.numero_perdcomp_origem ILIKE $${params.length})`);
       }
 
       const offset = (Number(page) - 1) * Number(limit);
       const countResult = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_creditos c JOIN perdcomp_empresas e ON e.id = c.id_empresa WHERE ${where.join(' AND ')}`, params
+        `SELECT COUNT(*) as total FROM saldos_credito sc
+         JOIN adm_empresas e ON e.id = sc.id_empresa
+         WHERE ${where.join(' AND ')}`,
+        params
       );
 
       const listParams = [...params];
       listParams.push(Number(limit)); const limitIdx = listParams.length;
       listParams.push(offset); const offsetIdx = listParams.length;
 
+      // Tradução para o formato esperado pelo frontend (campos compatíveis com perdcomp_creditos)
       const creditos = await getAll<any>(
-        `SELECT c.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj,
-          CAST(EXTRACT(EPOCH FROM (c.dt_vencimento_prescricao::date - CURRENT_DATE)) / 86400 AS INTEGER) as dias_para_prescricao
-        FROM perdcomp_creditos c
-        JOIN perdcomp_empresas e ON e.id = c.id_empresa
-        WHERE ${where.join(' AND ')}
-        ORDER BY c.dt_vencimento_prescricao ASC
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        `SELECT
+            sc.id, sc.id_empresa,
+            sc.numero_perdcomp_origem,
+            sc.tipo_credito,
+            sc.exercicio,
+            sc.periodo_apuracao,
+            sc.valor_saldo_negativo as valor_original,
+            sc.selic_acumulada,
+            sc.credito_atualizado as valor_atualizado,
+            sc.total_utilizado,
+            sc.saldo_disponivel,
+            sc.data_entrega_pedido as dt_pagamento_original,
+            sc.data_prescricao as dt_vencimento_prescricao,
+            sc.status_normalizado as status,
+            sc.observacoes,
+            sc.criado_em,
+            sc.atualizado_em,
+            sc.origem,
+            e.razao_social as empresa_razao_social,
+            e.cnpj as empresa_cnpj,
+            (sc.data_prescricao::date - CURRENT_DATE)::INTEGER as dias_para_prescricao,
+            -- "Status Atenção" igual à coluna H da planilha (cores)
+            CASE
+              WHEN sc.data_prescricao < CURRENT_DATE THEN 'PRESCRITO'
+              WHEN sc.data_prescricao < CURRENT_DATE + INTERVAL '6 months' THEN 'URGENTE_6M'
+              WHEN sc.data_prescricao < CURRENT_DATE + INTERVAL '12 months' THEN 'ATENCAO_1A'
+              WHEN sc.data_prescricao < CURRENT_DATE + INTERVAL '24 months' THEN 'AVISO_2A'
+              ELSE 'OK'
+            END as status_atencao,
+            -- Quantidade de PER/DCOMPs vinculados a este crédito (igual coluna "Nº PER/DCOMPs" da planilha)
+            (SELECT COUNT(*) FROM ecac_perdcomp_documentos d
+             WHERE d.id_empresa = sc.id_empresa
+               AND (d.numero_perdcomp_inicial = sc.numero_perdcomp_origem OR d.numero = sc.numero_perdcomp_origem)) as qtd_perdcomps
+         FROM saldos_credito sc
+         JOIN adm_empresas e ON e.id = sc.id_empresa
+         WHERE ${where.join(' AND ')}
+         ORDER BY sc.data_prescricao ASC NULLS LAST
+         LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
         listParams
       );
 
@@ -418,9 +213,6 @@ export const perdcompCreditosController = {
       const credito = await getOne<any>('SELECT id FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       if (!credito) return res.status(404).json({ error: 'Crédito não encontrado' });
 
-      const emUso = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedido_itens WHERE id_credito = $1', [req.params.id]);
-      if (emUso && emUso.cnt > 0) return res.status(409).json({ error: 'Crédito vinculado a pedidos. Não pode ser excluído.' });
-
       await runQuery('DELETE FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       res.json({ message: 'Crédito excluído com sucesso' });
     } catch (error: any) {
@@ -445,20 +237,40 @@ export const perdcompCreditosController = {
 // ============ DÉBITOS ============
 
 export const perdcompDebitosController = {
+  /**
+   * Lista os DÉBITOS COMPENSADOS provenientes da sincronização e-CAC.
+   *
+   * Cada linha = 1 débito compensado por 1 DCOMP. O status do débito reflete o
+   * status do PER/DCOMP onde ele foi compensado (status_normalizado).
+   * Aplicação no simulador: considerar PENDENTES apenas os débitos cujo
+   * PER/DCOMP está EM_ANALISE/PENDENTE_DECISAO (ainda não confirmados).
+   */
   listar: async (req: AuthRequest, res: Response) => {
     try {
-      const { id_empresa, tipo_tributo, status, periodo, page = 1, limit = 20 } = req.query;
-      let where = ['1=1'];
+      const { id_empresa, tipo_tributo, status, page = 1, limit = 20 } = req.query;
+      const where = ['1=1'];
       const params: any[] = [];
 
       if (id_empresa) { params.push(id_empresa); where.push(`d.id_empresa = $${params.length}`); }
-      if (tipo_tributo) { params.push(tipo_tributo); where.push(`d.tipo_tributo = $${params.length}`); }
-      if (status) { params.push(status); where.push(`d.status = $${params.length}`); }
-      if (periodo) { params.push(periodo); where.push(`d.periodo_apuracao = $${params.length}`); }
+      if (tipo_tributo) {
+        params.push(`%${tipo_tributo}%`);
+        where.push(`(deb.denominacao_receita ILIKE $${params.length} OR deb.codigo_receita ILIKE $${params.length})`);
+      }
+      // Status: Pendente = DCOMP em análise; Compensado = deferido/homologado
+      if (status === 'Pendente') {
+        where.push(`COALESCE(d.status_normalizado, 'EM_ANALISE') IN ('EM_ANALISE','PENDENTE_DECISAO')`);
+      } else if (status === 'Compensado') {
+        where.push(`d.status_normalizado IN ('DEFERIDO','PARCIALMENTE_DEFERIDO','HOMOLOGADO','PARCIALMENTE_HOMOLOGADO')`);
+      }
 
       const offset = (Number(page) - 1) * Number(limit);
       const countResult = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_debitos d WHERE ${where.join(' AND ')}`, params
+        `SELECT COUNT(*) as total
+         FROM ecac_perdcomp_debitos_compensados deb
+         JOIN ecac_perdcomp_documentos d ON d.id = deb.id_documento
+         JOIN adm_empresas e ON e.id = d.id_empresa
+         WHERE ${where.join(' AND ')}`,
+        params
       );
 
       const listParams = [...params];
@@ -466,9 +278,47 @@ export const perdcompDebitosController = {
       listParams.push(offset); const offsetIdx2 = listParams.length;
 
       const debitos = await getAll<any>(
-        `SELECT d.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj
-        FROM perdcomp_debitos d JOIN perdcomp_empresas e ON e.id = d.id_empresa
-        WHERE ${where.join(' AND ')} ORDER BY d.dt_vencimento ASC LIMIT $${limitIdx2} OFFSET $${offsetIdx2}`,
+        `SELECT
+            deb.id,
+            d.id_empresa,
+            -- Classifica tributo igual à planilha (colunas IRPJ/CSLL/COFINS/PIS/INSS/Restituição)
+            CASE
+              WHEN deb.denominacao_receita ILIKE '%IRPJ%' OR deb.codigo_receita ILIKE '%IRPJ%' THEN 'IRPJ'
+              WHEN deb.denominacao_receita ILIKE '%CSLL%' OR deb.codigo_receita ILIKE '%CSLL%' THEN 'CSLL'
+              WHEN deb.denominacao_receita ILIKE '%COFINS%' THEN 'COFINS'
+              WHEN deb.denominacao_receita ILIKE '%PIS%' OR deb.denominacao_receita ILIKE '%PASEP%' THEN 'PIS/PASEP'
+              WHEN deb.denominacao_receita ILIKE '%INSS%' OR deb.denominacao_receita ILIKE '%Previdenc%' THEN 'INSS'
+              WHEN deb.denominacao_receita ILIKE '%IRRF%' THEN 'IRRF'
+              ELSE COALESCE(deb.denominacao_receita, 'OUTROS')
+            END as tipo_tributo,
+            deb.codigo_receita,
+            deb.denominacao_receita,
+            deb.grupo_tributo,
+            deb.periodo_apuracao,
+            deb.principal as valor_principal,
+            deb.multa as valor_multa,
+            deb.juros as valor_juros,
+            deb.total as valor_total,
+            deb.data_vencimento as dt_vencimento,
+            deb.total as saldo_devedor,  -- compatibilidade
+            CASE
+              WHEN d.status_normalizado IN ('DEFERIDO','PARCIALMENTE_DEFERIDO','HOMOLOGADO','PARCIALMENTE_HOMOLOGADO') THEN 'Compensado'
+              WHEN d.status_normalizado IN ('INDEFERIDO','NAO_HOMOLOGADO') THEN 'Não Compensado'
+              ELSE 'Pendente'
+            END as status,
+            d.status_normalizado,
+            d.numero as numero_perdcomp,
+            d.numero_perdcomp_inicial,
+            d.data_entrega as data_compensacao,
+            deb.criado_em,
+            e.razao_social as empresa_razao_social,
+            e.cnpj as empresa_cnpj
+         FROM ecac_perdcomp_debitos_compensados deb
+         JOIN ecac_perdcomp_documentos d ON d.id = deb.id_documento
+         JOIN adm_empresas e ON e.id = d.id_empresa
+         WHERE ${where.join(' AND ')}
+         ORDER BY d.data_entrega DESC NULLS LAST, deb.id DESC
+         LIMIT $${limitIdx2} OFFSET $${offsetIdx2}`,
         listParams
       );
 
@@ -560,10 +410,7 @@ export const perdcompDebitosController = {
       const debito = await getOne<any>('SELECT id FROM perdcomp_debitos WHERE id = $1', [req.params.id]);
       if (!debito) return res.status(404).json({ error: 'Débito não encontrado' });
 
-      const emUso = await getOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM perdcomp_pedido_itens WHERE id_debito = $1', [req.params.id]);
-      if (emUso && emUso.cnt > 0) return res.status(409).json({ error: 'Débito vinculado a pedidos.' });
-
-      await runQuery('DELETE FROM perdcomp_debitos WHERE id = ?', [req.params.id]);
+      await runQuery('DELETE FROM perdcomp_debitos WHERE id = $1', [req.params.id]);
       res.json({ message: 'Débito excluído com sucesso' });
     } catch (error: any) {
       log.error(`Erro ao excluir débito: ${error.message}`);
@@ -572,224 +419,6 @@ export const perdcompDebitosController = {
   },
 };
 
-// ============ PEDIDOS ============
-
-export const perdcompPedidosController = {
-  listar: async (req: AuthRequest, res: Response) => {
-    try {
-      const { id_empresa, tipo_pedido, status, page = 1, limit = 20 } = req.query;
-      let where = ['1=1'];
-      const params: any[] = [];
-
-      if (id_empresa) { params.push(id_empresa); where.push(`p.id_empresa = $${params.length}`); }
-      if (tipo_pedido) { params.push(tipo_pedido); where.push(`p.tipo_pedido = $${params.length}`); }
-      if (status) { params.push(status); where.push(`p.status = $${params.length}`); }
-
-      const offset = (Number(page) - 1) * Number(limit);
-      const countResult = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_pedidos p WHERE ${where.join(' AND ')}`, params
-      );
-
-      const listParams3 = [...params];
-      listParams3.push(Number(limit)); const limitIdx3 = listParams3.length;
-      listParams3.push(offset); const offsetIdx3 = listParams3.length;
-
-      const pedidos = await getAll<any>(
-        `SELECT p.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj, u.nome as usuario_nome
-        FROM perdcomp_pedidos p
-        JOIN perdcomp_empresas e ON e.id = p.id_empresa
-        JOIN usuarios u ON u.id = p.id_usuario_criador
-        WHERE ${where.join(' AND ')}
-        ORDER BY p.criado_em DESC LIMIT $${limitIdx3} OFFSET $${offsetIdx3}`,
-        listParams3
-      );
-
-      res.json({
-        data: pedidos,
-        pagination: { page: Number(page), limit: Number(limit), total: countResult?.total || 0, totalPages: Math.ceil((countResult?.total || 0) / Number(limit)) }
-      });
-    } catch (error: any) {
-      log.error(`Erro ao listar pedidos: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  buscarPorId: async (req: AuthRequest, res: Response) => {
-    try {
-      const pedido = await getOne<any>(
-        `SELECT p.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj, u.nome as usuario_nome
-        FROM perdcomp_pedidos p
-        JOIN perdcomp_empresas e ON e.id = p.id_empresa
-        JOIN usuarios u ON u.id = p.id_usuario_criador
-        WHERE p.id = $1`,
-        [req.params.id]
-      );
-      if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-
-      pedido.itens = await getAll<any>(
-        `SELECT pi.*, c.tipo_credito as credito_tipo, c.periodo_apuracao as credito_periodo, d.tipo_tributo as debito_tipo, d.periodo_apuracao as debito_periodo
-        FROM perdcomp_pedido_itens pi
-        LEFT JOIN perdcomp_creditos c ON c.id = pi.id_credito
-        LEFT JOIN perdcomp_debitos d ON d.id = pi.id_debito
-        WHERE pi.id_pedido = $1`,
-        [req.params.id]
-      );
-
-      pedido.historico = await getAll<any>(
-        `SELECT h.*, u.nome as usuario_nome FROM perdcomp_historico h JOIN usuarios u ON u.id = h.id_usuario WHERE h.id_pedido = $1 ORDER BY h.criado_em DESC`,
-        [req.params.id]
-      );
-
-      pedido.documentos = await getAll<any>(
-        `SELECT id, id_pedido, tipo_documento, nome_arquivo, tipo_arquivo, tamanho_bytes, observacoes, criado_em FROM perdcomp_documentos WHERE id_pedido = $1`,
-        [req.params.id]
-      );
-
-      res.json(pedido);
-    } catch (error: any) {
-      log.error(`Erro ao buscar pedido: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  criar: async (req: AuthRequest, res: Response) => {
-    try {
-      const resultado = pedidoCreateSchema.safeParse(req.body);
-      if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
-
-      const data = resultado.data;
-
-      const creditosTipo = data.itens.filter(i => i.tipo_item === 'credito').map(i => '');
-      const debitosTipo = data.itens.filter(i => i.tipo_item === 'debito').map(i => '');
-
-      let totalCredito = 0;
-      let totalDebito = 0;
-
-      for (const item of data.itens) {
-        if (item.tipo_item === 'credito' && item.id_credito) {
-          const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [item.id_credito]);
-          if (!credito) return res.status(400).json({ error: `Crédito ${item.id_credito} não encontrado` });
-          if (item.valor_utilizado > credito.saldo_disponivel) {
-            return res.status(400).json({ error: `Valor excede o saldo disponível do crédito ${item.id_credito} (saldo: R$ ${credito.saldo_disponivel.toFixed(2)})` });
-          }
-          totalCredito += item.valor_utilizado;
-        }
-        if (item.tipo_item === 'debito' && item.id_debito) {
-          const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [item.id_debito]);
-          if (!debito) return res.status(400).json({ error: `Débito ${item.id_debito} não encontrado` });
-          if (item.valor_utilizado > debito.saldo_devedor) {
-            return res.status(400).json({ error: `Valor excede o saldo devedor do débito ${item.id_debito}` });
-          }
-          totalDebito += item.valor_utilizado;
-        }
-      }
-
-      const { id: lastID } = await runQuery(
-        `INSERT INTO perdcomp_pedidos (id_empresa, id_usuario_criador, tipo_pedido, valor_total_credito, valor_total_debito, observacoes) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [data.id_empresa, req.user!.id, data.tipo_pedido, totalCredito, totalDebito, data.observacoes || null]
-      );
-
-      for (const item of data.itens) {
-        await runQuery(
-          'INSERT INTO perdcomp_pedido_itens (id_pedido, id_credito, id_debito, tipo_item, valor_utilizado) VALUES ($1, $2, $3, $4, $5)',
-          [lastID, item.id_credito || null, item.id_debito || null, item.tipo_item, item.valor_utilizado]
-        );
-      }
-
-      await registrarHistorico({ id_pedido: lastID, id_usuario: req.user!.id, acao: 'Criação', detalhes: `Pedido ${data.tipo_pedido} - Crédito: R$ ${totalCredito} / Débito: R$ ${totalDebito}` });
-
-      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [lastID]);
-      res.status(201).json(pedido);
-    } catch (error: any) {
-      log.error(`Erro ao criar pedido: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  atualizarStatus: async (req: AuthRequest, res: Response) => {
-    try {
-      const resultado = pedidoStatusSchema.safeParse(req.body);
-      if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
-
-      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
-      if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-
-      const { status, motivo_indeferimento, dt_ciencia } = resultado.data;
-      const sets: string[] = [];
-      const vals: any[] = [];
-      vals.push(status); sets.push(`status = $${vals.length}`);
-      sets.push("atualizado_em = NOW()");
-
-      if (motivo_indeferimento) { vals.push(motivo_indeferimento); sets.push(`motivo_indeferimento = $${vals.length}`); }
-      if (dt_ciencia) {
-        vals.push(dt_ciencia); sets.push(`dt_ciencia = $${vals.length}`);
-        const prazo = new Date(dt_ciencia);
-        prazo.setDate(prazo.getDate() + 30);
-        vals.push(prazo.toISOString().substring(0, 10)); sets.push(`dt_prazo_manifestacao = $${vals.length}`);
-      }
-      if (status === 'Deferido' || status === 'Indeferido' || status === 'Homologado' || status === 'Não Homologado') {
-        sets.push("dt_decisao = NOW()");
-      }
-
-      vals.push(req.params.id);
-      await runQuery(`UPDATE perdcomp_pedidos SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
-      await registrarHistorico({
-        id_pedido: Number(req.params.id), id_usuario: req.user!.id, acao: 'Mudança Status',
-        campo_alterado: 'status', valor_anterior: pedido.status, valor_novo: status
-      });
-
-      if (status === 'Transmitido') {
-        const txClient = await beginTransaction();
-        try {
-          await runQuery(`UPDATE perdcomp_pedidos SET dt_transmissao = NOW() WHERE id = $1`, [req.params.id], txClient);
-          const itens = await getAll<any>('SELECT * FROM perdcomp_pedido_itens WHERE id_pedido = $1', [req.params.id]);
-          for (const item of itens) {
-            if (item.tipo_item === 'credito' && item.id_credito) {
-              await runQuery(
-                `UPDATE perdcomp_creditos SET saldo_disponivel = saldo_disponivel - $1, status = CASE WHEN saldo_disponivel - $2 <= 0 THEN 'Esgotado' ELSE 'Parcialmente Utilizado' END, atualizado_em = NOW() WHERE id = $3`,
-                [item.valor_utilizado, item.valor_utilizado, item.id_credito],
-                txClient
-              );
-            }
-            if (item.tipo_item === 'debito' && item.id_debito) {
-              await runQuery(
-                `UPDATE perdcomp_debitos SET saldo_devedor = saldo_devedor - $1, status = CASE WHEN saldo_devedor - $2 <= 0 THEN 'Compensado' ELSE 'Parcialmente Compensado' END, atualizado_em = NOW() WHERE id = $3`,
-                [item.valor_utilizado, item.valor_utilizado, item.id_debito],
-                txClient
-              );
-            }
-          }
-          await commitTransaction(txClient);
-        } catch (txErr) {
-          await rollbackTransaction(txClient);
-          throw txErr;
-        }
-      }
-
-      const atualizado = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
-      res.json(atualizado);
-    } catch (error: any) {
-      log.error(`Erro ao atualizar status: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-
-  excluir: async (req: AuthRequest, res: Response) => {
-    try {
-      const pedido = await getOne<any>('SELECT * FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
-      if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-      if (pedido.status !== 'Rascunho') return res.status(400).json({ error: 'Apenas pedidos em rascunho podem ser excluídos' });
-
-      await runQuery('DELETE FROM perdcomp_pedido_itens WHERE id_pedido = $1', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_documentos WHERE id_pedido = $1', [req.params.id]);
-      await runQuery('DELETE FROM perdcomp_pedidos WHERE id = $1', [req.params.id]);
-      res.json({ message: 'Pedido excluído com sucesso' });
-    } catch (error: any) {
-      log.error(`Erro ao excluir pedido: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  },
-};
 
 // ============ DASHBOARD ============
 
@@ -797,63 +426,190 @@ export const perdcompDashboardController = {
   obter: async (req: AuthRequest, res: Response) => {
     try {
       const { id_empresa } = req.query;
-      let empWhere = '';
-      const empParams: any[] = [];
-      if (id_empresa) { empParams.push(id_empresa); empWhere = `AND id_empresa = $${empParams.length}`; }
+      // id_empresa vem do frontend e refere-se a adm_empresas.id (mesmo ID usado
+      // por saldos_credito.id_empresa e ecac_perdcomp_documentos.id_empresa).
+      // A tabela perdcomp_creditos referencia perdcomp_empresas.id (diferente),
+      // por isso é necessário consultar as duas fontes separadamente quando essa
+      // tabela tiver dados; hoje a fonte oficial pós-sincronização e-CAC é
+      // `saldos_credito` (que reproduz o modelo da planilha "Controle de Créditos").
 
+      const empFilter = id_empresa ? `AND id_empresa = $1` : '';
+      const empParams: any[] = id_empresa ? [id_empresa] : [];
+
+      // ── 1. Créditos disponíveis (saldo > 0) ──
       const creds = await getOne<any>(
-        `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor FROM perdcomp_creditos WHERE status IN ('Disponível','Parcialmente Utilizado') ${empWhere}`, empParams
+        `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor
+         FROM saldos_credito WHERE saldo_disponivel > 0 ${empFilter}`,
+        empParams
       );
+
+      // ── 2. Débitos compensados pendentes vs deferidos ──
+      // No modelo da planilha, "Débito" = total de débitos compensados via DCOMPs.
+      // Status: Em Análise = pendente; Deferido/Homologado = compensação confirmada.
       const debs = await getOne<any>(
-        `SELECT COUNT(*) as total, COALESCE(SUM(saldo_devedor), 0) as valor FROM perdcomp_debitos WHERE status IN ('Pendente','Parcialmente Compensado') ${empWhere}`, empParams
+        `SELECT COUNT(deb.id) as total, COALESCE(SUM(deb.total), 0) as valor
+         FROM ecac_perdcomp_debitos_compensados deb
+         JOIN ecac_perdcomp_documentos d ON d.id = deb.id_documento
+         WHERE COALESCE(d.status_normalizado, 'EM_ANALISE') IN ('EM_ANALISE','PENDENTE_DECISAO')
+         ${id_empresa ? `AND d.id_empresa = $1` : ''}`,
+        empParams
       );
-      const pedAnalise = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_pedidos WHERE status = 'Em Análise' ${empWhere}`, empParams
-      );
-      const pedDeferidos = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_pedidos WHERE status IN ('Deferido','Deferido Parcialmente','Homologado') ${empWhere}`, empParams
-      );
-      const pedIndeferidos = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_pedidos WHERE status IN ('Indeferido','Não Homologado') ${empWhere}`, empParams
-      );
-      const totalDecididos = (pedDeferidos?.total || 0) + (pedIndeferidos?.total || 0);
-      const taxaDeferimento = totalDecididos > 0 ? ((pedDeferidos?.total || 0) / totalDecididos * 100) : 0;
 
+      // ── 3. Pedidos PER/DCOMP por status normalizado (vem do e-CAC) ──
+      const empWhereEcac = id_empresa ? `AND id_empresa = $1` : '';
+      const statusCounts = await getAll<any>(
+        `SELECT COALESCE(status_normalizado, 'DESCONHECIDO') as status, COUNT(*) as total
+         FROM ecac_perdcomp_documentos WHERE 1=1 ${empWhereEcac}
+         GROUP BY status_normalizado`,
+        empParams
+      );
+      const byStatus = (s: string) => Number(statusCounts.find(r => r.status === s)?.total || 0);
+      const pedidosEmAnalise = byStatus('EM_ANALISE') + byStatus('PENDENTE_DECISAO');
+      const pedidosDeferidos = byStatus('DEFERIDO') + byStatus('PARCIALMENTE_DEFERIDO') + byStatus('HOMOLOGADO') + byStatus('PARCIALMENTE_HOMOLOGADO');
+      const pedidosIndeferidos = byStatus('INDEFERIDO') + byStatus('NAO_HOMOLOGADO');
+      const totalDecididos = pedidosDeferidos + pedidosIndeferidos;
+      const taxaDeferimento = totalDecididos > 0 ? (pedidosDeferidos / totalDecididos * 100) : 0;
+
+      // ── 4. Prescrição (créditos que vencem em até 6 meses) ──
+      // Conforme planilha: Data Prescrição = Competência + 1800 dias (≈5 anos).
+      // Cores da planilha:
+      //   < 0 dias       → PRESCRITO
+      //   < 180 dias     → URGENTE (< 6 meses)   ⚠️ vermelho
+      //   < 360 dias     → ATENCAO (< 1 ano)     🟠 laranja
+      //   < 720 dias     → AVISO (< 2 anos)      🟡 amarelo
+      //   >= 720 dias    → OK                    🟢 verde
       const prescricao = await getOne<any>(
-        `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor FROM perdcomp_creditos WHERE status IN ('Disponível','Parcialmente Utilizado') AND dt_vencimento_prescricao <= CURRENT_DATE + INTERVAL '6 months' ${empWhere}`, empParams
+        `SELECT
+            COUNT(*) FILTER (WHERE data_prescricao < CURRENT_DATE) as prescritos,
+            COALESCE(SUM(saldo_disponivel) FILTER (WHERE data_prescricao < CURRENT_DATE), 0) as valor_prescritos,
+            COUNT(*) FILTER (WHERE data_prescricao >= CURRENT_DATE AND data_prescricao < CURRENT_DATE + INTERVAL '6 months') as urgente_6m,
+            COALESCE(SUM(saldo_disponivel) FILTER (WHERE data_prescricao >= CURRENT_DATE AND data_prescricao < CURRENT_DATE + INTERVAL '6 months'), 0) as valor_urgente_6m,
+            COUNT(*) FILTER (WHERE data_prescricao >= CURRENT_DATE + INTERVAL '6 months' AND data_prescricao < CURRENT_DATE + INTERVAL '12 months') as atencao_1a,
+            COUNT(*) FILTER (WHERE data_prescricao >= CURRENT_DATE + INTERVAL '12 months' AND data_prescricao < CURRENT_DATE + INTERVAL '24 months') as aviso_2a,
+            COUNT(*) FILTER (WHERE data_prescricao >= CURRENT_DATE + INTERVAL '24 months') as ok
+         FROM saldos_credito WHERE saldo_disponivel > 0 ${empFilter}`,
+        empParams
       );
 
-      const alertasNaoLidos = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_alertas WHERE lido = 0 AND id_usuario = $1`, [req.user!.id]
-      );
-
+      // ── 5. Créditos por tipo (Saldo Negativo IRPJ/CSLL, Pagamento Indevido, etc.) ──
       const creditosPorTipo = await getAll<any>(
-        `SELECT tipo_credito as tipo, COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor FROM perdcomp_creditos WHERE status IN ('Disponível','Parcialmente Utilizado') ${empWhere} GROUP BY tipo_credito`, empParams
+        `SELECT tipo_credito as tipo, COUNT(*) as total,
+                COALESCE(SUM(saldo_disponivel), 0) as valor,
+                COALESCE(SUM(credito_atualizado), 0) as valor_atualizado,
+                COALESCE(SUM(total_utilizado), 0) as valor_utilizado
+         FROM saldos_credito WHERE saldo_disponivel > 0 ${empFilter}
+         GROUP BY tipo_credito ORDER BY valor DESC`,
+        empParams
       );
 
-      const pedidosPorStatus = await getAll<any>(
-        `SELECT status, COUNT(*) as total FROM perdcomp_pedidos WHERE 1=1 ${empWhere} GROUP BY status`, empParams
+      // ── 6. Pedidos por status (versão amigável dos status normalizados) ──
+      const STATUS_LABEL: Record<string, string> = {
+        EM_ANALISE: 'Em Análise', PENDENTE_DECISAO: 'Pendente Decisão',
+        DEFERIDO: 'Deferido', PARCIALMENTE_DEFERIDO: 'Parc. Deferido',
+        HOMOLOGADO: 'Homologado', PARCIALMENTE_HOMOLOGADO: 'Parc. Homologado',
+        INDEFERIDO: 'Indeferido', NAO_HOMOLOGADO: 'Não Homologado',
+        CANCELADO: 'Cancelado', RETIFICADO: 'Retificado', DESCONHECIDO: 'Sem Status',
+      };
+      const pedidosPorStatus = statusCounts.map(r => ({
+        status: STATUS_LABEL[r.status as string] || r.status,
+        total: Number(r.total),
+      }));
+
+      // ── 7. Débitos compensados por tipo de tributo (IRPJ, CSLL, COFINS, PIS, INSS) ──
+      const debitosPorTributo = await getAll<any>(
+        `SELECT
+            CASE
+              WHEN deb.denominacao_receita ILIKE '%IRPJ%' OR deb.codigo_receita ILIKE '%IRPJ%' THEN 'IRPJ'
+              WHEN deb.denominacao_receita ILIKE '%CSLL%' OR deb.codigo_receita ILIKE '%CSLL%' THEN 'CSLL'
+              WHEN deb.denominacao_receita ILIKE '%COFINS%' THEN 'COFINS'
+              WHEN deb.denominacao_receita ILIKE '%PIS%' OR deb.denominacao_receita ILIKE '%PASEP%' THEN 'PIS/PASEP'
+              WHEN deb.denominacao_receita ILIKE '%INSS%' OR deb.denominacao_receita ILIKE '%Previdenc%' THEN 'INSS'
+              WHEN deb.denominacao_receita ILIKE '%IRRF%' THEN 'IRRF'
+              ELSE COALESCE(deb.denominacao_receita, 'OUTROS')
+            END as tributo,
+            COUNT(*) as qtd, COALESCE(SUM(deb.total), 0) as valor
+         FROM ecac_perdcomp_debitos_compensados deb
+         JOIN ecac_perdcomp_documentos d ON d.id = deb.id_documento
+         WHERE 1=1 ${id_empresa ? 'AND d.id_empresa = $1' : ''}
+         GROUP BY tributo ORDER BY valor DESC`,
+        empParams
       );
 
+      // ── 8. Últimos documentos importados do e-CAC ──
+      // Data exibida = data real do documento no e-CAC (transmissão > entrega).
+      // Responsável vem do recibo PDF (pessoa que assinou no e-CAC).
       const ultMovimentos = await getAll<any>(
-        `SELECT h.*, u.nome as usuario_nome FROM perdcomp_historico h JOIN usuarios u ON u.id = h.id_usuario ORDER BY h.criado_em DESC LIMIT 10`
+        `SELECT
+            d.id,
+            d.numero,
+            COALESCE(d.tipo_documento, 'PER/DCOMP') AS acao,
+            d.numero || COALESCE(' · ' || d.status_ecac, '') AS detalhes,
+            d.responsavel_nome,
+            d.responsavel_cpf,
+            COALESCE(d.data_transmissao, d.data_entrega, d.criado_em) AS criado_em
+         FROM ecac_perdcomp_documentos d
+         WHERE 1=1 ${id_empresa ? 'AND d.id_empresa = $1' : ''}
+         ORDER BY COALESCE(d.data_transmissao, d.data_entrega, d.criado_em) DESC, d.id DESC
+         LIMIT 10`,
+        empParams
+      );
+
+      // ── 9. Contagem de documentos e-CAC ──
+      const ecacDocs = await getOne<{ total: number; com_recibo: number; sem_recibo: number }>(
+        `SELECT COUNT(*) as total,
+                COUNT(*) FILTER (WHERE recibo_pdf IS NOT NULL) as com_recibo,
+                COUNT(*) FILTER (WHERE recibo_pdf IS NULL)     as sem_recibo
+         FROM ecac_perdcomp_documentos WHERE 1=1 ${empWhereEcac}`,
+        empParams
       );
 
       res.json({
-        total_creditos_disponiveis: creds?.total || 0,
-        valor_creditos_disponiveis: creds?.valor || 0,
-        total_debitos_pendentes: debs?.total || 0,
-        valor_debitos_pendentes: debs?.valor || 0,
-        pedidos_em_analise: pedAnalise?.total || 0,
-        pedidos_deferidos: pedDeferidos?.total || 0,
-        pedidos_indeferidos: pedIndeferidos?.total || 0,
+        total_creditos_disponiveis: Number(creds?.total) || 0,
+        valor_creditos_disponiveis: Number(creds?.valor) || 0,
+        total_debitos_pendentes: Number(debs?.total) || 0,
+        valor_debitos_pendentes: Number(debs?.valor) || 0,
+        pedidos_em_analise: pedidosEmAnalise,
+        pedidos_deferidos: pedidosDeferidos,
+        pedidos_indeferidos: pedidosIndeferidos,
         taxa_deferimento: Math.round(taxaDeferimento * 100) / 100,
-        creditos_proximos_prescricao: prescricao?.total || 0,
-        valor_creditos_prescricao: prescricao?.valor || 0,
-        alertas_nao_lidos: alertasNaoLidos?.total || 0,
-        creditos_por_tipo: creditosPorTipo,
+        creditos_proximos_prescricao: Number(prescricao?.urgente_6m) || 0,
+        valor_creditos_prescricao: Number(prescricao?.valor_urgente_6m) || 0,
+        prescricao_detalhe: {
+          prescritos: Number(prescricao?.prescritos) || 0,
+          valor_prescritos: Number(prescricao?.valor_prescritos) || 0,
+          urgente_6m: Number(prescricao?.urgente_6m) || 0,
+          valor_urgente_6m: Number(prescricao?.valor_urgente_6m) || 0,
+          atencao_1a: Number(prescricao?.atencao_1a) || 0,
+          aviso_2a: Number(prescricao?.aviso_2a) || 0,
+          ok: Number(prescricao?.ok) || 0,
+        },
+        documentos_ecac: Number(ecacDocs?.total) || 0,
+        documentos_ecac_com_recibo: Number(ecacDocs?.com_recibo) || 0,
+        documentos_ecac_sem_recibo: Number(ecacDocs?.sem_recibo) || 0,
+        creditos_por_tipo: creditosPorTipo.map(c => ({
+          tipo: c.tipo,
+          total: Number(c.total),
+          valor: Number(c.valor),
+          valor_atualizado: Number(c.valor_atualizado),
+          valor_utilizado: Number(c.valor_utilizado),
+        })),
+        debitos_por_tributo: debitosPorTributo.map(d => ({
+          tributo: d.tributo,
+          qtd: Number(d.qtd),
+          valor: Number(d.valor),
+        })),
         pedidos_por_status: pedidosPorStatus,
-        ultimos_movimentos: ultMovimentos,
+        ultimos_movimentos: ultMovimentos.map(m => ({
+          id: Number(m.id),
+          numero: m.numero,
+          acao: m.acao,
+          detalhes: m.detalhes,
+          id_usuario: 0,
+          usuario_nome: m.responsavel_nome || null,
+          responsavel_nome: m.responsavel_nome || null,
+          responsavel_cpf: m.responsavel_cpf || null,
+          criado_em: m.criado_em,
+        })),
       });
     } catch (error: any) {
       log.error(`Erro ao obter dashboard: ${error.message}`);
@@ -862,60 +618,223 @@ export const perdcompDashboardController = {
   },
 };
 
-// ============ SIMULADOR ============
+// ════════════════════════════════════════════════════════════════════════════
+// SIMULADOR PER/DCOMP — modos Manual e Automático
+// ────────────────────────────────────────────────────────────────────────────
+// Manual: usuário escolhe créditos (saldos_credito) e digita valor por
+// tributo (agregado).
+// Automático: 4 métodos de entrada (tributo+valor, histórico, período+tipo,
+// texto-livre) × 3 estratégias de alocação (FIFO prescrição, FIFO+compatibili-
+// dade, maximizar SELIC).
+// ════════════════════════════════════════════════════════════════════════════
+
+type EstrategiaAlocacao = 'FIFO_PRESCRICAO' | 'FIFO_COMPATIBILIDADE' | 'MAXIMIZAR_SELIC';
+type DebitoEntrada = { tributo: string; valor: number };
+
+const TRIBUTOS_PREVIDENCIARIOS = new Set(['INSS']);
+const NORMALIZAR_TRIBUTO = (t: string) =>
+  t.toUpperCase().replace('PASEP', 'PIS/PASEP').replace(/\s+/g, '').replace('PIS/PASEP', 'PIS/PASEP');
+
+// Verifica se um crédito pode compensar um débito (regra IN RFB 2055/2021 simplificada)
+function podeCompensar(tipoCredito: string, tributoDebito: string): boolean {
+  const cred = (tipoCredito || '').toUpperCase();
+  const deb = (tributoDebito || '').toUpperCase();
+  const credPrev = TRIBUTOS_PREVIDENCIARIOS.has(cred) || cred.includes('INSS');
+  const debPrev = TRIBUTOS_PREVIDENCIARIOS.has(deb) || deb.includes('INSS') || deb.includes('PREVIDENC');
+  // Previdenciário só compensa previdenciário (e vice-versa)
+  return credPrev === debPrev;
+}
+
+// Parser regex simples para texto-livre (fallback se não houver LLM)
+// Reconhece padrões como: "20000 cofins", "PIS 5.000,00", "compensar IRPJ R$ 12.500"
+function parseTextoLivre(texto: string): DebitoEntrada[] {
+  const resultado: DebitoEntrada[] = [];
+  const tributosKnown = ['PIS/PASEP', 'PIS', 'PASEP', 'COFINS', 'IRPJ', 'CSLL', 'IPI', 'IRRF', 'INSS', 'IOF', 'CIDE'];
+  // Quebra por linhas/vírgulas/" e "
+  const partes = texto.split(/[\n,;]| e /gi).map(s => s.trim()).filter(Boolean);
+  for (const parte of partes) {
+    // procura tributo
+    const tributoMatch = tributosKnown.find(t => parte.toUpperCase().includes(t));
+    if (!tributoMatch) continue;
+    // procura número (suporta 1.234,56 / 1234.56 / 1234)
+    const numMatch = parte.match(/[\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+/);
+    if (!numMatch) continue;
+    let valorStr = numMatch[0];
+    // se tem "," no final, é decimal pt-BR; se só ".", trata como decimal en-US
+    if (valorStr.includes(',')) valorStr = valorStr.replace(/\./g, '').replace(',', '.');
+    const valor = parseFloat(valorStr);
+    if (isNaN(valor) || valor <= 0) continue;
+    resultado.push({ tributo: tributoMatch === 'PASEP' ? 'PIS/PASEP' : tributoMatch, valor });
+  }
+  return resultado;
+}
+
+// Núcleo de alocação: distribui débitos sobre créditos disponíveis
+// Retorna créditos selecionados, débitos compensados, alertas.
+function alocarCreditos(
+  debitos: DebitoEntrada[],
+  creditos: any[],
+  estrategia: EstrategiaAlocacao
+) {
+  // Ordena créditos conforme estratégia
+  const creditosOrdenados = [...creditos].filter(c => Number(c.saldo_disponivel) > 0);
+  if (estrategia === 'FIFO_PRESCRICAO' || estrategia === 'FIFO_COMPATIBILIDADE') {
+    creditosOrdenados.sort((a, b) => {
+      const da = a.data_prescricao ? new Date(a.data_prescricao).getTime() : Infinity;
+      const db = b.data_prescricao ? new Date(b.data_prescricao).getTime() : Infinity;
+      return da - db;
+    });
+  } else if (estrategia === 'MAXIMIZAR_SELIC') {
+    creditosOrdenados.sort((a, b) => Number(b.selic_acumulada || 0) - Number(a.selic_acumulada || 0));
+  }
+
+  const saldoPorCredito = new Map<number, number>();
+  creditosOrdenados.forEach(c => saldoPorCredito.set(c.id, Number(c.saldo_disponivel)));
+
+  const creditosSelecionados: any[] = [];
+  const debitosCompensados: any[] = [];
+  const alertas: string[] = [];
+  let totalCreditoUtilizado = 0;
+  let totalDebitoCompensado = 0;
+
+  for (const deb of debitos) {
+    let restante = deb.valor;
+    let compensadoNesteDeb = 0;
+    const fontesUsadas: { id_credito: number; tipo_credito: string; valor: number }[] = [];
+
+    for (const cred of creditosOrdenados) {
+      if (restante <= 0) break;
+      const saldoCred = saldoPorCredito.get(cred.id) || 0;
+      if (saldoCred <= 0) continue;
+
+      // Verifica compatibilidade (se estratégia exigir)
+      if (estrategia === 'FIFO_COMPATIBILIDADE' && !podeCompensar(cred.tipo_credito, deb.tributo)) {
+        continue;
+      }
+
+      const valorUsar = Math.min(saldoCred, restante);
+      fontesUsadas.push({ id_credito: cred.id, tipo_credito: cred.tipo_credito, valor: valorUsar });
+      saldoPorCredito.set(cred.id, saldoCred - valorUsar);
+      restante -= valorUsar;
+      compensadoNesteDeb += valorUsar;
+      totalCreditoUtilizado += valorUsar;
+    }
+
+    totalDebitoCompensado += compensadoNesteDeb;
+    debitosCompensados.push({
+      tributo: deb.tributo,
+      valor_solicitado: deb.valor,
+      valor_compensado: compensadoNesteDeb,
+      saldo_restante: restante,
+      fontes: fontesUsadas,
+    });
+    if (restante > 0) {
+      alertas.push(`Crédito insuficiente para ${deb.tributo}: faltam R$ ${restante.toFixed(2)}`);
+    }
+  }
+
+  // Monta lista de créditos usados (com totais agregados)
+  const usadoPorCredito = new Map<number, number>();
+  for (const d of debitosCompensados) {
+    for (const f of d.fontes) {
+      usadoPorCredito.set(f.id_credito, (usadoPorCredito.get(f.id_credito) || 0) + f.valor);
+    }
+  }
+  for (const cred of creditosOrdenados) {
+    const usado = usadoPorCredito.get(cred.id) || 0;
+    if (usado === 0) continue;
+    creditosSelecionados.push({
+      id: cred.id,
+      tipo: cred.tipo_credito,
+      numero_perdcomp_origem: cred.numero_perdcomp_origem,
+      valor_utilizado: usado,
+      saldo_anterior: Number(cred.saldo_disponivel),
+      saldo_restante: Number(cred.saldo_disponivel) - usado,
+      data_prescricao: cred.data_prescricao,
+    });
+
+    // Alertas de prescrição (< 90 dias)
+    if (cred.data_prescricao) {
+      const diasAteVenc = Math.ceil(
+        (new Date(cred.data_prescricao).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      if (diasAteVenc < 90 && diasAteVenc > 0) {
+        alertas.push(`Crédito #${cred.id} (${cred.tipo_credito}) prescreve em ${diasAteVenc} dias`);
+      } else if (diasAteVenc <= 0) {
+        alertas.push(`⚠ Crédito #${cred.id} (${cred.tipo_credito}) já está prescrito`);
+      }
+    }
+  }
+
+  return {
+    creditos_selecionados: creditosSelecionados,
+    debitos_compensados: debitosCompensados,
+    total_credito_utilizado: totalCreditoUtilizado,
+    total_debito_compensado: totalDebitoCompensado,
+    economia_estimada: totalDebitoCompensado,
+    alertas,
+  };
+}
 
 export const perdcompSimuladorController = {
+  /**
+   * MANUAL: usuário escolhe créditos específicos (de saldos_credito) e digita
+   * valor agregado por tributo. Sistema valida e calcula o resultado.
+   */
   simular: async (req: AuthRequest, res: Response) => {
     try {
-      const resultado = simuladorSchema.safeParse(req.body);
-      if (!resultado.success) return res.status(400).json({ errors: resultado.error.errors });
-
-      const { creditos: credsInput, debitos: debsInput } = resultado.data;
+      const { id_empresa, creditos: credsInput, debitos: debsInput } = req.body;
+      if (!id_empresa) return res.status(400).json({ error: 'id_empresa é obrigatório' });
+      if (!Array.isArray(credsInput) || credsInput.length === 0) {
+        return res.status(400).json({ error: 'Selecione ao menos um crédito' });
+      }
+      if (!Array.isArray(debsInput) || debsInput.length === 0) {
+        return res.status(400).json({ error: 'Informe ao menos um débito a compensar' });
+      }
 
       const creditosSelecionados: any[] = [];
       let totalCreditoUtilizado = 0;
+      const alertas: string[] = [];
 
       for (const ci of credsInput) {
-        const credito = await getOne<any>('SELECT * FROM perdcomp_creditos WHERE id = $1', [ci.id]);
+        const credito = await getOne<any>(
+          'SELECT * FROM saldos_credito WHERE id = $1 AND id_empresa = $2', [ci.id, id_empresa]
+        );
         if (!credito) continue;
-        const valorUsar = Math.min(ci.valor_utilizar, credito.saldo_disponivel);
+        const valorUsar = Math.min(Number(ci.valor_utilizar), Number(credito.saldo_disponivel));
         creditosSelecionados.push({
-          id: credito.id, tipo: credito.tipo_credito, valor_utilizado: valorUsar,
-          saldo_restante: credito.saldo_disponivel - valorUsar,
+          id: credito.id, tipo: credito.tipo_credito,
+          numero_perdcomp_origem: credito.numero_perdcomp_origem,
+          valor_utilizado: valorUsar,
+          saldo_anterior: Number(credito.saldo_disponivel),
+          saldo_restante: Number(credito.saldo_disponivel) - valorUsar,
+          data_prescricao: credito.data_prescricao,
         });
         totalCreditoUtilizado += valorUsar;
-      }
-
-      const debitosCompensados: any[] = [];
-      let totalDebitoCompensado = 0;
-
-      if (debsInput) {
-        for (const di of debsInput) {
-          const debito = await getOne<any>('SELECT * FROM perdcomp_debitos WHERE id = $1', [di.id]);
-          if (!debito) continue;
-          const valorCompensar = Math.min(di.valor_compensar, debito.saldo_devedor);
-          debitosCompensados.push({
-            id: debito.id, tipo: debito.tipo_tributo, valor_compensado: valorCompensar,
-            saldo_restante: debito.saldo_devedor - valorCompensar,
-          });
-          totalDebitoCompensado += valorCompensar;
+        if (credito.data_prescricao) {
+          const dias = Math.ceil((new Date(credito.data_prescricao).getTime() - Date.now()) / 86400000);
+          if (dias < 90 && dias > 0) alertas.push(`Crédito #${credito.id} prescreve em ${dias} dias`);
         }
       }
 
-      const alertas: string[] = [];
+      let totalDebitoCompensado = 0;
+      const debitosCompensados: any[] = [];
+      for (const di of debsInput) {
+        const v = Number(di.valor_compensar);
+        if (v > 0) {
+          debitosCompensados.push({
+            tributo: di.tributo, valor_solicitado: v, valor_compensado: v, saldo_restante: 0,
+          });
+          totalDebitoCompensado += v;
+        }
+      }
+
       if (totalCreditoUtilizado < totalDebitoCompensado) {
         alertas.push(`Créditos insuficientes: faltam R$ ${(totalDebitoCompensado - totalCreditoUtilizado).toFixed(2)}`);
       }
 
-      for (const cs of creditosSelecionados) {
-        const credito = await getOne<any>('SELECT dt_vencimento_prescricao FROM perdcomp_creditos WHERE id = $1', [cs.id]);
-        if (credito) {
-          const dias = Math.ceil((new Date(credito.dt_vencimento_prescricao).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-          if (dias < 90) alertas.push(`Crédito #${cs.id} (${cs.tipo}) prescreve em ${dias} dias`);
-        }
-      }
-
       res.json({
+        modo: 'manual',
         creditos_selecionados: creditosSelecionados,
         debitos_compensados: debitosCompensados,
         total_credito_utilizado: totalCreditoUtilizado,
@@ -924,71 +843,174 @@ export const perdcompSimuladorController = {
         alertas,
       });
     } catch (error: any) {
-      log.error(`Erro ao simular: ${error.message}`);
+      log.error(`Erro ao simular (manual): ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   },
-};
 
-// ============ ALERTAS ============
-
-export const perdcompAlertasController = {
-  listar: async (req: AuthRequest, res: Response) => {
+  /**
+   * AUTOMÁTICO: recebe um método de input e uma estratégia de alocação,
+   * resolve os débitos, busca créditos disponíveis e aloca conforme estratégia.
+   *
+   * Body:
+   *   id_empresa: number
+   *   estrategia: 'FIFO_PRESCRICAO' | 'FIFO_COMPATIBILIDADE' | 'MAXIMIZAR_SELIC'
+   *   metodo: 'tributo_valor' | 'historico' | 'periodo_tipo' | 'texto_livre'
+   *   debitos?:   [{tributo, valor}]            (tributo_valor)
+   *   texto?:     string                         (texto_livre)
+   *   tipo_credito?: string                      (periodo_tipo)
+   */
+  automatico: async (req: AuthRequest, res: Response) => {
     try {
-      const { lido, tipo, id_empresa, page = 1, limit = 20 } = req.query;
-      const where = ['a.id_usuario = $1'];
-      const params: any[] = [req.user!.id];
+      const { id_empresa, estrategia = 'FIFO_PRESCRICAO', metodo, debitos, texto, tipo_credito } = req.body;
+      if (!id_empresa) return res.status(400).json({ error: 'id_empresa é obrigatório' });
+      const estrategiasValidas: EstrategiaAlocacao[] = ['FIFO_PRESCRICAO', 'FIFO_COMPATIBILIDADE', 'MAXIMIZAR_SELIC'];
+      if (!estrategiasValidas.includes(estrategia)) {
+        return res.status(400).json({ error: `Estratégia inválida. Use uma de: ${estrategiasValidas.join(', ')}` });
+      }
 
-      if (lido !== undefined) { params.push(lido === 'true' ? 1 : 0); where.push(`a.lido = $${params.length}`); }
-      if (tipo) { params.push(tipo); where.push(`a.tipo_alerta = $${params.length}`); }
-      if (id_empresa) { params.push(id_empresa); where.push(`a.id_empresa = $${params.length}`); }
+      // Resolve débitos conforme método de input
+      let debitosResolvidos: DebitoEntrada[] = [];
+      if (metodo === 'tributo_valor') {
+        if (!Array.isArray(debitos)) return res.status(400).json({ error: 'debitos[] é obrigatório para método tributo_valor' });
+        debitosResolvidos = debitos.map((d: any) => ({ tributo: NORMALIZAR_TRIBUTO(d.tributo), valor: Number(d.valor) })).filter(d => d.valor > 0);
+      } else if (metodo === 'historico') {
+        // Pega tributos compensados nos últimos 12 meses e usa média mensal como sugestão
+        const hist = await getAll<any>(
+          `SELECT
+              CASE
+                WHEN deb.denominacao_receita ILIKE '%IRPJ%' OR deb.codigo_receita ILIKE '%IRPJ%' THEN 'IRPJ'
+                WHEN deb.denominacao_receita ILIKE '%CSLL%' OR deb.codigo_receita ILIKE '%CSLL%' THEN 'CSLL'
+                WHEN deb.denominacao_receita ILIKE '%COFINS%' THEN 'COFINS'
+                WHEN deb.denominacao_receita ILIKE '%PIS%' OR deb.denominacao_receita ILIKE '%PASEP%' THEN 'PIS/PASEP'
+                WHEN deb.denominacao_receita ILIKE '%INSS%' OR deb.denominacao_receita ILIKE '%Previdenc%' THEN 'INSS'
+                WHEN deb.denominacao_receita ILIKE '%IRRF%' THEN 'IRRF'
+                ELSE COALESCE(deb.denominacao_receita, 'OUTROS')
+              END as tributo,
+              COUNT(*) as ocorrencias, AVG(deb.total) as media, SUM(deb.total) as total
+           FROM ecac_perdcomp_debitos_compensados deb
+           JOIN ecac_perdcomp_documentos d ON d.id = deb.id_documento
+           WHERE d.id_empresa = $1
+             AND d.data_entrega >= CURRENT_DATE - INTERVAL '12 months'
+           GROUP BY tributo
+           ORDER BY total DESC LIMIT 10`, [id_empresa]
+        );
+        debitosResolvidos = hist.map(h => ({ tributo: h.tributo, valor: Math.round(Number(h.media) * 100) / 100 }));
+      } else if (metodo === 'periodo_tipo') {
+        // Para período+tipo, pega o tributo dominante do tipo de crédito (heurística)
+        const map: Record<string, string[]> = {
+          'Saldo Negativo de IRPJ': ['IRPJ', 'CSLL'],
+          'Saldo Negativo de CSLL': ['CSLL'],
+          'Pagamento Indevido': ['IRPJ', 'CSLL', 'PIS/PASEP', 'COFINS'],
+          'Crédito Presumido IPI': ['IPI'],
+        };
+        const tributos = map[tipo_credito as string] || ['IRPJ', 'CSLL'];
+        // Sem valor exato — sugere 1.000 por tributo (placeholder, usuário ajusta)
+        debitosResolvidos = tributos.map(t => ({ tributo: t, valor: 1000 }));
+      } else if (metodo === 'texto_livre') {
+        if (!texto || typeof texto !== 'string') return res.status(400).json({ error: 'texto é obrigatório' });
+        debitosResolvidos = parseTextoLivre(texto);
+        if (debitosResolvidos.length === 0) {
+          return res.status(400).json({
+            error: 'Não consegui interpretar o texto. Exemplos: "PIS 5.000,00 e COFINS 25.000" ou "20000 cofins"'
+          });
+        }
+      } else {
+        return res.status(400).json({ error: 'Método inválido. Use: tributo_valor | historico | periodo_tipo | texto_livre' });
+      }
 
-      const offset = (Number(page) - 1) * Number(limit);
-      const countResult = await getOne<{ total: number }>(
-        `SELECT COUNT(*) as total FROM perdcomp_alertas a WHERE ${where.join(' AND ')}`, params
+      // Busca créditos disponíveis da empresa
+      const creditos = await getAll<any>(
+        `SELECT id, tipo_credito, numero_perdcomp_origem, saldo_disponivel, selic_acumulada, data_prescricao
+         FROM saldos_credito
+         WHERE id_empresa = $1 AND saldo_disponivel > 0
+         ORDER BY data_prescricao ASC NULLS LAST`,
+        [id_empresa]
       );
+      if (creditos.length === 0) {
+        return res.json({
+          modo: 'automatico', metodo, estrategia,
+          creditos_selecionados: [], debitos_compensados: [],
+          total_credito_utilizado: 0, total_debito_compensado: 0, economia_estimada: 0,
+          alertas: ['Nenhum crédito disponível para esta empresa'],
+          debitos_propostos: debitosResolvidos,
+        });
+      }
 
-      const listParamsA = [...params];
-      listParamsA.push(Number(limit)); const limitIdxA = listParamsA.length;
-      listParamsA.push(offset); const offsetIdxA = listParamsA.length;
-
-      const alertas = await getAll<any>(
-        `SELECT a.*, e.razao_social as empresa_razao_social FROM perdcomp_alertas a LEFT JOIN perdcomp_empresas e ON e.id = a.id_empresa WHERE ${where.join(' AND ')} ORDER BY a.criado_em DESC LIMIT $${limitIdxA} OFFSET $${offsetIdxA}`,
-        listParamsA
-      );
-
+      const resultado = alocarCreditos(debitosResolvidos, creditos, estrategia as EstrategiaAlocacao);
       res.json({
-        data: alertas,
-        pagination: { page: Number(page), limit: Number(limit), total: countResult?.total || 0, totalPages: Math.ceil((countResult?.total || 0) / Number(limit)) }
+        modo: 'automatico',
+        metodo, estrategia,
+        debitos_propostos: debitosResolvidos,
+        ...resultado,
       });
     } catch (error: any) {
-      log.error(`Erro ao listar alertas: ${error.message}`);
+      log.error(`Erro ao simular (automático): ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   },
 
-  marcarLido: async (req: AuthRequest, res: Response) => {
+  /**
+   * Sugere tributos típicos com base nos últimos 12 meses de DCOMPs da empresa.
+   * Para alimentar o seletor do modo automático "histórico".
+   */
+  sugerirHistorico: async (req: AuthRequest, res: Response) => {
     try {
-      const result = await runQuery('UPDATE perdcomp_alertas SET lido = 1 WHERE id = $1 AND id_usuario = $2', [req.params.id, req.user!.id]);
-      if (result.changes === 0) {
-        return res.status(404).json({ error: 'Alerta não encontrado' });
-      }
-      res.json({ message: 'Alerta marcado como lido' });
+      const { id_empresa } = req.query;
+      if (!id_empresa) return res.status(400).json({ error: 'id_empresa é obrigatório' });
+
+      const sugestoes = await getAll<any>(
+        `SELECT
+            CASE
+              WHEN deb.denominacao_receita ILIKE '%IRPJ%' OR deb.codigo_receita ILIKE '%IRPJ%' THEN 'IRPJ'
+              WHEN deb.denominacao_receita ILIKE '%CSLL%' OR deb.codigo_receita ILIKE '%CSLL%' THEN 'CSLL'
+              WHEN deb.denominacao_receita ILIKE '%COFINS%' THEN 'COFINS'
+              WHEN deb.denominacao_receita ILIKE '%PIS%' OR deb.denominacao_receita ILIKE '%PASEP%' THEN 'PIS/PASEP'
+              WHEN deb.denominacao_receita ILIKE '%INSS%' OR deb.denominacao_receita ILIKE '%Previdenc%' THEN 'INSS'
+              WHEN deb.denominacao_receita ILIKE '%IRRF%' THEN 'IRRF'
+              ELSE COALESCE(deb.denominacao_receita, 'OUTROS')
+            END as tributo,
+            COUNT(*) as ocorrencias,
+            ROUND(AVG(deb.total)::numeric, 2) as valor_medio,
+            ROUND(SUM(deb.total)::numeric, 2) as valor_total,
+            ROUND((SUM(deb.total) / 12.0)::numeric, 2) as media_mensal
+         FROM ecac_perdcomp_debitos_compensados deb
+         JOIN ecac_perdcomp_documentos d ON d.id = deb.id_documento
+         WHERE d.id_empresa = $1
+           AND d.data_entrega >= CURRENT_DATE - INTERVAL '12 months'
+         GROUP BY tributo
+         ORDER BY valor_total DESC
+         LIMIT 10`,
+        [id_empresa]
+      );
+
+      res.json({ sugestoes });
     } catch (error: any) {
-      log.error(`Erro ao marcar alerta: ${error.message}`);
+      log.error(`Erro ao sugerir histórico: ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   },
 
-  gerarAlertas: async (req: AuthRequest, res: Response) => {
+  /**
+   * Parser de texto-livre (regex). Retorna {debitos_extraidos: [{tributo,valor}]}.
+   * Para upgrade futuro: integrar com LLM (Anthropic/OpenAI) via env var
+   * LLM_PROVIDER + ANTHROPIC_API_KEY/OPENAI_API_KEY.
+   */
+  parseTexto: async (req: AuthRequest, res: Response) => {
     try {
-      const { id_empresa } = req.body;
-      if (!id_empresa) return res.status(400).json({ error: 'Empresa é obrigatória' });
-      const gerados = await perdcompRegraService.gerarAlertas(id_empresa, req.user!.id);
-      res.json({ message: `${gerados} alertas gerados` });
+      const { texto } = req.body;
+      if (!texto || typeof texto !== 'string') return res.status(400).json({ error: 'texto é obrigatório' });
+      const debitos = parseTextoLivre(texto);
+      res.json({
+        debitos_extraidos: debitos,
+        avisos: debitos.length === 0
+          ? ['Não foi possível extrair nenhum tributo/valor do texto. Tente formato: "PIS 5.000,00 e COFINS 25.000"']
+          : [],
+      });
     } catch (error: any) {
-      log.error(`Erro ao gerar alertas: ${error.message}`);
+      log.error(`Erro ao parsear texto: ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   },
 };
+

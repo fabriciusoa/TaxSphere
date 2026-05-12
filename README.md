@@ -2,13 +2,18 @@
 
 Sistema web full stack completo para gestão fiscal/tributário, desenvolvido com Node.js, React, TypeScript, Vite e SQLite.
 
+### Código-fonte e histórico de mudanças
+
+- **Repositório GitHub:** [github.com/tmarocki/taxsphere](https://github.com/tmarocki/taxsphere)
+- **Registro detalhado de releases e alterações:** [docs/CHANGELOG.md](docs/CHANGELOG.md) (inclui visão técnica de módulos PER/DCOMP, eCAC, scripts e o que **não** deve ser versionado)
+
 ---
 
 ## 📋 Visão Geral
 
 É uma aplicação profissional para gerenciamento completo de funcionalidades Fiscais e Tributárias:
 
-- ✅ PERD/Comp
+- ✅ PER/DComp
 - ✅ Recuperação de Pis e Cofins
 - ✅ MIT
 - ✅ DCTF Web

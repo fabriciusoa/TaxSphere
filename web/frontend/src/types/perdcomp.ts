@@ -108,12 +108,15 @@ export interface PerdcompHistorico {
   id_credito?: number;
   id_debito?: number;
   id_usuario: number;
-  usuario_nome?: string;
+  usuario_nome?: string | null;
   acao: string;
   campo_alterado?: string;
   valor_anterior?: string;
   valor_novo?: string;
   detalhes?: string;
+  numero?: string;
+  responsavel_nome?: string | null;
+  responsavel_cpf?: string | null;
   criado_em: string;
 }
 
@@ -152,6 +155,9 @@ export interface PerdcompDashboardData {
   creditos_proximos_prescricao: number;
   valor_creditos_prescricao: number;
   alertas_nao_lidos: number;
+  documentos_ecac: number;
+  documentos_ecac_com_recibo: number;
+  documentos_ecac_sem_recibo: number;
   creditos_por_tipo: { tipo: TipoCredito; total: number; valor: number }[];
   pedidos_por_status: { status: StatusPedido; total: number }[];
   ultimos_movimentos: PerdcompHistorico[];

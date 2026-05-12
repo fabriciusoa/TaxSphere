@@ -49,14 +49,16 @@ import {
   MoneyOff as MoneyOffIcon,
   Description as DescriptionIcon,
   Calculate as CalculateIcon,
-  SmartToy as SmartToyIcon,
   CloudSync as CloudSyncIcon,
   SpaceDashboard as SpaceDashboardIcon,
   ManageAccounts as ManageAccountsIcon,
+  Assignment as AssignmentIcon,
+  Security as SecurityIcon,
 } from '@mui/icons-material';
 import { manutencaoService } from '../../services/manutencaoService';
 import { useAuth } from '../../contexts/AuthContext';
 import { logger } from '../../utils/logger';
+import { EmpresaAutocomplete } from '../EmpresaAutocomplete';
 
 const drawerWidth = 264;
 
@@ -218,15 +220,13 @@ export default function MainLayout({ children }: Props) {
               ...(hasFuncionalidade('PERD/Comp', 'Débitos') ? [
                 { text: 'Débitos', icon: <MoneyOffIcon />, path: '/fiscal/perdcomp/debitos' },
               ] : []),
-              ...(hasFuncionalidade('PERD/Comp', 'Pedidos') ? [
-                { text: 'Pedidos', icon: <DescriptionIcon />, path: '/fiscal/perdcomp/pedidos' },
+              ...(hasFuncionalidade('PERD/Comp', 'Documentos') ? [
+                { text: 'Documentos PER/DCOMP', icon: <AssignmentIcon />, path: '/fiscal/perdcomp/documentos' },
               ] : []),
               ...(hasFuncionalidade('PERD/Comp', 'Simulador') ? [
                 { text: 'Simulador', icon: <CalculateIcon />, path: '/fiscal/perdcomp/simulador' },
               ] : []),
-              ...(hasFuncionalidade('PERD/Comp', 'Assistente IA') ? [
-                { text: 'Assistente IA', icon: <SmartToyIcon />, path: '/fiscal/perdcomp/assistente' },
-              ] : []),
+              { text: 'Relatórios PER/DCOMP', icon: <AssessmentIcon />, path: '/fiscal/perdcomp/relatorios' },
             ],
           }
         ] : []),
@@ -300,6 +300,9 @@ export default function MainLayout({ children }: Props) {
           ] : []),
           ...(hasModulo('Perfis de Acesso') ? [
             { text: 'Perfis de Acesso', icon: <ManageAccountsIcon />, path: '/sistema/perfis' },
+          ] : []),
+          ...(hasModulo('Certificados Digitais') ? [
+            { text: 'Certificados Digitais', icon: <SecurityIcon />, path: '/configuracoes/certificados' },
           ] : []),
           ...(hasModulo('Integração eCAC') ? [
             { text: 'Integração eCAC', icon: <CloudSyncIcon />, path: '/configuracoes/ecac' },
@@ -587,15 +590,33 @@ export default function MainLayout({ children }: Props) {
             <MenuIcon />
           </IconButton>
 
-          <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
             <Typography sx={{
               fontFamily: '"Inter", system-ui, sans-serif',
               fontSize: '0.9375rem', fontWeight: 600,
               color: S.textPrimary, letterSpacing: '-0.01em',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              flexShrink: 0,
             }}>
               {getPageTitle(location.pathname)}
             </Typography>
           </Box>
+
+          {/* Seletor global de empresa — disponível em todas as páginas */}
+          {user && !location.pathname.startsWith('/login') && (
+            <Box sx={{
+              mr: 2,
+              display: { xs: 'none', md: 'block' },
+              width: 720,
+              maxWidth: '50vw',
+              position: 'relative',
+              zIndex: 10,
+            }}>
+              <EmpresaAutocomplete label="Empresa" minWidth={720}
+                todasLabel="Todas as empresas"
+              />
+            </Box>
+          )}
 
           {/* Sessão do usuário — botão HTML puro (sem dependência de MUI/Box) */}
           <button
@@ -760,10 +781,11 @@ function getPageTitle(pathname: string): string {
     '/fiscal/perdcomp': 'PERD/Comp - Painel',
     '/fiscal/perdcomp/creditos': 'PERD/Comp - Créditos',
     '/fiscal/perdcomp/debitos': 'PERD/Comp - Débitos',
-    '/fiscal/perdcomp/pedidos': 'PERD/Comp - Pedidos',
-    '/fiscal/perdcomp/pedidos/novo': 'PERD/Comp - Novo Pedido',
-    '/fiscal/perdcomp/simulador': 'PERD/Comp - Simulador',
-    '/fiscal/perdcomp/assistente': 'PERD/Comp - Assistente IA',
+    '/fiscal/perdcomp/documentos': 'PER/DCOMP - Documentos',
+    '/fiscal/perdcomp/documentos/novo': 'PER/DCOMP - Novo Documento',
+    '/fiscal/perdcomp/simulador': 'PER/DCOMP - Simulador',
+    '/fiscal/perdcomp/relatorios': 'PER/DCOMP - Relatórios',
+    '/configuracoes/certificados': 'Certificados Digitais',
     '/configuracoes/ecac': 'Integração eCAC',
     '/fiscal/pis-cofins': 'Recuperação PIS/COFINS',
     '/fiscal/mit': 'MIT',

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import forge from 'node-forge';
 import { log } from '../utils/logger';
 
 const ALGORITHM = 'aes-256-cbc';
@@ -22,6 +23,70 @@ export interface CertificadoInfo {
   diasRestantes: number;
 }
 
+/**
+ * Carrega e valida um arquivo PFX/PKCS12 usando node-forge.
+ *
+ * node-forge implementa o parser PKCS#12 em JavaScript puro e suporta
+ * algoritmos legados (RC2-40, 3DES) que o OpenSSL 3.x / Node.js v24
+ * desabilitou por padrão via tls.createSecureContext.
+ */
+function loadPkcs12(pfxBuffer: Buffer, passphrase: string): forge.pkcs12.Pkcs12Pfx {
+  const p12Der = forge.util.createBuffer(pfxBuffer.toString('binary'));
+  const p12Asn1 = forge.asn1.fromDer(p12Der);
+  // Lança exceção se a senha estiver errada ou o arquivo for inválido
+  return forge.pkcs12.pkcs12FromAsn1(p12Asn1, passphrase);
+}
+
+function extractCertInfo(p12: forge.pkcs12.Pkcs12Pfx): CertificadoInfo {
+  let cert: forge.pki.Certificate | null = null;
+
+  for (const safeContent of p12.safeContents) {
+    for (const safeBag of safeContent.safeBags) {
+      if (safeBag.type === forge.pki.oids.certBag && safeBag.cert) {
+        cert = safeBag.cert;
+        break;
+      }
+    }
+    if (cert) break;
+  }
+
+  if (!cert) {
+    // Retorna info vazia em vez de falhar — o cert ainda será armazenado
+    log.warn('[certificadoService] Certificado encontrado no PFX mas sem bag de certificado explícito');
+    return { cn: '', emissor: '', serialNumber: '', validadeDe: '', validadeAte: '', expirado: false, diasRestantes: 0 };
+  }
+
+  const getCN = (attrs: forge.pki.CertificateField[]) =>
+    String(attrs.find(a => a.shortName === 'CN')?.value ?? '');
+
+  const expDate = cert.validity.notAfter;
+  const now = new Date();
+
+  return {
+    cn: getCN(cert.subject.attributes),
+    emissor: getCN(cert.issuer.attributes) ||
+      cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).join(', '),
+    serialNumber: cert.serialNumber,
+    validadeDe: cert.validity.notBefore.toISOString(),
+    validadeAte: expDate.toISOString(),
+    expirado: expDate < now,
+    diasRestantes: Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+  };
+}
+
+function friendlyError(err: any): string {
+  const msg = (err?.message ?? '').toLowerCase();
+  if (msg.includes('invalid password') || msg.includes('wrong password') ||
+      msg.includes('mac verify') || msg.includes('failed to decrypt') ||
+      msg.includes('decryption failed') || msg.includes('bad decrypt')) {
+    return 'Senha do certificado incorreta';
+  }
+  if (msg.includes('asn1') || msg.includes('der') || msg.includes('unexpected')) {
+    return 'Arquivo inválido — não é um certificado .pfx/.p12 válido';
+  }
+  return `Certificado inválido: ${err?.message ?? 'erro desconhecido'}`;
+}
+
 export const certificadoService = {
   encrypt(pfxBuffer: Buffer): { encrypted: Buffer; iv: string } {
     const iv = crypto.randomBytes(16);
@@ -31,127 +96,24 @@ export const certificadoService = {
     return { encrypted, iv: iv.toString('hex') };
   },
 
-  decrypt(encrypted: Buffer, ivHex: string): Buffer {
+  decrypt(encryptedRaw: Buffer | string, ivHex: string): Buffer {
+    // pg retorna BYTEA como Buffer; em alguns ambientes pode vir como string '\x...'
+    const encrypted = Buffer.isBuffer(encryptedRaw)
+      ? encryptedRaw
+      : Buffer.from(String(encryptedRaw).replace(/^\\x/, ''), 'hex');
     const key = deriveKey();
     const iv = Buffer.from(ivHex, 'hex');
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
     return Buffer.concat([decipher.update(encrypted), decipher.final()]);
   },
 
-  async parsePfx(pfxBuffer: Buffer, passphrase: string): Promise<CertificadoInfo> {
-    const { X509Certificate } = crypto;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const p12 = crypto.createPrivateKey({
-      key: pfxBuffer,
-      format: 'der',
-      type: 'pkcs12' as any,
-      passphrase,
-    });
-
-    if (!p12) throw new Error('Não foi possível ler a chave privada do certificado');
-
-    let cn = '';
-    let emissor = '';
-    let serialNumber = '';
-    let validadeDe = '';
-    let validadeAte = '';
-    let expirado = false;
-    let diasRestantes = 0;
-
+  async validatePfx(
+    pfxBuffer: Buffer,
+    passphrase: string,
+  ): Promise<{ valid: boolean; info?: CertificadoInfo; error?: string }> {
     try {
-      const pemCert = this.extractCertPem(pfxBuffer, passphrase);
-      if (pemCert) {
-        const x509 = new X509Certificate(pemCert);
-        cn = this.extractCN(x509.subject) || '';
-        emissor = this.extractCN(x509.issuer) || x509.issuer;
-        serialNumber = x509.serialNumber;
-        validadeDe = x509.validFrom;
-        validadeAte = x509.validTo;
-
-        const now = new Date();
-        const expDate = new Date(validadeAte);
-        expirado = expDate < now;
-        diasRestantes = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      }
-    } catch (err: any) {
-      log.warn(`Não foi possível extrair detalhes X509: ${err.message}`);
-    }
-
-    return { cn, emissor, serialNumber, validadeDe, validadeAte, expirado, diasRestantes };
-  },
-
-  extractCertPem(pfxBuffer: Buffer, passphrase: string): string | null {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const pfxAsn1 = crypto.createPrivateKey({
-        key: pfxBuffer,
-        format: 'der',
-        type: 'pkcs12' as any,
-        passphrase,
-      });
-
-      const tempKeyPem = pfxAsn1.export({ type: 'pkcs8', format: 'pem' });
-
-      const secureContext = require('tls').createSecureContext({
-        pfx: pfxBuffer,
-        passphrase,
-      });
-
-      const socket = secureContext.context;
-      if (socket && socket.getCertificate) {
-        return socket.getCertificate();
-      }
-
-      const p12Der = pfxBuffer;
-      const base64 = p12Der.toString('base64');
-      const chunks = base64.match(/.{1,64}/g) || [];
-      return null;
-    } catch {
-      return null;
-    }
-  },
-
-  extractCN(subject: string): string {
-    const match = subject.match(/CN=([^,\n]+)/i);
-    return match ? match[1].trim() : '';
-  },
-
-  async validatePfx(pfxBuffer: Buffer, passphrase: string): Promise<{ valid: boolean; info?: CertificadoInfo; error?: string }> {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      crypto.createPrivateKey({
-        key: pfxBuffer,
-        format: 'der',
-        type: 'pkcs12' as any,
-        passphrase,
-      });
-
-      let info: CertificadoInfo = {
-        cn: '', emissor: '', serialNumber: '',
-        validadeDe: '', validadeAte: '',
-        expirado: false, diasRestantes: 0,
-      };
-
-      try {
-        const tls = require('tls');
-        const ctx = tls.createSecureContext({ pfx: pfxBuffer, passphrase });
-        const cert = ctx.context.getCertificate();
-        if (cert) {
-          const x509 = new crypto.X509Certificate(cert);
-          info.cn = this.extractCN(x509.subject);
-          info.emissor = this.extractCN(x509.issuer) || x509.issuer;
-          info.serialNumber = x509.serialNumber;
-          info.validadeDe = x509.validFrom;
-          info.validadeAte = x509.validTo;
-          const now = new Date();
-          const expDate = new Date(x509.validTo);
-          info.expirado = expDate < now;
-          info.diasRestantes = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        }
-      } catch (e: any) {
-        log.warn(`Detalhes X509 indisponíveis: ${e.message}`);
-      }
+      const p12 = loadPkcs12(pfxBuffer, passphrase);
+      const info = extractCertInfo(p12);
 
       if (info.expirado) {
         return { valid: false, info, error: 'Certificado digital expirado' };
@@ -159,12 +121,36 @@ export const certificadoService = {
 
       return { valid: true, info };
     } catch (err: any) {
-      const msg = err.message?.includes('mac verify failure')
-        ? 'Senha do certificado incorreta'
-        : err.message?.includes('unsupported')
-          ? 'Formato de certificado não suportado (utilize .pfx A1)'
-          : `Certificado inválido: ${err.message}`;
-      return { valid: false, error: msg };
+      log.warn(`[certificadoService.validatePfx] ${err.message}`);
+      return { valid: false, error: friendlyError(err) };
     }
+  },
+
+  async parsePfx(pfxBuffer: Buffer, passphrase: string): Promise<CertificadoInfo> {
+    const result = await this.validatePfx(pfxBuffer, passphrase);
+    if (!result.valid) throw new Error(result.error ?? 'Certificado inválido');
+    return result.info!;
+  },
+
+  /** Cifra a senha do certificado com AES-256-CBC (recuperável pelo sistema RPA) */
+  encryptSenha(senha: string): string {
+    const key = deriveKey();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+    const encrypted = Buffer.concat([cipher.update(senha, 'utf8'), cipher.final()]);
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+  },
+
+  /** Decifra a senha do certificado */
+  decryptSenha(senhaCifrada: string): string {
+    const [ivHex, encryptedHex] = senhaCifrada.split(':');
+    const key = deriveKey();
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(encryptedHex, 'hex')),
+      decipher.final(),
+    ]);
+    return decrypted.toString('utf8');
   },
 };

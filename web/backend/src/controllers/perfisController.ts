@@ -1,8 +1,25 @@
 import { Response } from 'express';
+import type { PoolClient } from 'pg';
 import { AuthRequest } from '../types';
-import { getAll, getOne, runQuery } from '../database/connection';
+import { beginTransaction, commitTransaction, getAll, getOne, rollbackTransaction, runQuery } from '../database/connection';
 import { log } from '../utils/logger';
 import { perfilCreateSchema, perfilUpdateSchema } from '../validators/schemas';
+
+async function syncPerfilPermissaoSequence(client?: PoolClient) {
+	await runQuery(`
+    DO $$
+    DECLARE
+      seq_name text;
+      max_id bigint;
+    BEGIN
+      seq_name := pg_get_serial_sequence('adm_perfil_permissao', 'id');
+      IF seq_name IS NOT NULL THEN
+        SELECT COALESCE(MAX(id), 1) INTO max_id FROM adm_perfil_permissao;
+        EXECUTE format('SELECT setval(%L, %s, true)', seq_name, max_id);
+      END IF;
+    END $$;
+  `, [], client);
+}
 
 export const perfisController = {
 	// Árvore de módulos e funcionalidades
@@ -126,14 +143,23 @@ export const perfisController = {
 			);
 			const perfilId = row.id;
 
-			// Inserir permissões
+			// Inserir permissões em transação para não deixar estado parcial em caso de erro.
 			if (permissoes && permissoes.length > 0) {
-				for (const perm of permissoes) {
-					await runQuery(
-						`INSERT INTO adm_perfil_permissao (perfil_id, funcionalidade_id, inserir, alterar, consultar, excluir)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-						[perfilId, perm.funcionalidade_id, perm.inserir ?? true, perm.alterar ?? true, perm.consultar ?? true, perm.excluir ?? true]
-					);
+				const txClient = await beginTransaction();
+				try {
+					await syncPerfilPermissaoSequence(txClient);
+					for (const perm of permissoes) {
+						await runQuery(
+							`INSERT INTO adm_perfil_permissao (perfil_id, funcionalidade_id, inserir, alterar, consultar, excluir)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+							[perfilId, perm.funcionalidade_id, perm.inserir ?? true, perm.alterar ?? true, perm.consultar ?? true, perm.excluir ?? true],
+							txClient
+						);
+					}
+					await commitTransaction(txClient);
+				} catch (txErr) {
+					await rollbackTransaction(txClient);
+					throw txErr;
 				}
 			}
 
@@ -174,16 +200,26 @@ export const perfisController = {
 
 			// Sincronizar permissões: excluir logicamente as existentes e reinserir
 			if (permissoes !== undefined) {
-				await runQuery(
-					'UPDATE adm_perfil_permissao SET excluded_at = NOW() WHERE perfil_id = $1 AND excluded_at IS NULL',
-					[req.params.id]
-				);
-				for (const perm of permissoes) {
+				const txClient = await beginTransaction();
+				try {
 					await runQuery(
-						`INSERT INTO adm_perfil_permissao (perfil_id, funcionalidade_id, inserir, alterar, consultar, excluir)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-						[req.params.id, perm.funcionalidade_id, perm.inserir ?? true, perm.alterar ?? true, perm.consultar ?? true, perm.excluir ?? true]
+						'UPDATE adm_perfil_permissao SET excluded_at = NOW() WHERE perfil_id = $1 AND excluded_at IS NULL',
+						[req.params.id],
+						txClient
 					);
+					await syncPerfilPermissaoSequence(txClient);
+					for (const perm of permissoes) {
+						await runQuery(
+							`INSERT INTO adm_perfil_permissao (perfil_id, funcionalidade_id, inserir, alterar, consultar, excluir)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+							[req.params.id, perm.funcionalidade_id, perm.inserir ?? true, perm.alterar ?? true, perm.consultar ?? true, perm.excluir ?? true],
+							txClient
+						);
+					}
+					await commitTransaction(txClient);
+				} catch (txErr) {
+					await rollbackTransaction(txClient);
+					throw txErr;
 				}
 			}
 

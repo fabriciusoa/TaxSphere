@@ -1,7 +1,7 @@
 import api from './api';
 import type {
   PerdcompCredito, PerdcompDebito, PerdcompPedido,
-  PerdcompAlerta, PerdcompDashboardData, SimulacaoResultado, PaginatedResponse,
+  PerdcompAlerta, PerdcompDashboardData, PaginatedResponse,
 } from '../types/perdcomp';
 
 export const perdcompService = {
@@ -98,8 +98,43 @@ export const perdcompService = {
   },
 
   // ===== SIMULADOR =====
-  simular: async (payload: any): Promise<SimulacaoResultado> => {
+  // Manual: usuário escolhe créditos específicos + digita débitos por tributo
+  simular: async (payload: {
+    id_empresa: number;
+    creditos: { id: number; valor_utilizar: number }[];
+    debitos: { tributo: string; valor_compensar: number }[];
+  }): Promise<any> => {
     const { data } = await api.post('/perdcomp/simulador', payload);
+    return data;
+  },
+
+  // Automático: sistema escolhe créditos por estratégia + débitos por método de input
+  simularAutomatico: async (payload: {
+    id_empresa: number;
+    estrategia: 'FIFO_PRESCRICAO' | 'FIFO_COMPATIBILIDADE' | 'MAXIMIZAR_SELIC';
+    metodo: 'tributo_valor' | 'historico' | 'periodo_tipo' | 'texto_livre';
+    debitos?: { tributo: string; valor: number }[];
+    texto?: string;
+    tipo_credito?: string;
+  }): Promise<any> => {
+    const { data } = await api.post('/perdcomp/simulador/automatico', payload);
+    return data;
+  },
+
+  // Sugestão baseada no histórico (últimos 12 meses de DCOMPs)
+  sugerirHistorico: async (id_empresa: number): Promise<{
+    sugestoes: { tributo: string; ocorrencias: number; valor_medio: number; valor_total: number; media_mensal: number }[];
+  }> => {
+    const { data } = await api.get(`/perdcomp/simulador/historico?id_empresa=${id_empresa}`);
+    return data;
+  },
+
+  // Parser de texto-livre (fallback regex; pode evoluir para LLM)
+  parseTexto: async (texto: string): Promise<{
+    debitos_extraidos: { tributo: string; valor: number }[];
+    avisos: string[];
+  }> => {
+    const { data } = await api.post('/perdcomp/simulador/parse-texto', { texto });
     return data;
   },
 
