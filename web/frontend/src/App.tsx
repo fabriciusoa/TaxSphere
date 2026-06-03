@@ -34,6 +34,7 @@ const CertificadosPage = lazy(() => import('./pages/CertificadosPage'));
 const DctfWebDashboardPage = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
 const DctfWebDeclaracoesPage = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
 const DctfWebDarfsPage = lazy(() => import('./pages/dctfweb/DarfsPage'));
+const DctfWebArquivosPage = lazy(() => import('./pages/dctfweb/ArquivosPage'));
 const DctfWebRelatoriosPage = lazy(() => import('./pages/dctfweb/RelatoriosPage'));
 const DctfWebAgendamentoPage = lazy(() => import('./pages/dctfweb/AgendamentoPage'));
 const ClientesPage = lazy(() => import('./pages/ClientesPage'));
@@ -98,6 +99,7 @@ function App() {
                 <Route path="/fiscal/dctf-web" element={<DctfWebDashboardPage />} />
                 <Route path="/fiscal/dctf-web/declaracoes" element={<DctfWebDeclaracoesPage />} />
                 <Route path="/fiscal/dctf-web/darfs" element={<DctfWebDarfsPage />} />
+                <Route path="/fiscal/dctf-web/arquivos" element={<DctfWebArquivosPage />} />
                 <Route path="/fiscal/dctf-web/relatorios" element={<DctfWebRelatoriosPage />} />
                 <Route path="/fiscal/dctf-web/agendamento" element={<DctfWebAgendamentoPage />} />
 

@@ -153,7 +153,9 @@ export class DctfwebRpaService {
       throw e;
     }
     log.info(`[dctfweb-rpa] URL após goto: ${this.page.url()}`);
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 2000))
+
+;
 
     const url = this.page.url().toLowerCase();
     if (url.includes('autenticacao') || url.includes('login') || url.includes('sso.acesso.gov.br')) {
@@ -209,6 +211,34 @@ export class DctfwebRpaService {
     }
 
     await this.waitForLoadingInFrame(frame);
+
+    // ── Detecção de hCaptcha DENTRO DO FRAME ────────────────────────────────
+    // O hCaptcha substitui o conteúdo do iframe da DCTFweb. Sem essa detecção
+    // o crawler segue achando "tabela vazia" e mascara o problema real.
+    try {
+      const flagged = await frame.evaluate(() => {
+        const docId = document.documentElement.getAttribute('data-id') || '';
+        const title = (document.title || '').toLowerCase();
+        const url = location.href.toLowerCase();
+        const txt = (document.body?.textContent || '').toLowerCase();
+        return docId.startsWith('hcaptcha-') ||
+               title.includes('hcaptcha') ||
+               title.includes('captcha') ||
+               url.includes('hcaptcha') ||
+               url.includes('challenge') ||
+               txt.includes('verify you are human') ||
+               txt.includes('verifique que voc');
+      });
+      if (flagged) {
+        const err: any = new Error('e-CAC bloqueou a sessão com hCaptcha. Reautentique o certificado na aba Certificados (vai abrir o navegador real para você resolver o captcha).');
+        err.captchaBloqueio = true;
+        err.sessaoExpirada = true;
+        throw err;
+      }
+    } catch (e: any) {
+      if (e.captchaBloqueio) throw e;
+    }
+
     return frame;
   }
 
@@ -300,14 +330,12 @@ export class DctfwebRpaService {
     });
 
     if (!tableData || tableData.length === 0) {
-      if (!DctfwebRpaService._htmlLogged) {
-        DctfwebRpaService._htmlLogged = true;
-        try {
-          // frame.evaluate é uma chamada bruta — sem locator timeout
-          const html = await frame.evaluate(() => document.body?.innerHTML.slice(0, 4000) || '');
-          log.warn(`[dctfweb-rpa] Tabela vazia — amostra do HTML (4KB): ${html.replace(/\s+/g, ' ').slice(0, 2000)}`);
-        } catch { /* ignore */ }
-      }
+      try {
+        // Salva HTML completo em arquivo para calibrar seletores. Sem limite de 4KB.
+        const html = await frame.evaluate(() => document.documentElement?.outerHTML || '');
+        await this.salvarHtmlDebug('parseTabela-vazia', html);
+        log.warn(`[dctfweb-rpa] Tabela vazia — HTML completo salvo em logs/dctfweb-debug/ (${html.length} bytes)`);
+      } catch { /* ignore */ }
       return [];
     }
     log.info(`[dctfweb-rpa] Tabela: ${tableData.length} linha(s). Headers: ${Object.keys(tableData[0]).join(' | ')}`);
@@ -393,7 +421,12 @@ export class DctfwebRpaService {
       this.progress(`Coletadas ${data.length} declaração(ões)`);
       return { success: true, data, errors: [] };
     } catch (e: any) {
-      log.error(`[dctfweb-rpa.consultarDeclaracoes] ${e.message}`);
+      // Captcha/sessão expirada são condições recuperáveis (usuário renova) — não inflam erros do monitor
+      if (e.captchaBloqueio || e.sessaoExpirada) {
+        log.warn(`[dctfweb-rpa.consultarDeclaracoes] ${e.message}`);
+      } else {
+        log.error(`[dctfweb-rpa.consultarDeclaracoes] ${e.message}`);
+      }
       return { success: false, data: [], errors: [e.message], sessaoExpirada: !!e.sessaoExpirada };
     }
   }
@@ -401,10 +434,33 @@ export class DctfwebRpaService {
   // ──────────────────────────────────────────────────────────────────────────
   // CONSULTAR DARFs
   // ──────────────────────────────────────────────────────────────────────────
+  /**
+   * Coleta os DARFs do DCTFweb.
+   *
+   * Fluxo correto conforme manual jan/2025 + FAQ RFB:
+   *   1. O e-CAC NÃO tem uma página global "Emissão de DARF" navegável.
+   *   2. DARFs estão DENTRO de cada declaração ATIVA. Para listá-los:
+   *      a. Entrar na visualização da declaração (ícone "olho" na col. Serviços)
+   *      b. Extrair tabela de "Débitos com pagamento em DARF"
+   *      c. Voltar à lista e repetir para a próxima
+   *   3. A tela inicial permite emissão em lote — mas a LISTAGEM de DARFs
+   *      individuais só aparece dentro da declaração.
+   *
+   * Estratégia robusta:
+   *   • Tenta primeiro o fluxo legado (caso o e-CAC tenha re-introduzido
+   *     uma tela global) — se achar tabela com colunas reconhecíveis, usa.
+   *   • Se 0 linhas: itera pelas declarações ATIVAS visíveis na lista
+   *     inicial, entra em cada uma e parseia os débitos.
+   *   • Em qualquer falha do crawler, salva outerHTML em logs/dctfweb-debug/
+   *     para calibração futura.
+   */
   async consultarDarfs(): Promise<DctfwebRpaResult<DctfwebDarfBruto>> {
     try {
       const frame = await this.abrirAppNoIframe();
-      // Tenta abrir a sub-tela "Emissão de DARF" / "Emitir DARF" / "DARF"
+      const data: DctfwebDarfBruto[] = [];
+
+      // ── ESTRATÉGIA 1: tela global legada (Emissão de DARF) ──────────────
+      let achouLegado = false;
       try {
         const clicado = await frame.evaluate(() => {
           const els = Array.from(document.querySelectorAll<HTMLElement>('a, button'));
@@ -412,45 +468,167 @@ export class DctfwebRpaService {
           if (el) { el.click(); return true; }
           return false;
         });
-        if (clicado) await this.waitForLoadingInFrame(frame);
-      } catch { /* tenta sem clicar */ }
-      await this.clicarConsultarSeExistir(frame);
-      const rows = await this.parseTabelaNoIframe(frame);
-      if (rows.length === 0) {
-        return { success: true, data: [], errors: ['Nenhum DARF encontrado ou tela não carregou'] };
+        if (clicado) {
+          await this.waitForLoadingInFrame(frame);
+          await this.clicarConsultarSeExistir(frame);
+          const rowsLegado = await this.parseTabelaNoIframe(frame);
+          // Só considera achado se as colunas batem com schema de DARF
+          if (rowsLegado.length > 0) {
+            const headers = Object.keys(rowsLegado[0]).join(' ').toLowerCase();
+            if (/receita|c[oó]digo|denominaca|vencimento/.test(headers)) {
+              data.push(...this.mapearLinhasParaDarfs(rowsLegado));
+              achouLegado = true;
+              this.progress(`Coletados ${data.length} DARF(s) via tela legada`);
+            }
+          }
+        }
+      } catch (e: any) {
+        log.warn(`[dctfweb-rpa.consultarDarfs] tela legada falhou: ${e.message}`);
       }
-      const data: DctfwebDarfBruto[] = rows.map(r => {
-        const m = this.mapearColunas(r, {
-          codigo:      ['código', 'codigo', 'receita'],
-          denominacao: ['denominação', 'denominacao', 'descrição', 'descricao'],
-          periodo:     ['período', 'periodo', 'per. apur'],
-          vencimento:  ['vencimento', 'venc.'],
-          principal:   ['principal', 'valor principal'],
-          multa:       ['multa'],
-          juros:       ['juros'],
-          total:       ['total', 'valor total'],
-          numero:      ['número', 'numero do', 'nº documento'],
-          barras:      ['barra', 'código de barras'],
+
+      // ── ESTRATÉGIA 2: iterar declarações ATIVAS da lista inicial ────────
+      if (!achouLegado) {
+        // NÃO chamar abrirAppNoIframe de novo — invalida o frame.
+        // Pega identificadores das declarações ATIVAS na grade visível
+        const ativas = await frame.evaluate(() => {
+          const linhas = Array.from(document.querySelectorAll<HTMLElement>('datatable-body-row, tr'));
+          const resultado: Array<{ idx: number; periodo: string; categoria: string; ativa: boolean }> = [];
+          linhas.forEach((linha, idx) => {
+            const txt = (linha.textContent || '').toLowerCase();
+            if (!txt.includes('ativ')) return;
+            // Tenta extrair período (MM/YYYY)
+            const m = (linha.textContent || '').match(/(\d{1,2}\/\d{4})/);
+            const periodo = m?.[1] || '';
+            const cells = Array.from(linha.querySelectorAll('datatable-body-cell, td')).map(c => (c.textContent || '').trim());
+            resultado.push({ idx, periodo, categoria: cells[1] || cells[0] || '', ativa: true });
+          });
+          return resultado;
         });
-        const principal = parseValor(m.principal);
-        const multa = parseValor(m.multa);
-        const juros = parseValor(m.juros);
-        const total = parseValor(m.total) || principal + multa + juros;
-        return {
-          codigo_receita: m.codigo,
-          denominacao: m.denominacao || null,
-          periodo_apuracao: normalizarPeriodo(m.periodo),
-          vencimento: parseData(m.vencimento) || new Date().toISOString().slice(0, 10),
-          principal, multa, juros, total,
-          numero_documento: m.numero || null,
-          codigo_barras: m.barras || null,
-        };
-      }).filter(d => d.codigo_receita);
-      this.progress(`Coletados ${data.length} DARF(s)`);
-      return { success: true, data, errors: [] };
+
+        log.info(`[dctfweb-rpa.consultarDarfs] ${ativas.length} declaração(ões) ATIVA(s) detectadas`);
+
+        for (const dec of ativas) {
+          try {
+            // Clica no ícone "olho" / "visualizar" da linha
+            const entrou = await frame.evaluate((idx) => {
+              const linhas = Array.from(document.querySelectorAll<HTMLElement>('datatable-body-row, tr'));
+              const linha = linhas[idx];
+              if (!linha) return false;
+              const candidatos = Array.from(linha.querySelectorAll<HTMLElement>('a, button, [role="button"], i'));
+              const alvo =
+                candidatos.find(c => /visualizar|^ver$/i.test((c.getAttribute('title') || '') + ' ' + (c.getAttribute('aria-label') || ''))) ||
+                candidatos.find(c => /fa-eye|fa-search|visualizar/i.test((c.className || '') + ' ' + (c.textContent || '')));
+              if (!alvo) return false;
+              alvo.click();
+              return true;
+            }, dec.idx);
+
+            if (!entrou) {
+              log.warn(`[dctfweb-rpa.consultarDarfs] decl ${dec.periodo}: botão visualizar não encontrado`);
+              continue;
+            }
+
+            await this.waitForLoadingInFrame(frame);
+
+            // Parseia tabela de Débitos com DARF dentro da declaração
+            const rows = await this.parseTabelaNoIframe(frame);
+            if (rows.length > 0) {
+              const debitos = this.mapearLinhasParaDarfs(rows, dec.periodo);
+              data.push(...debitos);
+              this.progress(`Decl ${dec.periodo}: ${debitos.length} DARF(s)`);
+            }
+
+            // Volta pra lista
+            try {
+              await frame.evaluate(() => {
+                const voltar = Array.from(document.querySelectorAll<HTMLElement>('a, button'))
+                  .find(b => /voltar|cancelar|^\s*<\s*$/i.test(b.textContent || ''));
+                if (voltar) voltar.click();
+                else history.back();
+              });
+              await this.waitForLoadingInFrame(frame);
+            } catch { /* segue */ }
+          } catch (e: any) {
+            log.warn(`[dctfweb-rpa.consultarDarfs] decl ${dec.periodo}: ${e.message}`);
+          }
+        }
+      }
+
+      // ── DIAGNÓSTICO: se zerou, salva HTML pra calibrar ──────────────────
+      if (data.length === 0) {
+        try {
+          const html = await frame.evaluate(() => document.body?.innerHTML || '');
+          await this.salvarHtmlDebug('consultarDarfs-zero', html);
+          this.progress('DARFs: 0 encontrados — HTML salvo em logs/dctfweb-debug/ para calibração');
+        } catch { /* ok */ }
+      }
+
+      return { success: true, data, errors: data.length === 0 ? ['Nenhum DARF encontrado'] : [] };
     } catch (e: any) {
-      log.error(`[dctfweb-rpa.consultarDarfs] ${e.message}`);
+      if (e.captchaBloqueio || e.sessaoExpirada) {
+        log.warn(`[dctfweb-rpa.consultarDarfs] ${e.message}`);
+      } else {
+        log.error(`[dctfweb-rpa.consultarDarfs] ${e.message}`);
+      }
       return { success: false, data: [], errors: [e.message], sessaoExpirada: !!e.sessaoExpirada };
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // HELPERS de parsing/diagnóstico
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Mapeia linhas brutas (texto do DOM) para DctfwebDarfBruto.
+   * Aceita período-pai opcional (quando a tela está dentro de uma declaração
+   * e a coluna período pode não aparecer em cada linha).
+   */
+  private mapearLinhasParaDarfs(rows: Record<string, string>[], periodoPadrao?: string): DctfwebDarfBruto[] {
+    return rows.map(r => {
+      const m = this.mapearColunas(r, {
+        codigo:      ['código', 'codigo', 'receita', 'cod.'],
+        denominacao: ['denominação', 'denominacao', 'descrição', 'descricao', 'tributo'],
+        periodo:     ['período', 'periodo', 'per. apur', 'pa'],
+        vencimento:  ['vencimento', 'venc.', 'data venc'],
+        principal:   ['principal', 'valor principal', 'débito', 'debito'],
+        multa:       ['multa'],
+        juros:       ['juros'],
+        total:       ['total', 'valor total', 'a pagar', 'saldo'],
+        numero:      ['número', 'numero do', 'nº documento', 'documento'],
+        barras:      ['barra', 'código de barras'],
+      });
+      const principal = parseValor(m.principal);
+      const multa = parseValor(m.multa);
+      const juros = parseValor(m.juros);
+      const total = parseValor(m.total) || principal + multa + juros;
+      return {
+        codigo_receita: m.codigo,
+        denominacao: m.denominacao || null,
+        periodo_apuracao: normalizarPeriodo(m.periodo) || periodoPadrao || '',
+        vencimento: parseData(m.vencimento) || new Date().toISOString().slice(0, 10),
+        principal, multa, juros, total,
+        numero_documento: m.numero || null,
+        codigo_barras: m.barras || null,
+      };
+    }).filter(d => d.codigo_receita || d.total > 0);
+  }
+
+  /**
+   * Salva snapshot do HTML em logs/dctfweb-debug/ para depuração de seletores
+   * quando o crawler não acha o que esperava. Nome do arquivo inclui timestamp.
+   */
+  private async salvarHtmlDebug(label: string, html: string): Promise<void> {
+    try {
+      const { default: fs } = await import('fs/promises');
+      const { default: path } = await import('path');
+      // process.cwd() = web/backend quando rodado via npm run dev
+      const dir = path.resolve(process.cwd(), 'logs', 'dctfweb-debug');
+      await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, `${label}-${Date.now()}.html`);
+      await fs.writeFile(file, html, 'utf8');
+      log.info(`[dctfweb-rpa] HTML debug salvo em ${file}`);
+    } catch (e: any) {
+      log.warn(`[dctfweb-rpa] falha ao salvar HTML debug: ${e.message}`);
     }
   }
 
@@ -466,43 +644,172 @@ export class DctfwebRpaService {
    * application/pdf).
    */
   async baixarRecibos(numeros: string[]): Promise<Map<string, Buffer>> {
+    return this.baixarArtefatosNasLinhas(numeros, {
+      label: 'Recibo',
+      contentTypeRegex: /application\/pdf/i,
+      botaoRegex: /^\s*(recibo|visualizar\s+recibo|comprovante)\s*$/i,
+      tituloRegex: /recibo|comprovante/i,
+      iconRegex: /fa-file-pdf|fa-receipt/i,
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // BAIXAR DARF (PDF)
+  // ──────────────────────────────────────────────────────────────────────────
+  /**
+   * Para cada número de documento DARF (`nº documento`), clica em "Emitir DARF"
+   * / "Imprimir DARF" na linha correspondente e captura o PDF resultante.
+   *
+   * Manual cap. 11: o DARF é gerado após a transmissão ou consulta de débitos.
+   */
+  async baixarDarfsPdf(numerosDocumento: string[]): Promise<Map<string, Buffer>> {
+    return this.baixarArtefatosNasLinhas(numerosDocumento, {
+      label: 'DARF',
+      contentTypeRegex: /application\/pdf/i,
+      botaoRegex: /^\s*(emitir\s+darf|imprimir\s+darf|darf|visualizar\s+darf)\s*$/i,
+      tituloRegex: /emitir.*darf|imprimir.*darf|darf/i,
+      iconRegex: /fa-print|fa-file-pdf|fa-money-bill/i,
+      preAction: async (frame) => {
+        // Caso esteja na tela de listagem geral, ir pra "Emissão de DARF" antes
+        try {
+          await frame.evaluate(() => {
+            const els = Array.from(document.querySelectorAll<HTMLElement>('a, button'));
+            const el = els.find(e => /emiss[aã]o de darf|emitir darf/i.test(e.textContent || ''));
+            if (el) el.click();
+          });
+        } catch { /* ok */ }
+      },
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // BAIXAR ESPELHO XML
+  // ──────────────────────────────────────────────────────────────────────────
+  /**
+   * Para cada número de recibo, baixa o "Espelho" (XML completo da declaração).
+   * Útil para auditoria e revalidação de tributos consolidados (cap. 8).
+   */
+  async baixarEspelhosXml(numerosRecibo: string[]): Promise<Map<string, Buffer>> {
+    return this.baixarArtefatosNasLinhas(numerosRecibo, {
+      label: 'Espelho',
+      contentTypeRegex: /(application\/xml|text\/xml|application\/octet-stream)/i,
+      botaoRegex: /^\s*(espelho|xml|visualizar\s+espelho|baixar\s+xml)\s*$/i,
+      tituloRegex: /espelho|xml/i,
+      iconRegex: /fa-file-code|fa-file-xml|fa-eye/i,
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // HELPER GENÉRICO — clica num botão dentro de uma linha e captura o response
+  // ──────────────────────────────────────────────────────────────────────────
+  /**
+   * Estratégia robusta para extrair artefatos (PDF/XML) da listagem do DCTFweb:
+   *
+   *   1. Localiza a linha contendo a chave (numero_recibo ou numero_documento).
+   *   2. Procura o botão correspondente por: texto exato, texto fuzzy, title,
+   *      aria-label, ícone (fontawesome) — várias passadas.
+   *   3. Intercepta o response com `Content-Type` esperado.
+   *   4. Se popup abrir, captura também via `context.on('page')`.
+   *   5. Faz 2 tentativas com pequeno delay entre as tentativas (Angular ngx
+   *      pode re-renderizar a linha após scroll).
+   */
+  private async baixarArtefatosNasLinhas(
+    chaves: string[],
+    cfg: {
+      label: string;
+      contentTypeRegex: RegExp;
+      botaoRegex: RegExp;
+      tituloRegex: RegExp;
+      iconRegex: RegExp;
+      preAction?: (frame: Frame) => Promise<void>;
+    },
+  ): Promise<Map<string, Buffer>> {
     const out = new Map<string, Buffer>();
-    if (!this.page || numeros.length === 0) return out;
+    if (!this.page || chaves.length === 0) return out;
     try {
       const frame = await this.abrirAppNoIframe();
-      for (const numero of numeros) {
-        try {
-          // Clica no botão "Recibo" da linha que contém esse número
-          const clicado = await frame.evaluate((num: string) => {
-            const linhas = Array.from(document.querySelectorAll<HTMLElement>('datatable-body-row, tr'));
-            const linha = linhas.find(l => l.textContent?.includes(num));
-            if (!linha) return false;
-            const btn = linha.querySelector<HTMLElement>('button, a, [title*="Recibo" i]');
-            if (!btn) return false;
-            const candidato = Array.from(linha.querySelectorAll<HTMLElement>('button, a'))
-              .find(b => /recibo|pdf/i.test(b.textContent || '') || /recibo/i.test(b.getAttribute('title') || ''));
-            (candidato || btn).click();
-            return true;
-          }, numero);
-          if (!clicado) continue;
+      if (cfg.preAction) {
+        await cfg.preAction(frame);
+        await this.waitForLoadingInFrame(frame);
+      }
 
-          // O clique já aconteceu dentro do frame.evaluate acima; só aguardamos o PDF
-          const pdfPromise = this.page.waitForResponse(
-            (r) => r.headers()['content-type']?.includes('application/pdf') === true,
-            { timeout: 20_000 },
-          ).catch(() => null);
-          const resp = await pdfPromise;
-          if (resp) {
-            out.set(numero, await resp.body());
-            this.progress(`Recibo ${numero} baixado`);
+      for (const chave of chaves) {
+        let sucesso = false;
+
+        for (let tentativa = 1; tentativa <= 2 && !sucesso; tentativa++) {
+          try {
+            // Garante que a linha esteja visível (ngx-datatable é virtualizado)
+            await frame.evaluate((c) => {
+              const linhas = Array.from(document.querySelectorAll<HTMLElement>('datatable-body-row, tr'));
+              const linha = linhas.find(l => l.textContent?.includes(c));
+              if (linha) linha.scrollIntoView({ block: 'center' });
+            }, chave);
+
+            // Prepara captura ANTES do clique (corrige race condition)
+            const pdfWait = this.page!.waitForResponse(
+              (r) => cfg.contentTypeRegex.test(r.headers()['content-type'] || ''),
+              { timeout: 25_000 },
+            ).catch(() => null);
+
+            // Também escuta novo popup, caso o e-CAC abra o PDF em nova aba
+            const popupWait = this.page!.context().waitForEvent('page', { timeout: 25_000 }).catch(() => null);
+
+            const clicado = await frame.evaluate(({ c, bot, tit, ic }) => {
+              const linhas = Array.from(document.querySelectorAll<HTMLElement>('datatable-body-row, tr'));
+              const linha = linhas.find(l => l.textContent?.includes(c));
+              if (!linha) return 'linha_nao_encontrada';
+              const botoes = Array.from(linha.querySelectorAll<HTMLElement>('button, a, [role="button"]'));
+              const botaoR = new RegExp(bot, 'i');
+              const titR = new RegExp(tit, 'i');
+              const icR = new RegExp(ic, 'i');
+              const alvo =
+                botoes.find(b => botaoR.test((b.textContent || '').trim())) ||
+                botoes.find(b => titR.test(b.getAttribute('title') || '') || titR.test(b.getAttribute('aria-label') || '')) ||
+                botoes.find(b => Array.from(b.querySelectorAll('i, [class*="icon"]')).some(i => icR.test(i.className || '')));
+              if (!alvo) return 'botao_nao_encontrado';
+              alvo.click();
+              return 'clicado';
+            }, { c: chave, bot: cfg.botaoRegex.source, tit: cfg.tituloRegex.source, ic: cfg.iconRegex.source });
+
+            if (clicado !== 'clicado') {
+              log.warn(`[dctfweb-rpa.${cfg.label}] ${chave} tentativa ${tentativa}: ${clicado}`);
+              await new Promise(r => setTimeout(r, 1500));
+              continue;
+            }
+
+            const resp = await pdfWait;
+            let buf: Buffer | null = null;
+            if (resp) {
+              buf = Buffer.from(await resp.body());
+            } else {
+              const popup = await popupWait;
+              if (popup) {
+                try {
+                  const popupResp = await popup.waitForResponse(
+                    (r) => cfg.contentTypeRegex.test(r.headers()['content-type'] || ''),
+                    { timeout: 15_000 },
+                  );
+                  buf = Buffer.from(await popupResp.body());
+                } catch { /* sem PDF no popup */ }
+                await popup.close().catch(() => {});
+              }
+            }
+
+            if (buf && buf.length > 100) {
+              out.set(chave, buf);
+              this.progress(`${cfg.label} ${chave} baixado (${(buf.length / 1024).toFixed(1)} KB)`);
+              sucesso = true;
+            } else {
+              log.warn(`[dctfweb-rpa.${cfg.label}] ${chave} tentativa ${tentativa}: sem buffer válido`);
+            }
+            await this.waitForLoadingInFrame(frame);
+          } catch (e: any) {
+            log.warn(`[dctfweb-rpa.${cfg.label}] ${chave} tentativa ${tentativa}: ${e.message}`);
           }
-          await this.waitForLoadingInFrame(frame);
-        } catch (e: any) {
-          log.warn(`[dctfweb-rpa.baixarRecibos] ${numero}: ${e.message}`);
         }
       }
     } catch (e: any) {
-      log.error(`[dctfweb-rpa.baixarRecibos] fatal: ${e.message}`);
+      log.error(`[dctfweb-rpa.${cfg.label}] fatal: ${e.message}`);
     }
     return out;
   }

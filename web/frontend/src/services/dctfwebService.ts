@@ -144,6 +144,22 @@ export interface DctfwebAutomacaoGlobal {
   atualizado_em: string;
 }
 
+export interface ArquivoDctfweb {
+  id: number;
+  id_empresa: number;
+  id_declaracao: number | null;
+  id_darf: number | null;
+  tipo: 'RECIBO_PDF' | 'DARF_PDF' | 'ESPELHO_XML' | 'COMPROVANTE_PDF';
+  numero_recibo: string | null;
+  numero_documento: string | null;
+  periodo_apuracao: string | null;
+  content_type: string | null;
+  tamanho_bytes: number | null;
+  sha256: string | null;
+  fonte: 'RPA' | 'SERPRO_API' | 'UPLOAD';
+  baixado_em: string;
+}
+
 // ── API ──────────────────────────────────────────────────────────────────────
 export const dctfwebService = {
   dashboard: async (idEmpresa?: number): Promise<DctfwebDashboard> => {
@@ -236,6 +252,24 @@ export const dctfwebService = {
     return data;
   },
 
+  // ── Arquivos baixados ────────────────────────────────────────────────────
+  /** Lista arquivos (recibo PDF, DARF PDF, espelho XML) já baixados de uma empresa. */
+  listarArquivos: async (
+    idEmpresa: number,
+    filtros?: { tipo?: 'RECIBO_PDF' | 'DARF_PDF' | 'ESPELHO_XML'; numero_recibo?: string; numero_documento?: string; periodo_apuracao?: string }
+  ): Promise<{ data: ArquivoDctfweb[]; storage_backend: 'fs' | 'supabase' }> => {
+    const p = new URLSearchParams({ id_empresa: String(idEmpresa) });
+    if (filtros?.tipo) p.append('tipo', filtros.tipo);
+    if (filtros?.numero_recibo) p.append('numero_recibo', filtros.numero_recibo);
+    if (filtros?.numero_documento) p.append('numero_documento', filtros.numero_documento);
+    if (filtros?.periodo_apuracao) p.append('periodo_apuracao', filtros.periodo_apuracao);
+    const { data } = await api.get(`/dctfweb/arquivos?${p}`);
+    return data;
+  },
+  /** Constrói URL de download autenticado de um arquivo (uso direto em <a href> ou window.open). */
+  urlDownloadArquivo: (idArquivo: number): string =>
+    `${api.defaults.baseURL || ''}/dctfweb/arquivos/${idArquivo}/download`,
+
   // Agendamento
   obterConfig: async (): Promise<{ global: DctfwebAutomacaoGlobal | null; empresas: DctfwebAutomacaoEmpresa[]; warning?: string }> => {
     const { data } = await api.get('/dctfweb/automacao/config');
@@ -290,6 +324,15 @@ export const dctfwebService = {
   executarAgora: async (idEmpresa: number | null): Promise<{ message: string }> => {
     const url = idEmpresa ? `/dctfweb/automacao/executar-agora/${idEmpresa}` : '/dctfweb/automacao/executar-agora';
     const { data } = await api.post(url);
+    return data;
+  },
+
+  /**
+   * Abre o navegador real com o certificado da empresa para o usuário resolver
+   * o hCaptcha manualmente. Aguarda até 5 min e devolve quando cookies foram capturados.
+   */
+  renovarSessao: async (idEmpresa: number): Promise<{ ok: boolean; cookies_count: number; url_final: string }> => {
+    const { data } = await api.post(`/dctfweb/sessao/renovar/${idEmpresa}`, undefined, { timeout: 6 * 60 * 1000 });
     return data;
   },
 };

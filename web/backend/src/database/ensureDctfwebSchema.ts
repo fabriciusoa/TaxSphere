@@ -203,6 +203,31 @@ export async function ensureDctfwebSchema(): Promise<void> {
       `INSERT INTO dctfweb_automacao_config_global (id) VALUES (1) ON CONFLICT (id) DO NOTHING`
     );
 
+    // ── Arquivos baixados (Recibo PDF, DARF PDF, Espelho XML, Comprovante) ───
+    // Mantém o path no storage (FS local ou Supabase) — não armazena bytea.
+    await runQuery(`
+      CREATE TABLE IF NOT EXISTS dctfweb_arquivos (
+        id              BIGSERIAL PRIMARY KEY,
+        id_empresa      BIGINT NOT NULL REFERENCES adm_empresas(id) ON DELETE CASCADE,
+        id_declaracao   BIGINT REFERENCES dctfweb_declaracoes(id) ON DELETE SET NULL,
+        id_darf         BIGINT REFERENCES dctfweb_darfs(id) ON DELETE SET NULL,
+        tipo            VARCHAR(32) NOT NULL,  -- RECIBO_PDF | DARF_PDF | ESPELHO_XML | COMPROVANTE_PDF
+        numero_recibo   VARCHAR(64),
+        numero_documento VARCHAR(64),
+        periodo_apuracao VARCHAR(10),
+        storage_backend VARCHAR(16) NOT NULL DEFAULT 'fs',  -- fs | supabase
+        storage_path    TEXT NOT NULL,
+        content_type    VARCHAR(64),
+        tamanho_bytes   BIGINT,
+        sha256          VARCHAR(64),
+        fonte           VARCHAR(16) NOT NULL DEFAULT 'RPA',  -- RPA | SERPRO_API | UPLOAD
+        baixado_em      TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (id_empresa, tipo, numero_recibo, numero_documento)
+      )
+    `);
+    await runQuery(`CREATE INDEX IF NOT EXISTS idx_dctfweb_arq_empresa_tipo ON dctfweb_arquivos(id_empresa, tipo)`);
+    await runQuery(`CREATE INDEX IF NOT EXISTS idx_dctfweb_arq_recibo ON dctfweb_arquivos(numero_recibo)`);
+
     // ── Índices para queries do dashboard ────────────────────────────────────
     await runQuery(`CREATE INDEX IF NOT EXISTS idx_dctfweb_decl_empresa_periodo ON dctfweb_declaracoes(id_empresa, periodo_apuracao)`);
     await runQuery(`CREATE INDEX IF NOT EXISTS idx_dctfweb_decl_situacao ON dctfweb_declaracoes(situacao_normalizada)`);

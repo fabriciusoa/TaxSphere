@@ -20,6 +20,9 @@ import { log } from '../utils/logger';
 import { runDctfwebEmpresa } from '../services/dctfwebAutomacaoRunner';
 import { dctfwebControl } from '../services/dctfwebAutomacaoControl';
 import { importarXmlDctfweb } from '../services/dctfwebImportService';
+import { storageService } from '../services/storageService';
+import { certificadoService } from '../services/certificadoService';
+import { autenticarManualmente, encryptSessaoCookies } from '../services/ecacService';
 import {
   CATEGORIAS_DCTFWEB, SITUACOES_DCTFWEB, ORIGENS_DEBITOS,
   calcularMaed, filtroPadraoTelaInicial,
@@ -809,6 +812,138 @@ export const dctfwebController = {
       if (error?.code === '42P01') return res.json({ data: [] });
       log.error(`Erro relatório prazos: ${error.message}`);
       res.status(500).json({ error: 'Erro no relatório' });
+    }
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // RENOVAR SESSÃO e-CAC (login manual quando captcha bloqueia)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Abre o navegador real (Chrome/Edge não-headless) com o certificado da empresa
+   * para o usuário resolver o hCaptcha do gov.br manualmente. Após login bem-sucedido,
+   * captura cookies e persiste em certificados_digitais.sessao_cookies para que
+   * o crawler possa reutilizar a sessão sem novo captcha por horas/dias.
+   *
+   * Fluxo síncrono: a request aguarda até que o usuário complete o login (timeout 5min).
+   */
+  renovarSessao: async (req: AuthRequest, res: Response) => {
+    try {
+      const idEmpresa = Number(req.params.id);
+      if (!idEmpresa) return res.status(400).json({ error: 'id_empresa obrigatório' });
+
+      const cert = await getOne<{
+        id: number; pfx_encrypted: Buffer; iv: string; senha_cifrada: string;
+      }>(
+        `SELECT c.id, c.pfx_encrypted, c.iv, c.senha_cifrada
+           FROM certificados_digitais c
+          WHERE c.id_empresa = $1 AND COALESCE(c.ativo, 0) <> 0
+          ORDER BY c.id DESC LIMIT 1`,
+        [idEmpresa]
+      );
+      if (!cert) return res.status(404).json({ error: 'Sem certificado ativo para essa empresa' });
+
+      const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+      const passphrase = await certificadoService.decryptSenha(cert.senha_cifrada);
+
+      log.info(`[dctfweb.renovarSessao] empresa=${idEmpresa} cert=${cert.id} — abrindo browser`);
+      const result = await autenticarManualmente(
+        pfxBuffer, passphrase, 5 * 60 * 1000,
+        (msg) => log.info(`[renovarSessao] ${msg}`)
+      );
+
+      await runQuery(
+        `UPDATE certificados_digitais
+            SET sessao_cookies = $1,
+                sessao_capturada_em = NOW(),
+                sessao_falha_em = NULL,
+                sessao_falha_motivo = NULL,
+                ultimo_uso = NOW(),
+                atualizado_em = NOW()
+          WHERE id = $2`,
+        [result.sessaoCookies, cert.id]
+      );
+
+      res.json({ ok: true, cookies_count: result.cookiesCount, url_final: result.url });
+    } catch (error: any) {
+      log.error(`[dctfweb.renovarSessao] ${error.message}`);
+      res.status(500).json({ error: error.message || 'Falha ao renovar sessão' });
+    }
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ARQUIVOS BAIXADOS (Recibo PDF, DARF PDF, Espelho XML)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Lista os arquivos baixados de uma empresa (Recibos, DARFs, Espelhos).
+   * Suporta filtro por tipo e período.
+   */
+  listarArquivos: async (req: AuthRequest, res: Response) => {
+    try {
+      const { id_empresa, tipo, periodo_apuracao, numero_recibo, numero_documento } =
+        req.query as Record<string, string | undefined>;
+      if (!id_empresa) return res.status(400).json({ error: 'id_empresa obrigatório' });
+
+      const where: string[] = ['id_empresa = $1'];
+      const params: any[] = [Number(id_empresa)];
+      if (tipo) { params.push(tipo); where.push(`tipo = $${params.length}`); }
+      if (periodo_apuracao) { params.push(periodo_apuracao); where.push(`periodo_apuracao = $${params.length}`); }
+      if (numero_recibo) { params.push(numero_recibo); where.push(`numero_recibo = $${params.length}`); }
+      if (numero_documento) { params.push(numero_documento); where.push(`numero_documento = $${params.length}`); }
+
+      const rows = await getAll<any>(
+        `SELECT id, id_empresa, id_declaracao, id_darf, tipo,
+                numero_recibo, numero_documento, periodo_apuracao,
+                content_type, tamanho_bytes, sha256, fonte, baixado_em
+           FROM dctfweb_arquivos
+          WHERE ${where.join(' AND ')}
+          ORDER BY baixado_em DESC
+          LIMIT 500`,
+        params
+      );
+      res.json({ data: rows, storage_backend: storageService.backend });
+    } catch (error: any) {
+      if (error?.code === '42P01') return res.json({ data: [] });
+      log.error(`Erro listar arquivos: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao listar arquivos' });
+    }
+  },
+
+  /**
+   * Faz download do conteúdo de um arquivo (PDF ou XML).
+   * Headers Content-Type e Content-Disposition apropriados.
+   */
+  baixarArquivo: async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const meta = await getOne<{
+        storage_backend: 'fs' | 'supabase';
+        storage_path: string;
+        content_type: string;
+        tipo: string;
+        numero_recibo: string | null;
+        numero_documento: string | null;
+        periodo_apuracao: string | null;
+      }>(
+        `SELECT storage_backend, storage_path, content_type, tipo,
+                numero_recibo, numero_documento, periodo_apuracao
+           FROM dctfweb_arquivos WHERE id = $1`,
+        [Number(id)]
+      );
+      if (!meta) return res.status(404).json({ error: 'Arquivo não encontrado' });
+
+      const buf = await storageService.download(meta.storage_backend, meta.storage_path);
+      const ext = meta.tipo.toLowerCase().endsWith('xml') ? 'xml' : 'pdf';
+      const nome = [meta.tipo, meta.periodo_apuracao, meta.numero_recibo || meta.numero_documento]
+        .filter(Boolean).join('_').replace(/[^a-zA-Z0-9._-]/g, '_');
+      res.setHeader('Content-Type', meta.content_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${nome}.${ext}"`);
+      res.setHeader('Content-Length', String(buf.length));
+      res.end(buf);
+    } catch (error: any) {
+      log.error(`Erro baixar arquivo: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao baixar arquivo' });
     }
   },
 

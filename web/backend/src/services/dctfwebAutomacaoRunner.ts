@@ -9,13 +9,14 @@
  *
  * Reaproveita o EcacService (mesma sessão mTLS) — não cria novo browser.
  */
-import { getOne, runQuery } from '../database/connection';
+import { getOne, getAll, runQuery } from '../database/connection';
 import { log } from '../utils/logger';
 import { EcacService } from './ecacService';
 import { certificadoService } from './certificadoService';
 import { DctfwebRpaService, type DctfwebDeclaracaoBruta, type DctfwebDarfBruto } from './dctfwebRpaService';
 import { dctfwebControl } from './dctfwebAutomacaoControl';
 import { calcularPrazoLegal, calcularMaed, detectaImpedimentoCnd, type CategoriaDctfweb } from './dctfwebRegrasService';
+import { storageService, buildStoragePath } from './storageService';
 
 export interface DctfwebAutomacaoRequest {
   id_empresa: number;
@@ -140,6 +141,68 @@ async function upsertDarf(idEmpresa: number, periodoApuracao: string, darf: Dctf
   );
 }
 
+/**
+ * Persiste um arquivo baixado (Recibo, DARF, Espelho) no storage configurado
+ * e registra metadata em dctfweb_arquivos. UPSERT por (id_empresa, tipo, numero_recibo, numero_documento).
+ */
+async function persistirArquivo(p: {
+  id_empresa: number;
+  tipo: 'RECIBO_PDF' | 'DARF_PDF' | 'ESPELHO_XML';
+  periodo_apuracao?: string | null;
+  numero_recibo?: string | null;
+  numero_documento?: string | null;
+  ext: 'pdf' | 'xml';
+  content_type: string;
+  buffer: Buffer;
+  fonte: 'RPA' | 'SERPRO_API' | 'UPLOAD';
+}): Promise<void> {
+  const identificador = p.numero_documento || p.numero_recibo || `${Date.now()}`;
+  const relPath = buildStoragePath({
+    id_empresa: p.id_empresa,
+    tipo: p.tipo,
+    periodo_apuracao: p.periodo_apuracao,
+    identificador,
+    ext: p.ext,
+  });
+  const up = await storageService.upload(relPath, p.buffer, p.content_type);
+
+  // Vincula a declaracao/darf pelos identificadores quando possível
+  const decl = p.numero_recibo
+    ? await getOne<{ id: number }>(
+      `SELECT id FROM dctfweb_declaracoes WHERE id_empresa = $1 AND numero_recibo = $2 LIMIT 1`,
+      [p.id_empresa, p.numero_recibo]
+    )
+    : null;
+  const darf = p.numero_documento
+    ? await getOne<{ id: number }>(
+      `SELECT id FROM dctfweb_darfs WHERE id_empresa = $1 AND numero_documento = $2 LIMIT 1`,
+      [p.id_empresa, p.numero_documento]
+    )
+    : null;
+
+  await runQuery(
+    `INSERT INTO dctfweb_arquivos
+       (id_empresa, id_declaracao, id_darf, tipo, numero_recibo, numero_documento,
+        periodo_apuracao, storage_backend, storage_path, content_type, tamanho_bytes,
+        sha256, fonte)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (id_empresa, tipo, numero_recibo, numero_documento) DO UPDATE SET
+       id_declaracao = COALESCE(EXCLUDED.id_declaracao, dctfweb_arquivos.id_declaracao),
+       id_darf = COALESCE(EXCLUDED.id_darf, dctfweb_arquivos.id_darf),
+       storage_backend = EXCLUDED.storage_backend,
+       storage_path = EXCLUDED.storage_path,
+       tamanho_bytes = EXCLUDED.tamanho_bytes,
+       sha256 = EXCLUDED.sha256,
+       baixado_em = NOW()`,
+    [
+      p.id_empresa, decl?.id || null, darf?.id || null, p.tipo,
+      p.numero_recibo || null, p.numero_documento || null,
+      p.periodo_apuracao || null, up.backend, up.path, p.content_type, up.tamanho,
+      up.sha256, p.fonte,
+    ]
+  ).catch((e) => log.warn(`[dctfweb-runner] persistirArquivo: ${e.message}`));
+}
+
 export async function runDctfwebEmpresa(req: DctfwebAutomacaoRequest): Promise<DctfwebAutomacaoResultado> {
   const etapas: string[] = [];
   let algumaFalhou = false;
@@ -225,27 +288,60 @@ export async function runDctfwebEmpresa(req: DctfwebAutomacaoRequest): Promise<D
       }
 
       // ── ETAPA 2 ────────────────────────────────────────────────────────────
+      // Baixa Recibo (PDF) + Espelho (XML) das declarações ainda sem arquivos no storage.
       if (req.baixar_recibos && !(await checarControle())) {
         try {
-          // Pega recibos pendentes do banco (declarações sem recibo_pdf)
-          const pendentes = await getOne<{ numeros: string[] }>(
-            `SELECT array_agg(numero_recibo) FILTER (WHERE numero_recibo IS NOT NULL) AS numeros
-             FROM dctfweb_declaracoes WHERE id_empresa = $1 AND recibo_pdf IS NULL`,
+          const pendentes = await getAll<{ numero_recibo: string; periodo_apuracao: string }>(
+            `SELECT d.numero_recibo, d.periodo_apuracao
+               FROM dctfweb_declaracoes d
+              WHERE d.id_empresa = $1
+                AND d.numero_recibo IS NOT NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM dctfweb_arquivos a
+                   WHERE a.id_empresa = d.id_empresa
+                     AND a.tipo = 'RECIBO_PDF'
+                     AND a.numero_recibo = d.numero_recibo
+                )`,
             [req.id_empresa]
           );
-          const numeros = pendentes?.numeros || [];
+          const numeros = pendentes.map(p => p.numero_recibo);
+          const periodoPor = new Map(pendentes.map(p => [p.numero_recibo, p.periodo_apuracao]));
+
           if (numeros.length === 0) {
             etapas.push('recibos: nada pendente');
           } else {
             const pdfs = await dctfweb.baixarRecibos(numeros);
             for (const [numero, pdf] of pdfs.entries()) {
-              await runQuery(
-                `UPDATE dctfweb_declaracoes SET recibo_pdf = $1, atualizado_em = NOW()
-                  WHERE id_empresa = $2 AND numero_recibo = $3`,
-                [pdf, req.id_empresa, numero]
-              ).catch(() => {});
+              await persistirArquivo({
+                id_empresa: req.id_empresa,
+                tipo: 'RECIBO_PDF',
+                periodo_apuracao: periodoPor.get(numero) || null,
+                numero_recibo: numero,
+                ext: 'pdf',
+                content_type: 'application/pdf',
+                buffer: pdf,
+                fonte: 'RPA',
+              });
             }
             etapas.push(`recibos: ${pdfs.size}/${numeros.length} baixados`);
+
+            // Espelho XML — best-effort (não falha pipeline se zero)
+            try {
+              const xmls = await dctfweb.baixarEspelhosXml(numeros);
+              for (const [numero, xml] of xmls.entries()) {
+                await persistirArquivo({
+                  id_empresa: req.id_empresa,
+                  tipo: 'ESPELHO_XML',
+                  periodo_apuracao: periodoPor.get(numero) || null,
+                  numero_recibo: numero,
+                  ext: 'xml',
+                  content_type: 'application/xml',
+                  buffer: xml,
+                  fonte: 'RPA',
+                });
+              }
+              if (xmls.size > 0) etapas[etapas.length - 1] += ` | espelhos: ${xmls.size}`;
+            } catch { /* espelho é opcional */ }
           }
         } catch (e: any) {
           etapas.push(`recibos: EXCEPTION (${e.message})`);
@@ -255,12 +351,49 @@ export async function runDctfwebEmpresa(req: DctfwebAutomacaoRequest): Promise<D
       }
 
       // ── ETAPA 3 ────────────────────────────────────────────────────────────
+      // Lista DARFs e baixa o PDF de cada um que ainda não está no storage.
       if (req.consultar_darfs && !(await checarControle())) {
         try {
           const r = await dctfweb.consultarDarfs();
           if (r.success) {
             for (const d of r.data) await upsertDarf(req.id_empresa, d.periodo_apuracao, d);
             etapas.push(`darfs: OK (${r.data.length} consultados)`);
+
+            // Baixa PDF dos DARFs novos (números de documento ainda não persistidos)
+            const numerosPendentes = r.data
+              .map(d => d.numero_documento)
+              .filter((n): n is string => !!n);
+            if (numerosPendentes.length > 0) {
+              const jaSalvos = await getAll<{ numero_documento: string }>(
+                `SELECT numero_documento FROM dctfweb_arquivos
+                  WHERE id_empresa = $1 AND tipo = 'DARF_PDF'
+                    AND numero_documento = ANY($2)`,
+                [req.id_empresa, numerosPendentes]
+              );
+              const jaSet = new Set(jaSalvos.map(j => j.numero_documento));
+              const aBaixar = numerosPendentes.filter(n => !jaSet.has(n));
+              if (aBaixar.length > 0) {
+                try {
+                  const pdfs = await dctfweb.baixarDarfsPdf(aBaixar);
+                  for (const [numero, pdf] of pdfs.entries()) {
+                    const darfMeta = r.data.find(d => d.numero_documento === numero);
+                    await persistirArquivo({
+                      id_empresa: req.id_empresa,
+                      tipo: 'DARF_PDF',
+                      periodo_apuracao: darfMeta?.periodo_apuracao || null,
+                      numero_documento: numero,
+                      ext: 'pdf',
+                      content_type: 'application/pdf',
+                      buffer: pdf,
+                      fonte: 'RPA',
+                    });
+                  }
+                  etapas[etapas.length - 1] += ` | DARFs PDF: ${pdfs.size}/${aBaixar.length}`;
+                } catch (e: any) {
+                  log.warn(`[dctfweb-runner] baixarDarfsPdf: ${e.message}`);
+                }
+              }
+            }
           } else {
             etapas.push(`darfs: ERRO (${r.errors.join('; ').slice(0, 150)})`);
             algumaFalhou = true;

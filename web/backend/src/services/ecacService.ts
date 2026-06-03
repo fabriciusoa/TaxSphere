@@ -330,6 +330,94 @@ export class EcacService {
     return this.waitForLoading();
   }
 
+  /**
+   * Abre o e-CAC em modo NÃO-headless para que um humano resolva manualmente
+   * eventual hCaptcha / desafio anti-bot e estabeleça a sessão. Após N minutos
+   * (ou quando a página estiver autenticada no e-CAC) captura `storageState`
+   * — cookies + localStorage — e retorna para persistência em adm_certificados.sessao_cookies.
+   *
+   * Uso: chamado por um endpoint admin quando o pipeline detecta captchaBloqueio.
+   */
+  async abrirParaLoginManual(
+    pfxBuffer: Buffer,
+    passphrase: string,
+    opts: { timeoutMin?: number; onProgress?: (msg: string) => void } = {}
+  ): Promise<string> {
+    const timeoutMin = opts.timeoutMin ?? 5;
+    const log2 = (m: string) => { opts.onProgress?.(m); log.info(`[eCAC-manual] ${m}`); };
+
+    // Reinicia browser sempre em modo visível
+    await this.encerrar();
+    log2(`Abrindo navegador (visível) — você tem ${timeoutMin} min para resolver o captcha`);
+    await this.initBrowserVisivel(pfxBuffer, passphrase);
+    if (!this.page) throw new Error('Página não inicializada');
+
+    await this.page.goto('https://cav.receita.fazenda.gov.br/ecac/', { waitUntil: 'load', timeout: 60_000 });
+
+    const limite = Date.now() + timeoutMin * 60_000;
+    log2('Aguardando autenticação manual…');
+
+    while (Date.now() < limite) {
+      await new Promise(r => setTimeout(r, 3_000));
+      try {
+        const status = await this.page.evaluate(() => {
+          const url = location.href.toLowerCase();
+          const title = (document.title || '').toLowerCase();
+          const isCaptcha = title.includes('hcaptcha') || url.includes('hcaptcha') || url.includes('challenge');
+          const isLogin = url.includes('autenticacao') || url.includes('login') || url.includes('sso.acesso.gov.br');
+          const isEcac = url.includes('cav.receita.fazenda.gov.br/ecac') && !isCaptcha && !isLogin;
+          return { isCaptcha, isLogin, isEcac, url };
+        });
+        if (status.isEcac) {
+          log2('Sessão estabelecida — capturando cookies…');
+          const state = await this.context!.storageState();
+          await this.encerrar();
+          return JSON.stringify(state);
+        }
+      } catch { /* page pode ter navegado */ }
+    }
+    await this.encerrar();
+    throw new Error(`Tempo esgotado (${timeoutMin} min) — sessão não foi estabelecida`);
+  }
+
+  /** Igual ao initBrowser mas headless:false para login manual. */
+  private async initBrowserVisivel(pfxBuffer: Buffer, passphrase: string): Promise<void> {
+    let certPem = '', keyPem = '';
+    if (passphrase) {
+      try {
+        const p12Asn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, passphrase);
+        const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]?.[0];
+        if (certBag?.cert) certPem = forge.pki.certificateToPem(certBag.cert);
+        const keyBag = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
+        if (keyBag?.key) keyPem = forge.pki.privateKeyToPem(keyBag.key);
+      } catch (e) { log.warn(`[eCAC-manual] PEM extract: ${e}`); }
+    }
+    const tempDir = path.join(process.cwd(), 'temp');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const ts = Date.now();
+    const certPath = path.join(tempDir, `cert_manual_${ts}.pem`);
+    const keyPath = path.join(tempDir, `key_manual_${ts}.pem`);
+    fs.writeFileSync(certPath, certPem || '', { mode: 0o600 });
+    fs.writeFileSync(keyPath, keyPem || '', { mode: 0o600 });
+    this.tempPemFiles.push(certPath, keyPath);
+
+    try {
+      this.browser = await chromium.launch({ channel: 'msedge', headless: false,
+        args: ['--no-sandbox', '--ignore-certificate-errors', '--disable-blink-features=AutomationControlled'] });
+    } catch {
+      this.browser = await chromium.launch({ headless: false,
+        args: ['--no-sandbox', '--ignore-certificate-errors', '--disable-blink-features=AutomationControlled'] });
+    }
+    this.context = await this.browser.newContext({
+      ignoreHTTPSErrors: true,
+      clientCertificates: certPem && keyPem
+        ? [{ origin: 'https://cav.receita.fazenda.gov.br', certPath, keyPath }]
+        : undefined,
+    });
+    this.page = await this.context.newPage();
+  }
+
   /** Encerra browser de forma segura — chamável pelos consumidores externos. */
   async encerrar(): Promise<void> {
     try { await this.browser?.close(); } catch { /* ignore */ }

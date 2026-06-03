@@ -423,6 +423,13 @@ router.get('/dctfweb/relatorios/maed',           authenticateToken, dctfwebContr
 router.get('/dctfweb/relatorios/por-origem',     authenticateToken, dctfwebController.relatorioPorOrigem);
 router.get('/dctfweb/relatorios/prazos-legais',  authenticateToken, dctfwebController.relatorioPrazos);
 
+// Arquivos baixados (Recibos PDF, DARFs PDF, Espelhos XML)
+router.get('/dctfweb/arquivos',                  authenticateToken, dctfwebController.listarArquivos);
+router.get('/dctfweb/arquivos/:id/download',     authenticateToken, dctfwebController.baixarArquivo);
+
+// Renovar sessão e-CAC (login manual quando captcha bloqueia)
+router.post('/dctfweb/sessao/renovar/:id',       authenticateToken, requireAdmin, dctfwebController.renovarSessao);
+
 // Agendamento (config + executar)
 router.get ('/dctfweb/automacao/config',             authenticateToken, dctfwebController.obterConfig);
 router.put ('/dctfweb/automacao/global',             authenticateToken, requireAdmin, dctfwebController.atualizarGlobal);

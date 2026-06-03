@@ -30,7 +30,12 @@ data/*
 # ─────────────────────────────────────────
 *.log
 logs/*
+**/logs/**
 npm-debug.log*
+
+# PR drafts (locais, não commitar)
+PR_DESCRIPTION.md
+PR_*.md
 
 # ─────────────────────────────────────────
 # Sistema Operacional

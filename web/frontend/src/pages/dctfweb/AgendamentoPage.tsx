@@ -24,6 +24,7 @@ import {
   Notifications as BellIcon,
   CheckBoxOutlineBlank as CheckEmptyIcon, CheckBox as CheckIcon,
   RadioButtonUnchecked as PendingIcon,
+  Refresh as RenovarIcon, OpenInBrowser as BrowserIcon,
 } from '@mui/icons-material';
 import { dctfwebService, type DctfwebAutomacaoEmpresa, type DctfwebAutomacaoGlobal } from '../../services/dctfwebService';
 import { useEmpresa } from '../../contexts/EmpresaContext';
@@ -87,6 +88,29 @@ export default function AgendamentoPage() {
   useEffect(() => () => setActive('dctfweb-fila-agendamento', false), [setActive]);
 
   const pollRef = useRef<number | null>(null);
+  const [renovando, setRenovando] = useState<Set<number>>(new Set());
+  const [renovarMsg, setRenovarMsg] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
+
+  /** Helper: detecta msg que exige renovar sessão (captcha do gov.br ou cookies expirados). */
+  const ehBloqueioCaptcha = (msg?: string | null): boolean =>
+    !!msg && /captcha|hcaptcha|bloqueou.*sess[aã]o|sess[aã]o.*expirada|reautent/i.test(msg);
+
+  /** Abre o navegador real (no servidor) para o usuário resolver hCaptcha + login.
+   *  Persiste cookies em certificados_digitais.sessao_cookies. */
+  const handleRenovarSessao = async (idEmpresa: number) => {
+    setRenovando(s => new Set(s).add(idEmpresa));
+    setRenovarMsg(null);
+    try {
+      const r = await dctfwebService.renovarSessao(idEmpresa);
+      setRenovarMsg({ tipo: 'sucesso', texto: `Sessão renovada — ${r.cookies_count} cookie(s) capturado(s). Pode disparar a atualização novamente.` });
+      await carregar();
+    } catch (e: any) {
+      setRenovarMsg({ tipo: 'erro', texto: e.response?.data?.error || e.message || 'Falha ao renovar sessão' });
+    } finally {
+      setRenovando(s => { const n = new Set(s); n.delete(idEmpresa); return n; });
+    }
+  };
+
   const carregar = useCallback(async (silencioso = false) => {
     if (!silencioso) setLoading(true);
     setErro('');
@@ -230,6 +254,11 @@ export default function AgendamentoPage() {
 
       {erro && <Alert severity="error" onClose={() => setErro('')} sx={{ mb: 2 }}>{erro}</Alert>}
       {sucesso && <Alert severity="success" onClose={() => setSucesso('')} sx={{ mb: 2 }}>{sucesso}</Alert>}
+      {renovarMsg && (
+        <Alert severity={renovarMsg.tipo === 'sucesso' ? 'success' : 'error'} onClose={() => setRenovarMsg(null)} sx={{ mb: 2 }}>
+          {renovarMsg.texto}
+        </Alert>
+      )}
 
       {/* Tracker visual de execução: % de progresso, etapa atual e pipeline com status por etapa.
           Passa controls para o usuário poder pausar / retomar / cancelar a execução em curso —
@@ -328,7 +357,18 @@ export default function AgendamentoPage() {
                         </Typography>
                       )}
                       {status === 'erro' && emp?.ultima_execucao_msg && (
-                        <Typography variant="caption" sx={{ display: 'block', color: T.red, mt: 0.5 }}>✗ {emp.ultima_execucao_msg.slice(0, 200)}</Typography>
+                        <Box>
+                          <Typography variant="caption" sx={{ display: 'block', color: T.red, mt: 0.5 }}>✗ {emp.ultima_execucao_msg.slice(0, 200)}</Typography>
+                          {ehBloqueioCaptcha(emp.ultima_execucao_msg) && (
+                            <Button size="small" variant="contained"
+                              startIcon={renovando.has(id) ? <CircularProgress size={14} sx={{ color: 'white' }} /> : <BrowserIcon fontSize="small" />}
+                              onClick={() => handleRenovarSessao(id)}
+                              disabled={renovando.has(id)}
+                              sx={{ mt: 1, bgcolor: T.cyan, '&:hover': { bgcolor: T.cyanHover }, fontWeight: 700, textTransform: 'none' }}>
+                              {renovando.has(id) ? 'Aguardando login (5 min)…' : 'Renovar sessão e-CAC'}
+                            </Button>
+                          )}
+                        </Box>
                       )}
                       {status === 'concluido' && <Typography variant="caption" sx={{ display: 'block', color: T.emerald, mt: 0.5 }}>✓ Atualização concluída</Typography>}
                       {status === 'pendente' && <Typography variant="caption" sx={{ display: 'block', color: T.textSecond, mt: 0.5 }}>aguardando na fila…</Typography>}
@@ -461,6 +501,17 @@ export default function AgendamentoPage() {
                                     }}
                                     sx={{ ml: 1, textTransform: 'none', fontSize: 10, minWidth: 0, py: 0.25, px: 1, borderRadius: '6px' }}>
                                     Destravar
+                                  </Button>
+                                </Tooltip>
+                              )}
+                              {ehBloqueioCaptcha(emp.ultima_execucao_msg) && (
+                                <Tooltip title="Abre o navegador real com o certificado para você resolver o hCaptcha do gov.br. Após login, cookies são salvos por horas.">
+                                  <Button size="small" variant="contained"
+                                    startIcon={renovando.has(emp.id) ? <CircularProgress size={12} sx={{ color: 'white' }} /> : <RenovarIcon fontSize="small" />}
+                                    onClick={() => handleRenovarSessao(emp.id)}
+                                    disabled={renovando.has(emp.id)}
+                                    sx={{ ml: 1, bgcolor: T.cyan, '&:hover': { bgcolor: T.cyanHover }, textTransform: 'none', fontSize: 10, minWidth: 0, py: 0.25, px: 1, borderRadius: '6px', fontWeight: 700 }}>
+                                    {renovando.has(emp.id) ? 'Aguardando…' : 'Renovar sessão'}
                                   </Button>
                                 </Tooltip>
                               )}
