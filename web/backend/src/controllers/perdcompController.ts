@@ -125,12 +125,33 @@ export const perdcompCreditosController = {
 
   buscarPorId: async (req: AuthRequest, res: Response) => {
     try {
+      // A listagem usa saldos_credito (alimentada pela sincronização e-CAC).
+      // Tenta primeiro essa fonte; só cai pro modelo manual perdcomp_creditos como fallback.
       const credito = await getOne<any>(
-        `SELECT c.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj FROM perdcomp_creditos c JOIN perdcomp_empresas e ON e.id = c.id_empresa WHERE c.id = $1`,
+        `SELECT sc.*,
+                sc.valor_saldo_negativo  AS valor_original,
+                sc.credito_atualizado    AS valor_atualizado,
+                sc.data_entrega_pedido   AS dt_pagamento_original,
+                sc.data_prescricao       AS dt_vencimento_prescricao,
+                sc.status_normalizado    AS status,
+                e.razao_social AS empresa_razao_social,
+                e.cnpj         AS empresa_cnpj
+           FROM saldos_credito sc
+           JOIN adm_empresas e ON e.id = sc.id_empresa
+          WHERE sc.id = $1`,
         [req.params.id]
       );
-      if (!credito) return res.status(404).json({ error: 'Crédito não encontrado' });
-      res.json(credito);
+      if (credito) return res.json(credito);
+
+      const manual = await getOne<any>(
+        `SELECT c.*, e.razao_social as empresa_razao_social, e.cnpj as empresa_cnpj
+           FROM perdcomp_creditos c
+           JOIN perdcomp_empresas e ON e.id = c.id_empresa
+          WHERE c.id = $1`,
+        [req.params.id]
+      );
+      if (!manual) return res.status(404).json({ error: 'Crédito não encontrado' });
+      res.json(manual);
     } catch (error: any) {
       log.error(`Erro ao buscar crédito: ${error.message}`);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -210,6 +231,9 @@ export const perdcompCreditosController = {
 
   excluir: async (req: AuthRequest, res: Response) => {
     try {
+      // TODO(IDOR): validar que req.user tem acesso à id_empresa do crédito
+      // antes de deletar (escopo de tenant). Hoje qualquer usuário autenticado
+      // pode deletar crédito de qualquer empresa via /perdcomp/creditos/:id.
       const credito = await getOne<any>('SELECT id FROM perdcomp_creditos WHERE id = $1', [req.params.id]);
       if (!credito) return res.status(404).json({ error: 'Crédito não encontrado' });
 
@@ -434,18 +458,18 @@ export const perdcompDashboardController = {
       // `saldos_credito` (que reproduz o modelo da planilha "Controle de Créditos").
 
       const empFilter = id_empresa ? `AND id_empresa = $1` : '';
+      const empWhereEcac = id_empresa ? `AND id_empresa = $1` : '';
       const empParams: any[] = id_empresa ? [id_empresa] : [];
 
-      // ── 1. Créditos disponíveis (saldo > 0) ──
+      // Queries do dashboard executadas SERIAL.
+      // Tentei Promise.all mas piorou sob carga: 9 queries × 20 conn = 180 queries
+      // simultâneas em pool de 30 conexões → connectionTimeoutMillis estoura.
+      // Serial é auto-regulado (cada request ocupa 1 conn por vez).
       const creds = await getOne<any>(
         `SELECT COUNT(*) as total, COALESCE(SUM(saldo_disponivel), 0) as valor
          FROM saldos_credito WHERE saldo_disponivel > 0 ${empFilter}`,
         empParams
       );
-
-      // ── 2. Débitos compensados pendentes vs deferidos ──
-      // No modelo da planilha, "Débito" = total de débitos compensados via DCOMPs.
-      // Status: Em Análise = pendente; Deferido/Homologado = compensação confirmada.
       const debs = await getOne<any>(
         `SELECT COUNT(deb.id) as total, COALESCE(SUM(deb.total), 0) as valor
          FROM ecac_perdcomp_debitos_compensados deb
@@ -454,30 +478,12 @@ export const perdcompDashboardController = {
          ${id_empresa ? `AND d.id_empresa = $1` : ''}`,
         empParams
       );
-
-      // ── 3. Pedidos PER/DCOMP por status normalizado (vem do e-CAC) ──
-      const empWhereEcac = id_empresa ? `AND id_empresa = $1` : '';
       const statusCounts = await getAll<any>(
         `SELECT COALESCE(status_normalizado, 'DESCONHECIDO') as status, COUNT(*) as total
          FROM ecac_perdcomp_documentos WHERE 1=1 ${empWhereEcac}
          GROUP BY status_normalizado`,
         empParams
       );
-      const byStatus = (s: string) => Number(statusCounts.find(r => r.status === s)?.total || 0);
-      const pedidosEmAnalise = byStatus('EM_ANALISE') + byStatus('PENDENTE_DECISAO');
-      const pedidosDeferidos = byStatus('DEFERIDO') + byStatus('PARCIALMENTE_DEFERIDO') + byStatus('HOMOLOGADO') + byStatus('PARCIALMENTE_HOMOLOGADO');
-      const pedidosIndeferidos = byStatus('INDEFERIDO') + byStatus('NAO_HOMOLOGADO');
-      const totalDecididos = pedidosDeferidos + pedidosIndeferidos;
-      const taxaDeferimento = totalDecididos > 0 ? (pedidosDeferidos / totalDecididos * 100) : 0;
-
-      // ── 4. Prescrição (créditos que vencem em até 6 meses) ──
-      // Conforme planilha: Data Prescrição = Competência + 1800 dias (≈5 anos).
-      // Cores da planilha:
-      //   < 0 dias       → PRESCRITO
-      //   < 180 dias     → URGENTE (< 6 meses)   ⚠️ vermelho
-      //   < 360 dias     → ATENCAO (< 1 ano)     🟠 laranja
-      //   < 720 dias     → AVISO (< 2 anos)      🟡 amarelo
-      //   >= 720 dias    → OK                    🟢 verde
       const prescricao = await getOne<any>(
         `SELECT
             COUNT(*) FILTER (WHERE data_prescricao < CURRENT_DATE) as prescritos,
@@ -490,8 +496,6 @@ export const perdcompDashboardController = {
          FROM saldos_credito WHERE saldo_disponivel > 0 ${empFilter}`,
         empParams
       );
-
-      // ── 5. Créditos por tipo (Saldo Negativo IRPJ/CSLL, Pagamento Indevido, etc.) ──
       const creditosPorTipo = await getAll<any>(
         `SELECT tipo_credito as tipo, COUNT(*) as total,
                 COALESCE(SUM(saldo_disponivel), 0) as valor,
@@ -501,21 +505,6 @@ export const perdcompDashboardController = {
          GROUP BY tipo_credito ORDER BY valor DESC`,
         empParams
       );
-
-      // ── 6. Pedidos por status (versão amigável dos status normalizados) ──
-      const STATUS_LABEL: Record<string, string> = {
-        EM_ANALISE: 'Em Análise', PENDENTE_DECISAO: 'Pendente Decisão',
-        DEFERIDO: 'Deferido', PARCIALMENTE_DEFERIDO: 'Parc. Deferido',
-        HOMOLOGADO: 'Homologado', PARCIALMENTE_HOMOLOGADO: 'Parc. Homologado',
-        INDEFERIDO: 'Indeferido', NAO_HOMOLOGADO: 'Não Homologado',
-        CANCELADO: 'Cancelado', RETIFICADO: 'Retificado', DESCONHECIDO: 'Sem Status',
-      };
-      const pedidosPorStatus = statusCounts.map(r => ({
-        status: STATUS_LABEL[r.status as string] || r.status,
-        total: Number(r.total),
-      }));
-
-      // ── 7. Débitos compensados por tipo de tributo (IRPJ, CSLL, COFINS, PIS, INSS) ──
       const debitosPorTributo = await getAll<any>(
         `SELECT
             CASE
@@ -534,18 +523,12 @@ export const perdcompDashboardController = {
          GROUP BY tributo ORDER BY valor DESC`,
         empParams
       );
-
-      // ── 8. Últimos documentos importados do e-CAC ──
-      // Data exibida = data real do documento no e-CAC (transmissão > entrega).
-      // Responsável vem do recibo PDF (pessoa que assinou no e-CAC).
       const ultMovimentos = await getAll<any>(
         `SELECT
-            d.id,
-            d.numero,
+            d.id, d.numero,
             COALESCE(d.tipo_documento, 'PER/DCOMP') AS acao,
             d.numero || COALESCE(' · ' || d.status_ecac, '') AS detalhes,
-            d.responsavel_nome,
-            d.responsavel_cpf,
+            d.responsavel_nome, d.responsavel_cpf,
             COALESCE(d.data_transmissao, d.data_entrega, d.criado_em) AS criado_em
          FROM ecac_perdcomp_documentos d
          WHERE 1=1 ${id_empresa ? 'AND d.id_empresa = $1' : ''}
@@ -553,8 +536,6 @@ export const perdcompDashboardController = {
          LIMIT 10`,
         empParams
       );
-
-      // ── 9. Contagem de documentos e-CAC ──
       const ecacDocs = await getOne<{ total: number; com_recibo: number; sem_recibo: number }>(
         `SELECT COUNT(*) as total,
                 COUNT(*) FILTER (WHERE recibo_pdf IS NOT NULL) as com_recibo,
@@ -562,6 +543,24 @@ export const perdcompDashboardController = {
          FROM ecac_perdcomp_documentos WHERE 1=1 ${empWhereEcac}`,
         empParams
       );
+      const byStatus = (s: string) => Number(statusCounts.find(r => r.status === s)?.total || 0);
+      const pedidosEmAnalise = byStatus('EM_ANALISE') + byStatus('PENDENTE_DECISAO');
+      const pedidosDeferidos = byStatus('DEFERIDO') + byStatus('PARCIALMENTE_DEFERIDO') + byStatus('HOMOLOGADO') + byStatus('PARCIALMENTE_HOMOLOGADO');
+      const pedidosIndeferidos = byStatus('INDEFERIDO') + byStatus('NAO_HOMOLOGADO');
+      const totalDecididos = pedidosDeferidos + pedidosIndeferidos;
+      const taxaDeferimento = totalDecididos > 0 ? (pedidosDeferidos / totalDecididos * 100) : 0;
+
+      const STATUS_LABEL: Record<string, string> = {
+        EM_ANALISE: 'Em Análise', PENDENTE_DECISAO: 'Pendente Decisão',
+        DEFERIDO: 'Deferido', PARCIALMENTE_DEFERIDO: 'Parc. Deferido',
+        HOMOLOGADO: 'Homologado', PARCIALMENTE_HOMOLOGADO: 'Parc. Homologado',
+        INDEFERIDO: 'Indeferido', NAO_HOMOLOGADO: 'Não Homologado',
+        CANCELADO: 'Cancelado', RETIFICADO: 'Retificado', DESCONHECIDO: 'Sem Status',
+      };
+      const pedidosPorStatus = statusCounts.map(r => ({
+        status: STATUS_LABEL[r.status as string] || r.status,
+        total: Number(r.total),
+      }));
 
       res.json({
         total_creditos_disponiveis: Number(creds?.total) || 0,
@@ -612,8 +611,14 @@ export const perdcompDashboardController = {
         })),
       });
     } catch (error: any) {
-      log.error(`Erro ao obter dashboard: ${error.message}`);
-      res.status(500).json({ error: 'Erro interno do servidor' });
+      // Stack completa no log para facilitar diagnóstico de 5xx em load test.
+      log.error(`Erro ao obter dashboard: ${error.message}\n${error.stack || ''}`);
+      const body: any = { error: 'Erro interno do servidor' };
+      if (process.env.NODE_ENV !== 'production') {
+        body.message = error.message;
+        body.code = error.code;
+      }
+      res.status(500).json(body);
     }
   },
 };

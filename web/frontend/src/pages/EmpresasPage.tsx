@@ -34,6 +34,7 @@ import {
   Search as SearchIcon,
 } from '@mui/icons-material';
 import { empresasService } from '../services/empresasService';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import type { RegimeTributario } from '../types/perdcomp';
 import type { Empresas } from '../types/index';
 import { logger } from '../utils/logger';
@@ -89,6 +90,7 @@ const INITIAL_FORM = {
 };
 
 const EmpresasPage: React.FC = () => {
+  const { recarregarEmpresas } = useEmpresa();
   const [empresas, setEmpresas] = useState<Empresas[]>([]);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState('');
@@ -260,6 +262,8 @@ const EmpresasPage: React.FC = () => {
 
       handleCloseModal();
       carregarEmpresas();
+      // Notifica o contexto global para que a LOV de empresas no AppBar reflita a nova lista
+      recarregarEmpresas().catch(() => { /* não-bloqueante */ });
     } catch (error: any) {
       logger.error('Erro ao salvar empresa:', error);
       const resData = error.response?.data;
@@ -287,6 +291,7 @@ const EmpresasPage: React.FC = () => {
       await empresasService.excluir(empresa.id);
       setSucesso('Empresa excluída com sucesso');
       carregarEmpresas();
+      recarregarEmpresas().catch(() => { /* não-bloqueante */ });
     } catch (error: any) {
       logger.error('Erro ao excluir empresa:', error);
       setErro(error.response?.data?.erro || 'Erro ao excluir empresa');

@@ -122,6 +122,16 @@ export default function CertificadosPage() {
   const [autenticando, setAutenticando] = useState(false);
   const [autenticarResult, setAutenticarResult] = useState<string>('');
   const [autenticarStatus, setAutenticarStatus] = useState<'idle' | 'aguardando' | 'sucesso' | 'erro'>('idle');
+  // Cooldown anti-WAF: timestamp em ms até quando o usuário precisa esperar.
+  // null quando não há cooldown ativo. Re-render com setInterval enquanto contagem > 0.
+  const [cooldownEnd, setCooldownEnd] = useState<number | null>(null);
+  const [, setTickNow] = useState<number>(Date.now());
+  useEffect(() => {
+    if (!cooldownEnd) return;
+    const id = setInterval(() => setTickNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [cooldownEnd]);
+  const cooldownRestante = cooldownEnd ? Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000)) : 0;
 
   // Validando (por linha)
   const [validandoId, setValidandoId] = useState<number | null>(null);
@@ -219,7 +229,20 @@ export default function CertificadosPage() {
       setAutenticarStatus('aguardando');
     } catch (err: any) {
       setAutenticarStatus('erro');
-      setAutenticarResult(err.response?.data?.error || 'Erro ao instalar certificado no Windows Store');
+      // O backend devolve 429 com `aguardar_segundos` quando duas auths são feitas
+      // muito juntas — armazenamos só a parte fixa da mensagem; o contador é
+      // calculado no render via cooldownRestante.
+      const data = err.response?.data;
+      if (data?.aguardar_segundos) {
+        setCooldownEnd(Date.now() + Number(data.aguardar_segundos) * 1000);
+        setAutenticarResult(
+          'O e-CAC bloqueia autenticações em sequência rápida (BOT detection).\n\n' +
+          'Motivo: o WAF da Receita (página "BOT support ID") bloqueia autenticações em sequência.'
+        );
+      } else {
+        setCooldownEnd(null);
+        setAutenticarResult(data?.error || 'Erro ao instalar certificado no Windows Store');
+      }
     } finally {
       setAutenticando(false);
     }
@@ -234,8 +257,25 @@ export default function CertificadosPage() {
       setAutenticarResult(`Sessão e-CAC capturada com sucesso (${result.cookiesCount} cookies). O RPA pode sincronizar documentos sem precisar repetir o login.`);
       carregarDados();
     } catch (err: any) {
+      const msg = err.response?.data?.error || '';
       setAutenticarStatus('erro');
-      setAutenticarResult(err.response?.data?.error || 'Falha ao capturar sessão. Verifique se o login foi concluído no Edge.');
+      // Detecção da página BOT do WAF — reporta ao backend para escalar backoff
+      // e mostra ao usuário o novo tempo de espera vindo do servidor.
+      const wafDetectado = /BOT support|requested URL was rejected|consult.*administrator/i.test(msg);
+      if (wafDetectado) {
+        try {
+          const r = await ecacService.certificados.reportarWafBlock(msg.slice(0, 200));
+          setCooldownEnd(Date.now() + r.aguardar_segundos * 1000);
+          setAutenticarResult(
+            `WAF da Receita bloqueou a captura (BOT detection) — backoff agora em ${r.backoff_multiplier}×.\n\n` +
+            `${msg}\n\nO sistema vai esperar mais tempo antes da próxima tentativa para que a reputação do nosso IP/fingerprint normalize.`
+          );
+        } catch {
+          setAutenticarResult(msg || 'WAF da Receita bloqueou a captura.');
+        }
+      } else {
+        setAutenticarResult(msg || 'Falha ao capturar sessão. Verifique se o login foi concluído no Edge.');
+      }
     } finally {
       setAutenticando(false);
     }
@@ -578,9 +618,21 @@ export default function CertificadosPage() {
             </Box>
           ) : autenticarStatus === 'erro' ? (
             <Stack spacing={2}>
-              <Alert severity="error" sx={{ borderRadius: 2 }}>{autenticarResult}</Alert>
-              <Button variant="outlined" onClick={() => setAutenticarStatus('aguardando')} sx={{ alignSelf: 'flex-start' }}>
-                Tentar novamente
+              <Alert severity="error" sx={{ borderRadius: 2, whiteSpace: 'pre-line' }}>
+                {cooldownRestante > 0 && (
+                  <Typography component="div" fontWeight={600} sx={{ mb: 1 }}>
+                    Aguarde <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums', display: 'inline-block', minWidth: 28, textAlign: 'right' }}>{cooldownRestante}</Box>s antes de autenticar outra empresa.
+                  </Typography>
+                )}
+                {autenticarResult}
+              </Alert>
+              <Button
+                variant="outlined"
+                onClick={() => { setCooldownEnd(null); setAutenticarStatus('aguardando'); }}
+                disabled={cooldownRestante > 0}
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                {cooldownRestante > 0 ? `Tentar novamente em ${cooldownRestante}s` : 'Tentar novamente'}
               </Button>
             </Stack>
           ) : autenticarStatus === 'aguardando' ? (

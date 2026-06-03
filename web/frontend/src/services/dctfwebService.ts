@@ -1,90 +1,295 @@
 import api from './api';
 
-export interface DctfWebDeclaracao {
+// ── Tipos ────────────────────────────────────────────────────────────────────
+// Situações conforme Manual DCTFWeb cap. 8.4
+export type SituacaoNormalizada = 'EM_ANDAMENTO' | 'ATIVA' | 'RETIFICADA' | 'EXCLUIDA' | 'INDEVIDA' | 'FASEAMENTO'
+                                  // Compat — situações antigas
+                                  | 'EM_EDICAO' | 'TRANSMITIDA' | 'ACEITA' | 'REJEITADA' | 'SEM_MOVIMENTO' | 'DESCONHECIDA';
+
+export type CategoriaDctfweb = 'GERAL' | 'GERAL_PF' | 'DECIMO_TERCEIRO' | 'DECIMO_TERCEIRO_PF' | 'ESPETACULO_DESPORTIVO' | 'AFERICAO' | 'RECLAMATORIA_TRABALHISTA';
+export type TipoDctfweb = 'ORIGINAL' | 'RETIFICADORA' | 'EXCLUSAO';
+export type SubtipoDctfweb = 'COM_DEBITOS' | 'SEM_DEBITOS_ZERADA' | 'SEM_MOVIMENTO';
+export type OrigemDebito = 'ESOCIAL' | 'REINF_CP' | 'REINF_RET' | 'MIT' | 'SERO';
+
+// Labels conforme manual
+export const SITUACAO_LABELS: Record<string, string> = {
+  EM_ANDAMENTO: 'Em andamento', ATIVA: 'Ativa', RETIFICADA: 'Retificada',
+  EXCLUIDA: 'Excluída', INDEVIDA: 'Indevida', FASEAMENTO: 'Faseamento',
+  // compat
+  EM_EDICAO: 'Em Edição', TRANSMITIDA: 'Transmitida', ACEITA: 'Aceita',
+  REJEITADA: 'Rejeitada', SEM_MOVIMENTO: 'Sem Movimento', DESCONHECIDA: 'Desconhecida',
+};
+export const CATEGORIA_LABELS: Record<CategoriaDctfweb, string> = {
+  GERAL: 'Geral', GERAL_PF: 'Geral PF',
+  DECIMO_TERCEIRO: '13º Salário', DECIMO_TERCEIRO_PF: '13º Salário PF',
+  ESPETACULO_DESPORTIVO: 'Espetáculo Desportivo',
+  AFERICAO: 'Aferição', RECLAMATORIA_TRABALHISTA: 'Reclamatória Trabalhista',
+};
+export const ORIGEM_LABELS: Record<OrigemDebito, string> = {
+  ESOCIAL: 'eSocial', REINF_CP: 'EFD-Reinf CP', REINF_RET: 'EFD-Reinf RET',
+  MIT: 'MIT', SERO: 'Sero',
+};
+
+export interface DctfwebDeclaracao {
   id: number;
   id_empresa: number;
-  razao_social?: string;
-  cnpj?: string;
-  categoria: string;
+  razao_social: string;
+  cnpj: string;
   periodo_apuracao: string;
-  situacao: string;
+  categoria: string;
+  tipo: string;
+  situacao: string | null;
+  situacao_normalizada: SituacaoNormalizada;
+  numero_recibo: string | null;
+  data_transmissao: string | null;
+  data_recepcao: string | null;
   debito_apurado: number;
   credito_vinculado: number;
   saldo_pagar: number;
-  data_transmissao: string | null;
-  numero_recibo: string | null;
-  origem: string;
-  darf_gerado: number;
-  darf_codigo: string | null;
-  darf_vencimento: string | null;
-  darf_valor: number | null;
-  darf_pago: number;
-  observacoes: string | null;
+  divergencia: boolean;
+  divergencia_motivo: string | null;
+  tem_recibo: boolean;
   criado_em: string;
   atualizado_em: string;
-  tributos?: DctfWebTributo[];
 }
 
-export interface DctfWebTributo {
+export interface DctfwebDarf {
   id: number;
-  id_declaracao: number;
+  id_empresa: number;
+  razao_social: string;
+  cnpj: string;
   codigo_receita: string;
-  descricao: string | null;
-  valor_principal: number;
-  valor_multa: number;
-  valor_juros: number;
-  valor_total: number;
-  compensado: number;
-  suspenso: number;
-  saldo: number;
+  denominacao: string | null;
+  periodo_apuracao: string;
+  vencimento: string;
+  principal: number;
+  multa: number;
+  juros: number;
+  total: number;
+  dias_para_vencer: number;
+  status: 'PAGO' | 'PENDENTE' | 'VENCIDO';
+  gerado: boolean;
+  gerado_em: string | null;
+  pago: boolean;
+  pago_em: string | null;
+  valor_pago: number | null;
 }
 
-export interface DctfWebDashboard {
-  totais: {
+export interface DctfwebDashboard {
+  kpis: {
     total_declaracoes: number;
-    ativas: number;
-    em_andamento: number;
-    retificadas: number;
-    total_debito: number;
-    total_credito: number;
-    total_saldo: number;
-    total_pago: number;
-    total_pendente: number;
+    taxa_transmissao: number;
+    total_a_pagar: number;
+    darfs_vencidos: number;
+    valor_vencidos: number;
+    darfs_a_vencer_7d: number; valor_a_vencer_7d: number;
+    darfs_a_vencer_15d: number; valor_a_vencer_15d: number;
+    darfs_a_vencer_30d: number; valor_a_vencer_30d: number;
+    declaracoes_com_divergencia: number;
+    // Novos (manual)
+    declaracoes_em_andamento: number;
+    declaracoes_impedem_cnd: number;
+    valor_maed_pendente: number;
+    total_esocial: number;
+    total_reinf_cp: number;
+    total_reinf_ret: number;
+    total_mit: number;
+    total_sero: number;
   };
-  porPeriodo: Array<{ periodo_apuracao: string; qtd: number; debito: number; saldo: number }>;
-  porSituacao: Array<{ situacao: string; qtd: number }>;
-  vencimentos: Array<{
-    id: number; periodo_apuracao: string; darf_vencimento: string;
-    darf_valor: number; categoria: string; razao_social: string; cnpj: string;
+  por_situacao: Array<{ chave: SituacaoNormalizada; label: string; total: number; valor: number }>;
+  por_categoria: Array<{ chave: CategoriaDctfweb; label: string; total: number; valor: number }>;
+  por_origem: Array<{ chave: OrigemDebito; label: string; descricao: string; total: number; valor: number }>;
+  evolucao: Array<{ mes: string; total: number; valor: number }>;
+  top_empresas_a_pagar: Array<{ id: number; razao_social: string; cnpj: string; qtd_declaracoes: number; total_a_pagar: number }>;
+  proximos_vencimentos: Array<{
+    id: number; id_empresa: number; razao_social: string; cnpj: string;
+    codigo_receita: string; denominacao: string; periodo_apuracao: string;
+    vencimento: string; total: number; dias_para_vencer: number;
   }>;
+  // Painéis adicionados pelo manual
+  alertas_cnd: Array<{
+    id: number; id_empresa: number; razao_social: string; cnpj: string;
+    periodo_apuracao: string; categoria: string; tipo: string;
+    impede_cnd_motivo: string; dias_pendente: number;
+  }>;
+  proximos_prazos_legais: Array<{
+    id: number; id_empresa: number; razao_social: string; cnpj: string;
+    periodo_apuracao: string; categoria: string; tipo: string; situacao_normalizada: string;
+    prazo_legal: string; debito_apurado: number; dias_para_prazo: number;
+  }>;
+  warning?: string;
 }
 
-const dctfwebService = {
-  dashboard: (idEmpresa?: number) =>
-    api.get<DctfWebDashboard>('/dctfweb/dashboard', { params: { id_empresa: idEmpresa } }).then(r => r.data),
+export interface DctfwebAutomacaoEmpresa {
+  id: number;
+  cnpj: string;
+  razao_social: string;
+  nome_fantasia: string | null;
+  sync_declaracoes_ativo: boolean;
+  baixar_recibos_ativo: boolean;
+  gerar_darf_ativo: boolean;
+  alertar_vencimento_ativo: boolean;
+  ultima_execucao: string | null;
+  ultima_execucao_status: 'em_andamento' | 'concluido' | 'erro' | null;
+  ultima_execucao_msg: string | null;
+  tem_certificado_ativo: boolean;
+  tem_sessao_ecac: boolean;
+}
 
-  listar: (params: { id_empresa?: number; situacao?: string; periodo?: string; busca?: string; page?: number; limit?: number }) =>
-    api.get<{ data: DctfWebDeclaracao[]; pagination: { total: number; page: number; limit: number } }>(
-      '/dctfweb/declaracoes', { params }
-    ).then(r => r.data),
+export interface DctfwebAutomacaoGlobal {
+  id: number;
+  ativo: boolean;
+  horario_diario: string;
+  dias_antes_vencimento_alertar: number;
+  atualizado_em: string;
+}
 
-  buscarPorId: (id: number) =>
-    api.get<DctfWebDeclaracao>(`/dctfweb/declaracoes/${id}`).then(r => r.data),
+// ── API ──────────────────────────────────────────────────────────────────────
+export const dctfwebService = {
+  dashboard: async (idEmpresa?: number): Promise<DctfwebDashboard> => {
+    const params = idEmpresa ? `?id_empresa=${idEmpresa}` : '';
+    const { data } = await api.get(`/dctfweb/dashboard${params}`);
+    return data;
+  },
 
-  criar: (data: Partial<DctfWebDeclaracao>) =>
-    api.post<DctfWebDeclaracao>('/dctfweb/declaracoes', data).then(r => r.data),
+  listarDeclaracoes: async (filtros: {
+    id_empresa?: number; situacao?: SituacaoNormalizada; periodo?: string;
+    categoria?: string; busca?: string; page?: number; limit?: number;
+  } = {}): Promise<{ data: DctfwebDeclaracao[]; pagination: { total: number; page: number; limit: number; totalPages: number } }> => {
+    const params = new URLSearchParams();
+    Object.entries(filtros).forEach(([k, v]) => { if (v !== undefined && v !== '') params.append(k, String(v)); });
+    const { data } = await api.get(`/dctfweb/declaracoes?${params}`);
+    return data;
+  },
 
-  atualizar: (id: number, data: Partial<DctfWebDeclaracao>) =>
-    api.put<DctfWebDeclaracao>(`/dctfweb/declaracoes/${id}`, data).then(r => r.data),
+  buscarDeclaracao: async (id: number): Promise<DctfwebDeclaracao & { darfs: DctfwebDarf[] }> => {
+    const { data } = await api.get(`/dctfweb/declaracoes/${id}`);
+    return data;
+  },
 
-  excluir: (id: number) =>
-    api.delete(`/dctfweb/declaracoes/${id}`).then(r => r.data),
+  criarDeclaracao: async (payload: Partial<DctfwebDeclaracao>): Promise<{ id: number }> => {
+    const { data } = await api.post('/dctfweb/declaracoes', payload);
+    return data;
+  },
 
-  gerarDarf: (id: number, data: { codigo?: string; vencimento?: string; valor?: number }) =>
-    api.post(`/dctfweb/declaracoes/${id}/darf`, data).then(r => r.data),
+  atualizarDeclaracao: async (id: number, payload: Partial<DctfwebDeclaracao>): Promise<void> => {
+    await api.put(`/dctfweb/declaracoes/${id}`, payload);
+  },
 
-  marcarPago: (id: number) =>
-    api.put(`/dctfweb/declaracoes/${id}/pago`).then(r => r.data),
+  excluirDeclaracao: async (id: number): Promise<void> => {
+    await api.delete(`/dctfweb/declaracoes/${id}`);
+  },
+
+  // DARFs
+  listarDarfs: async (filtros: { id_empresa?: number; status?: 'pago' | 'pendente' | 'vencido'; page?: number; limit?: number } = {}):
+    Promise<{ data: DctfwebDarf[]; pagination: { total: number; page: number; limit: number; totalPages: number } }> => {
+    const params = new URLSearchParams();
+    Object.entries(filtros).forEach(([k, v]) => { if (v !== undefined && v !== '') params.append(k, String(v)); });
+    const { data } = await api.get(`/dctfweb/darfs?${params}`);
+    return data;
+  },
+
+  gerarDarf: async (id: number): Promise<void> => { await api.post(`/dctfweb/darfs/${id}/gerar`); },
+  marcarDarfPago: async (id: number, payload: { valor_pago?: number; pago_em?: string } = {}): Promise<void> => {
+    await api.post(`/dctfweb/darfs/${id}/marcar-pago`, payload);
+  },
+
+  // Relatórios
+  relatorioVencimentos: async (idEmpresa?: number, diasHorizonte = 60): Promise<{ data: any[] }> => {
+    const params = new URLSearchParams({ dias_horizonte: String(diasHorizonte) });
+    if (idEmpresa) params.append('id_empresa', String(idEmpresa));
+    const { data } = await api.get(`/dctfweb/relatorios/vencimentos?${params}`);
+    return data;
+  },
+  relatorioAtrasos: async (idEmpresa?: number): Promise<{ data: any[] }> => {
+    const params = idEmpresa ? `?id_empresa=${idEmpresa}` : '';
+    const { data } = await api.get(`/dctfweb/relatorios/atrasos${params}`);
+    return data;
+  },
+  projecaoCaixa: async (idEmpresa?: number): Promise<{ vencidos: number; proximos_30d: number; proximos_60d: number; proximos_90d: number; apos_90d: number }> => {
+    const params = idEmpresa ? `?id_empresa=${idEmpresa}` : '';
+    const { data } = await api.get(`/dctfweb/relatorios/projecao-caixa${params}`);
+    return data;
+  },
+
+  /** Relatório MAED (manual cap. 5) — declarações entregues em atraso ou pendentes além do prazo. */
+  relatorioMaed: async (idEmpresa?: number): Promise<{ data: any[]; total_pendente: number }> => {
+    const params = idEmpresa ? `?id_empresa=${idEmpresa}` : '';
+    const { data } = await api.get(`/dctfweb/relatorios/maed${params}`);
+    return data;
+  },
+
+  /** Resumo por origem dos débitos (manual cap. 8.2). */
+  relatorioPorOrigem: async (idEmpresa?: number, periodo?: string): Promise<{ resumo: any; origens: Array<{ chave: string; label: string; valor: number }> }> => {
+    const p = new URLSearchParams();
+    if (idEmpresa) p.append('id_empresa', String(idEmpresa));
+    if (periodo) p.append('periodo', periodo);
+    const { data } = await api.get(`/dctfweb/relatorios/por-origem?${p}`);
+    return data;
+  },
+
+  /** Prazos LEGAIS de entrega da declaração (cap. 4.2) — diferente de vencimento de DARF. */
+  relatorioPrazos: async (idEmpresa?: number, diasHorizonte = 30): Promise<{ data: any[] }> => {
+    const p = new URLSearchParams({ dias_horizonte: String(diasHorizonte) });
+    if (idEmpresa) p.append('id_empresa', String(idEmpresa));
+    const { data } = await api.get(`/dctfweb/relatorios/prazos-legais?${p}`);
+    return data;
+  },
+
+  // Agendamento
+  obterConfig: async (): Promise<{ global: DctfwebAutomacaoGlobal | null; empresas: DctfwebAutomacaoEmpresa[]; warning?: string }> => {
+    const { data } = await api.get('/dctfweb/automacao/config');
+    return data;
+  },
+  atualizarGlobal: async (payload: { ativo: boolean; horario_diario: string; dias_antes_vencimento_alertar: number }): Promise<void> => {
+    await api.put('/dctfweb/automacao/global', payload);
+  },
+  atualizarEmpresa: async (idEmpresa: number, flags: { sync_declaracoes_ativo: boolean; baixar_recibos_ativo: boolean; gerar_darf_ativo: boolean; alertar_vencimento_ativo: boolean }): Promise<void> => {
+    await api.put(`/dctfweb/automacao/empresa/${idEmpresa}`, flags);
+  },
+  /**
+   * Importa arquivos XML (eSocial S-1299, EFD-Reinf R-9000, recibo DCTFWeb) ou .zip.
+   * Retorna contagem de processados / divergências.
+   */
+  importarXml: async (idEmpresa: number, arquivos: File[]): Promise<{
+    processados: number; ignorados: number;
+    erros: { arquivo: string; motivo: string }[];
+    declaracoes_upsert: number; divergencias_detectadas: number;
+  }> => {
+    const form = new FormData();
+    form.append('id_empresa', String(idEmpresa));
+    for (const f of arquivos) form.append('arquivos', f);
+    const { data } = await api.post('/dctfweb/importar-xml', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  /**
+   * Destrava um pipeline que ficou preso em 'em_andamento' por crash do servidor.
+   * NÃO interrompe execução real — só corrige o registro no banco.
+   */
+  destravarPipeline: async (idEmpresa: number): Promise<{ ok: boolean; destravado: boolean }> => {
+    const { data } = await api.post(`/dctfweb/automacao/destravar/${idEmpresa}`);
+    return data;
+  },
+
+  /** Sinaliza pausa para o pipeline em andamento (runner suspende ao fim da etapa atual). */
+  pausar: async (idEmpresa: number): Promise<void> => {
+    await api.post(`/dctfweb/automacao/pausar/${idEmpresa}`);
+  },
+  /** Retoma execução pausada. */
+  retomar: async (idEmpresa: number): Promise<void> => {
+    await api.post(`/dctfweb/automacao/retomar/${idEmpresa}`);
+  },
+  /** Cancela o pipeline — runner aborta na próxima etapa. */
+  cancelar: async (idEmpresa: number): Promise<void> => {
+    await api.post(`/dctfweb/automacao/cancelar/${idEmpresa}`);
+  },
+
+  executarAgora: async (idEmpresa: number | null): Promise<{ message: string }> => {
+    const url = idEmpresa ? `/dctfweb/automacao/executar-agora/${idEmpresa}` : '/dctfweb/automacao/executar-agora';
+    const { data } = await api.post(url);
+    return data;
+  },
 };
-
-export default dctfwebService;

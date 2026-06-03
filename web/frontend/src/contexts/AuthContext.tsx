@@ -71,7 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch((error: any) => {
         const status = error?.response?.status;
         if (status === 401 || status === 403) {
-          logger.error('Sessão inválida ou expirada', { status });
+          // Token JWT expirado é COMPORTAMENTO ESPERADO (sessão termina), não erro.
+          // Logar como WARN evita poluir o monitor com falsos positivos.
+          logger.warn('Sessão expirada (redirecionando para login)', { status });
           setUser(null);
           sessionStorage.removeItem(USER_CACHE_KEY);
         } else {

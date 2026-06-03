@@ -239,8 +239,10 @@ const UsuariosPage: React.FC = () => {
   const handleInputChange = (field: string, value: string) =>
     setFormData(prev => ({ ...prev, [field]: value }));
 
-  const formatarCPF = (cpf: string) =>
-    cpf.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  const formatarCPF = (cpf: string | null | undefined) => {
+    if (!cpf) return '';
+    return cpf.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  };
 
 
   const handleSalvar = async () => {

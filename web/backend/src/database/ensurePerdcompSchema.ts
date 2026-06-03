@@ -84,6 +84,12 @@ export async function ensurePerdcompSchema(): Promise<void> {
     await runQuery(`ALTER TABLE certificados_digitais ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'ATIVO'`);
     await runQuery(`ALTER TABLE certificados_digitais ADD COLUMN IF NOT EXISTS ultimo_uso TIMESTAMP`);
     await runQuery(`ALTER TABLE certificados_digitais ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()`);
+    // Metadados de sessão (captura/uso/falha) para visualização e gestão proativa.
+    // Sessão e-CAC tem validade limitada — quanto antes detectarmos uma sessão expirada
+    // ou ausente, mais cedo orientamos o usuário a re-autenticar antes do batch noturno.
+    await runQuery(`ALTER TABLE certificados_digitais ADD COLUMN IF NOT EXISTS sessao_capturada_em TIMESTAMP`);
+    await runQuery(`ALTER TABLE certificados_digitais ADD COLUMN IF NOT EXISTS sessao_falha_em TIMESTAMP`);
+    await runQuery(`ALTER TABLE certificados_digitais ADD COLUMN IF NOT EXISTS sessao_falha_motivo TEXT`);
 
     // ── Documentos PER/DCOMP importados do e-CAC ─────────────────────────────
     // Cada linha representa 1 documento PER/DCOMP entregue no e-CAC
@@ -129,6 +135,42 @@ export async function ensurePerdcompSchema(): Promise<void> {
     await runQuery(`ALTER TABLE ecac_perdcomp_documentos ADD COLUMN IF NOT EXISTS recibo_baixado_em TIMESTAMP`);
     await runQuery(`ALTER TABLE ecac_perdcomp_documentos ADD COLUMN IF NOT EXISTS recibo_parse_status VARCHAR(20)`);
     await runQuery(`ALTER TABLE ecac_perdcomp_documentos ADD COLUMN IF NOT EXISTS recibo_parse_erro TEXT`);
+    // Documento PDF completo (capturado ao clicar no ícone "Imprimir" da coluna direita
+    // da lista de Documentos Entregues do e-CAC — PDF de 5+ páginas com todos os dados).
+    await runQuery(`ALTER TABLE ecac_perdcomp_documentos ADD COLUMN IF NOT EXISTS documento_pdf BYTEA`);
+    await runQuery(`ALTER TABLE ecac_perdcomp_documentos ADD COLUMN IF NOT EXISTS documento_baixado_em TIMESTAMP`);
+
+    // ── Configuração de Automações por Empresa ────────────────────────────────
+    // Cada empresa decide quais sincronizações automáticas o agendador deve rodar.
+    await runQuery(`
+      CREATE TABLE IF NOT EXISTS ecac_automacao_config (
+        id_empresa             BIGINT PRIMARY KEY REFERENCES adm_empresas(id) ON DELETE CASCADE,
+        sync_documentos_ativo  BOOLEAN NOT NULL DEFAULT FALSE,
+        baixar_recibos_ativo   BOOLEAN NOT NULL DEFAULT FALSE,
+        baixar_documentos_ativo BOOLEAN NOT NULL DEFAULT FALSE,
+        sync_saldos_ativo      BOOLEAN NOT NULL DEFAULT FALSE,
+        ultima_execucao        TIMESTAMP,
+        ultima_execucao_status VARCHAR(20),
+        ultima_execucao_msg    TEXT,
+        criado_em              TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_em          TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_por_id      BIGINT REFERENCES adm_usuarios(id)
+      )
+    `);
+
+    // ── Configuração GLOBAL de agendamento ────────────────────────────────────
+    // Tabela single-row: id sempre = 1.
+    await runQuery(`
+      CREATE TABLE IF NOT EXISTS ecac_automacao_config_global (
+        id                INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        ativo             BOOLEAN NOT NULL DEFAULT FALSE,
+        horario_diario    VARCHAR(5) NOT NULL DEFAULT '02:00',  -- HH:MM (24h)
+        atualizado_em     TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_por_id BIGINT REFERENCES adm_usuarios(id)
+      )
+    `);
+    // Garante existência da linha única
+    await runQuery(`INSERT INTO ecac_automacao_config_global (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
     await runQuery(`CREATE INDEX IF NOT EXISTS idx_ecac_perdcomp_inicial ON ecac_perdcomp_documentos(numero_perdcomp_inicial)`);
     await runQuery(`CREATE INDEX IF NOT EXISTS idx_ecac_perdcomp_status ON ecac_perdcomp_documentos(status_ecac)`);

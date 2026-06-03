@@ -9,7 +9,7 @@ import {
 import {
   Add, Search, Refresh, Edit, Delete, Send, CloudDownload, PictureAsPdf,
   ExpandMore, ExpandLess, FileDownload, ReceiptLong, AccountBalance, Link as LinkIcon,
-  Pause, PlayArrow, Stop,
+  Pause, PlayArrow, Stop, DoNotDisturbAlt,
 } from '@mui/icons-material';
 import {
   perdcompDocumentosService, TIPOS_DOCUMENTO, TIPOS_CREDITO, STATUS_LABELS,
@@ -19,6 +19,7 @@ import {
   ecacService, type EcacPerdcompDocumento, type EcacDebitoCompensado,
 } from '../../services/ecacService';
 import { useEmpresa } from '../../contexts/EmpresaContext';
+import { PerdcompProgressBanner } from '../../components/PerdcompProgressBanner';
 
 const T = { navy: '#0a1628', cyan: '#00c8f0', cyanHover: '#00b0d8', textSecond: '#64748b' };
 
@@ -91,6 +92,10 @@ export default function DocumentosPage() {
   const [reciboSyncId, setReciboSyncId] = useState<number | null>(null);
   const [reciboSyncStatus, setReciboSyncStatus] = useState<{ progresso: number; mensagem: string; total?: number; status?: string; pausado?: boolean } | null>(null);
   const reciboPollRef = useRef<number | null>(null);
+  // Estado análogo para download dos PDFs do documento completo (clicado via ícone Imprimir).
+  const [docSyncId, setDocSyncId] = useState<number | null>(null);
+  const [docSyncStatus, setDocSyncStatus] = useState<{ progresso: number; mensagem: string; total?: number; status?: string; pausado?: boolean } | null>(null);
+  const docPollRef = useRef<number | null>(null);
 
   // Estado para sincronização de saldos (background job + polling)
   const [saldoSyncId, setSaldoSyncId] = useState<number | null>(null);
@@ -132,12 +137,23 @@ export default function DocumentosPage() {
   }, [filtros]);
 
   const carregarEcac = useCallback(async () => {
+    // Sem empresa selecionada, NÃO buscar (evita receber docs de todas as empresas).
+    // Zera a lista para o usuário ver claramente que precisa selecionar empresa.
+    if (!empresaId) {
+      setEcacDocs([]);
+      return;
+    }
     setLoadingEcac(true);
+    // Limpa a lista anterior imediatamente para evitar mostrar dados da empresa antiga
+    // durante o fetch da nova empresa.
+    setEcacDocs([]);
     try {
-      const data = await ecacService.perdcompDocumentos.listar(empresaId || undefined);
+      const data = await ecacService.perdcompDocumentos.listar(empresaId);
       setEcacDocs(data);
-    } catch {
-      setErro('Erro ao carregar documentos e-CAC');
+    } catch (err: any) {
+      const detalhe = err?.response?.data?.error || err?.response?.statusText || err?.message || 'desconhecido';
+      const status = err?.response?.status ? ` (HTTP ${err.response.status})` : '';
+      setErro(`Erro ao carregar documentos e-CAC: ${detalhe}${status}`);
     } finally {
       setLoadingEcac(false);
     }
@@ -175,7 +191,10 @@ export default function DocumentosPage() {
     ? ecacDocs.filter(d => d.numero?.toLowerCase().includes(filtroNumeroEcac.toLowerCase()))
     : ecacDocs;
 
-  const pendentesRecibo = ecacDocs.filter(d => !d.tem_recibo).length;
+  // Conta só docs realmente baixáveis (exclui os pré-2018 indisponíveis no SERPRO).
+  const pendentesRecibo = ecacDocs.filter(d => !d.tem_recibo && !d.recibo_indisponivel).length;
+  const pendentesDocumento = ecacDocs.filter(d => !d.tem_documento && !d.documento_indisponivel).length;
+  const indisponiveisRecibo = ecacDocs.filter(d => d.recibo_indisponivel).length;
 
   const handleExpand = useCallback(async (docId: number) => {
     if (expandedRow === docId) {
@@ -208,6 +227,75 @@ export default function DocumentosPage() {
       reciboPollRef.current = null;
     }
   }, []);
+
+  const stopDocPolling = useCallback(() => {
+    if (docPollRef.current) {
+      window.clearInterval(docPollRef.current);
+      docPollRef.current = null;
+    }
+  }, []);
+
+  const iniciarPollingDocumentos = useCallback((syncId: number, totalInicial: number) => {
+    stopDocPolling();
+    docPollRef.current = window.setInterval(async () => {
+      try {
+        const s = await ecacService.sincronizacao.status(syncId);
+        setDocSyncStatus({
+          progresso: s.detalhes?.progresso ?? 0,
+          mensagem: s.detalhes?.mensagem ?? s.status,
+          total: (s.detalhes as any)?.total ?? totalInicial,
+          status: s.status,
+          pausado: (s.detalhes as any)?.pausado ?? false,
+        });
+        if (s.status === 'concluido' || s.status === 'erro' || s.status === 'cancelado') {
+          stopDocPolling();
+          await carregarEcac();
+          const det: any = s.detalhes || {};
+          if (s.status === 'concluido') {
+            setErro('');
+            setSucesso(`Documentos baixados: ${det.total_pdfs_baixados ?? 0}/${det.total_solicitados ?? '?'}`);
+          } else if (s.status === 'cancelado') {
+            setErro('');
+            setSucesso(`Operação cancelada — ${det.total_pdfs_baixados ?? 0} documento(s) baixado(s).`);
+            setDocSyncId(null);
+            setDocSyncStatus(null);
+          } else {
+            const msg = s.erro_mensagem || 'erro desconhecido';
+            if (/programa antigo|pré-PERDCOMP/i.test(msg)) {
+              setErro(''); setSucesso(`Sincronização concluída. ${msg}`);
+            } else {
+              setSucesso(''); setErro(`Falha: ${msg}`);
+            }
+          }
+        }
+      } catch {
+        stopDocPolling();
+      }
+    }, 3000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopDocPolling, carregarEcac]);
+
+  const handleBaixarDocumentos = async () => {
+    if (!empresaId) {
+      setErro('Selecione uma empresa antes de baixar documentos.');
+      return;
+    }
+    if (!window.confirm(`Iniciar download de ${pendentesDocumento} documento(s) PDF do e-CAC? Isso pode levar vários minutos.`)) return;
+    try {
+      const res = await ecacService.perdcompDocumentos.baixarDocumentos(empresaId, true);
+      setDocSyncId(res.sync_id);
+      setDocSyncStatus({ progresso: 0, mensagem: 'Iniciando...', total: res.total });
+      setSucesso(`Download de documentos iniciado para ${res.total} item(ns)`);
+      iniciarPollingDocumentos(res.sync_id, res.total);
+    } catch (err: any) {
+      const codigo = err.response?.data?.codigo;
+      if (codigo === 'SESSAO_NAO_ENCONTRADA') {
+        setErro('Sessão e-CAC não encontrada. Acesse a aba Certificados e clique em "Autenticar no e-CAC".');
+      } else {
+        setErro(err.response?.data?.error || 'Erro ao iniciar download de documentos');
+      }
+    }
+  };
 
   // Inicia polling de status de uma sincronização de recibos.
   // Usado tanto após disparar uma nova sync quanto para retomar uma sync em andamento
@@ -277,6 +365,28 @@ export default function DocumentosPage() {
     })();
     return () => { cancel = true; };
   }, [tab, empresaId, iniciarPollingRecibos]);
+
+  // Idem para download de documentos (tipo='documentos')
+  useEffect(() => {
+    if (tab !== 1 || !empresaId) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const ativa = await ecacService.sincronizacao.ativa(empresaId, 'documentos');
+        if (cancel || !ativa) return;
+        const det: any = ativa.detalhes || {};
+        setDocSyncId(ativa.id);
+        setDocSyncStatus({
+          progresso: det.progresso ?? 0,
+          mensagem: det.mensagem ?? ativa.status,
+          total: det.total,
+          status: ativa.status,
+        });
+        iniciarPollingDocumentos(ativa.id, det.total ?? 0);
+      } catch { /* silencioso */ }
+    })();
+    return () => { cancel = true; };
+  }, [tab, empresaId, iniciarPollingDocumentos]);
 
   const stopSaldoPolling = useCallback(() => {
     if (saldoPollRef.current) {
@@ -366,13 +476,14 @@ export default function DocumentosPage() {
   };
 
   useEffect(() => () => stopPolling(), [stopPolling]);
+  useEffect(() => () => stopDocPolling(), [stopDocPolling]);
   useEffect(() => () => stopSaldoPolling(), [stopSaldoPolling]);
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Box>
-          <Typography variant="h4" fontWeight={700} color={T.navy}>Documentos PER/DCOMP</Typography>
+          <Typography variant="h4" fontWeight={700} color={T.navy}>Documentos</Typography>
           <Typography variant="body2" color="text.secondary">
             Pedidos de Restituição e Declarações de Compensação
           </Typography>
@@ -572,12 +683,20 @@ export default function DocumentosPage() {
                 </Box>
                 <Box>
                   <Typography variant="caption" color="text.secondary">Com recibo PDF</Typography>
-                  <Typography variant="h6" fontWeight={700} color="#22c55e">{ecacDocs.length - pendentesRecibo}</Typography>
+                  <Typography variant="h6" fontWeight={700} color="#22c55e">{ecacDocs.length - pendentesRecibo - indisponiveisRecibo}</Typography>
                 </Box>
                 <Box>
                   <Typography variant="caption" color="text.secondary">Pendentes de recibo</Typography>
                   <Typography variant="h6" fontWeight={700} color={pendentesRecibo > 0 ? '#f59e0b' : 'text.primary'}>{pendentesRecibo}</Typography>
                 </Box>
+                {indisponiveisRecibo > 0 && (
+                  <Tooltip title="PER/DCOMPs entregues pelo programa desktop antigo da Receita (pré-2018). O PDF não existe no SERPRO para download automático.">
+                    <Box sx={{ cursor: 'help' }}>
+                      <Typography variant="caption" color="text.secondary">⊘ Indisponíveis</Typography>
+                      <Typography variant="h6" fontWeight={700} color="#94a3b8">{indisponiveisRecibo}</Typography>
+                    </Box>
+                  </Tooltip>
+                )}
               </Stack>
               <Stack direction="row" spacing={1}>
                 <Button
@@ -587,8 +706,21 @@ export default function DocumentosPage() {
                   onClick={handleBaixarRecibos}
                   sx={{ bgcolor: T.cyan, '&:hover': { bgcolor: T.cyanHover }, borderRadius: '10px' }}
                 >
-                  Baixar Recibos PDF ({pendentesRecibo})
+                  Baixar Recibos ({pendentesRecibo})
                 </Button>
+                <Tooltip title="Baixa o PDF completo do PER/DCOMP (5+ páginas) clicando no ícone Imprimir da lista do e-CAC">
+                  <span>
+                    <Button
+                      variant="contained"
+                      startIcon={<PictureAsPdf />}
+                      disabled={pendentesDocumento === 0 || (!!docSyncId && docSyncStatus?.status !== 'concluido' && docSyncStatus?.status !== 'erro' && docSyncStatus?.status !== 'cancelado')}
+                      onClick={handleBaixarDocumentos}
+                      sx={{ bgcolor: '#7c3aed', '&:hover': { bgcolor: '#6d28d9' }, borderRadius: '10px' }}
+                    >
+                      Baixar Documentos ({pendentesDocumento})
+                    </Button>
+                  </span>
+                </Tooltip>
                 <Tooltip title="Aplica retificações, normaliza status e gera saldos/movimentações com base nos recibos parseados">
                   <span>
                     <Button
@@ -608,64 +740,101 @@ export default function DocumentosPage() {
 
           {/* Progresso do download de recibos */}
           {reciboSyncStatus && reciboSyncStatus.status !== 'concluido' && reciboSyncStatus.status !== 'erro' && reciboSyncStatus.status !== 'cancelado' && (
-            <Paper sx={{ p: 2, borderRadius: 3, mb: 2, bgcolor: '#f0f9ff' }}>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <CircularProgress size={20} sx={{ color: T.cyan }} />
-                <Box flex={1}>
-                  <Typography variant="body2" fontWeight={600}>{reciboSyncStatus.mensagem}</Typography>
-                  <LinearProgress variant="determinate" value={reciboSyncStatus.progresso} sx={{ mt: 0.5, height: 6, borderRadius: 3 }} />
-                </Box>
-                <Typography variant="caption" color="text.secondary">{reciboSyncStatus.progresso}%</Typography>
-                {/* Controles: pausar / retomar / cancelar */}
-                {reciboSyncId && (
-                  <Stack direction="row" spacing={1}>
-                    {(reciboSyncStatus as any)?.pausado ? (
-                      <Tooltip title="Continuar">
-                        <IconButton size="small" sx={{ color: '#16a34a' }} onClick={async () => {
-                          try { await ecacService.sincronizacao.retomar(reciboSyncId); setReciboSyncStatus(s => s ? ({ ...s, mensagem: 'Retomando...', ...({ pausado: false } as any) }) : s); }
-                          catch (err: any) { setErro(err.response?.data?.error || 'Erro ao retomar'); }
-                        }}>
-                          <PlayArrow fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    ) : (
-                      <Tooltip title="Pausar">
-                        <IconButton size="small" sx={{ color: '#ca8a04' }} onClick={async () => {
-                          try { await ecacService.sincronizacao.pausar(reciboSyncId); setReciboSyncStatus(s => s ? ({ ...s, mensagem: 'Pausando...', ...({ pausado: true } as any) }) : s); }
-                          catch (err: any) { setErro(err.response?.data?.error || 'Erro ao pausar'); }
-                        }}>
-                          <Pause fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                    <Tooltip title="Cancelar">
-                      <IconButton size="small" sx={{ color: '#dc2626' }} onClick={async () => {
-                        if (!window.confirm('Cancelar o download de recibos? O progresso até aqui é mantido, mas a operação será encerrada.')) return;
-                        try { await ecacService.sincronizacao.cancelar(reciboSyncId); setReciboSyncStatus(s => s ? ({ ...s, mensagem: 'Cancelando...' }) : s); }
-                        catch (err: any) { setErro(err.response?.data?.error || 'Erro ao cancelar'); }
+            <PerdcompProgressBanner
+              titulo="Baixando recibos PDF"
+              mensagem={reciboSyncStatus.mensagem}
+              progresso={reciboSyncStatus.progresso}
+              statusLabel={(reciboSyncStatus as any)?.pausado ? 'PAUSADO' : 'EM EXECUÇÃO'}
+              corDestaque={T.cyan}
+              sticky={false}
+              acoes={reciboSyncId ? (
+                <Stack direction="row" spacing={0.5}>
+                  {(reciboSyncStatus as any)?.pausado ? (
+                    <Tooltip title="Continuar">
+                      <IconButton size="small" sx={{ color: '#22c55e' }} onClick={async () => {
+                        try { await ecacService.sincronizacao.retomar(reciboSyncId); setReciboSyncStatus(s => s ? ({ ...s, mensagem: 'Retomando...', ...({ pausado: false } as any) }) : s); }
+                        catch (err: any) { setErro(err.response?.data?.error || 'Erro ao retomar'); }
                       }}>
-                        <Stop fontSize="small" />
+                        <PlayArrow fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                  </Stack>
-                )}
-              </Stack>
-            </Paper>
+                  ) : (
+                    <Tooltip title="Pausar">
+                      <IconButton size="small" sx={{ color: '#fbbf24' }} onClick={async () => {
+                        try { await ecacService.sincronizacao.pausar(reciboSyncId); setReciboSyncStatus(s => s ? ({ ...s, mensagem: 'Pausando...', ...({ pausado: true } as any) }) : s); }
+                        catch (err: any) { setErro(err.response?.data?.error || 'Erro ao pausar'); }
+                      }}>
+                        <Pause fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  <Tooltip title="Cancelar">
+                    <IconButton size="small" sx={{ color: '#f87171' }} onClick={async () => {
+                      if (!window.confirm('Cancelar o download de recibos? O progresso até aqui é mantido, mas a operação será encerrada.')) return;
+                      try { await ecacService.sincronizacao.cancelar(reciboSyncId); setReciboSyncStatus(s => s ? ({ ...s, mensagem: 'Cancelando...' }) : s); }
+                      catch (err: any) { setErro(err.response?.data?.error || 'Erro ao cancelar'); }
+                    }}>
+                      <Stop fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              ) : null}
+            />
           )}
 
-          {/* Progresso da sincronização de saldos */}
+          {/* Progresso do download de documentos (mesmo banner, cor roxa) */}
+          {docSyncStatus && docSyncStatus.status !== 'concluido' && docSyncStatus.status !== 'erro' && docSyncStatus.status !== 'cancelado' && (
+            <PerdcompProgressBanner
+              titulo="Baixando documentos completos"
+              mensagem={docSyncStatus.mensagem}
+              progresso={docSyncStatus.progresso}
+              statusLabel={(docSyncStatus as any)?.pausado ? 'PAUSADO' : 'EM EXECUÇÃO'}
+              corDestaque="#a78bfa"
+              sticky={false}
+              acoes={docSyncId ? (
+                <Stack direction="row" spacing={0.5}>
+                  {(docSyncStatus as any)?.pausado ? (
+                    <Tooltip title="Continuar">
+                      <IconButton size="small" sx={{ color: '#22c55e' }} onClick={async () => {
+                        try { await ecacService.sincronizacao.retomar(docSyncId); setDocSyncStatus(s => s ? ({ ...s, mensagem: 'Retomando...', ...({ pausado: false } as any) }) : s); }
+                        catch (err: any) { setErro(err.response?.data?.error || 'Erro ao retomar'); }
+                      }}>
+                        <PlayArrow fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title="Pausar">
+                      <IconButton size="small" sx={{ color: '#fbbf24' }} onClick={async () => {
+                        try { await ecacService.sincronizacao.pausar(docSyncId); setDocSyncStatus(s => s ? ({ ...s, mensagem: 'Pausando...', ...({ pausado: true } as any) }) : s); }
+                        catch (err: any) { setErro(err.response?.data?.error || 'Erro ao pausar'); }
+                      }}>
+                        <Pause fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  <Tooltip title="Cancelar">
+                    <IconButton size="small" sx={{ color: '#f87171' }} onClick={async () => {
+                      if (!window.confirm('Cancelar o download de documentos? O progresso até aqui é mantido, mas a operação será encerrada.')) return;
+                      try { await ecacService.sincronizacao.cancelar(docSyncId); setDocSyncStatus(s => s ? ({ ...s, mensagem: 'Cancelando...' }) : s); }
+                      catch (err: any) { setErro(err.response?.data?.error || 'Erro ao cancelar'); }
+                    }}>
+                      <Stop fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              ) : null}
+            />
+          )}
+
+          {/* Progresso da sincronização de saldos (mesmo banner, cor verde) */}
           {saldoSyncStatus && saldoSyncStatus.status !== 'concluido' && saldoSyncStatus.status !== 'erro' && saldoSyncStatus.status !== 'cancelado' && (
-            <Paper sx={{ p: 2, borderRadius: 3, mb: 2, bgcolor: '#f0fdf4' }}>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <CircularProgress size={20} sx={{ color: '#16a34a' }} />
-                <Box flex={1}>
-                  <Typography variant="body2" fontWeight={600}>{saldoSyncStatus.mensagem}</Typography>
-                  <LinearProgress variant="determinate" value={saldoSyncStatus.progresso}
-                    sx={{ mt: 0.5, height: 6, borderRadius: 3, '& .MuiLinearProgress-bar': { bgcolor: '#16a34a' } }} />
-                </Box>
-                <Typography variant="caption" color="text.secondary">{saldoSyncStatus.progresso}%</Typography>
-              </Stack>
-            </Paper>
+            <PerdcompProgressBanner
+              titulo="Sincronizando saldos"
+              mensagem={saldoSyncStatus.mensagem}
+              progresso={saldoSyncStatus.progresso}
+              corDestaque="#22c55e"
+              sticky={false}
+            />
           )}
 
           {loadingEcac ? (
@@ -686,11 +855,12 @@ export default function DocumentosPage() {
                     <TableCell align="right" sx={{ fontWeight: 600, color: T.textSecond }}>Valor / Crédito</TableCell>
                     <TableCell align="center" sx={{ fontWeight: 600, color: T.textSecond }}>Status</TableCell>
                     <TableCell align="center" sx={{ fontWeight: 600, color: T.textSecond }}>Recibo</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 600, color: T.textSecond }}>Documento</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {ecacFiltrados.length === 0 ? (
-                    <TableRow><TableCell colSpan={9} align="center" sx={{ py: 6, color: T.textSecond }}>
+                    <TableRow><TableCell colSpan={10} align="center" sx={{ py: 6, color: T.textSecond }}>
                       {ecacDocs.length === 0
                         ? 'Nenhum documento importado do e-CAC. Use "Buscar no e-CAC" no Dashboard para importar.'
                         : 'Nenhum resultado para o filtro informado.'}
@@ -764,8 +934,32 @@ export default function DocumentosPage() {
                                   <PictureAsPdf fontSize="small" />
                                 </IconButton>
                               </Tooltip>
+                            ) : doc.recibo_indisponivel ? (
+                              <Tooltip title="Recibo indisponível — documento entregue pelo programa desktop antigo da Receita (pré-2018). O PDF não existe no SERPRO para download automático.">
+                                <DoNotDisturbAlt fontSize="small" sx={{ color: '#94a3b8', opacity: 0.6 }} />
+                              </Tooltip>
                             ) : (
                               <Tooltip title="Recibo ainda não baixado">
+                                <FileDownload fontSize="small" sx={{ color: T.textSecond, opacity: 0.4 }} />
+                              </Tooltip>
+                            )}
+                          </TableCell>
+                          <TableCell align="center">
+                            {doc.tem_documento ? (
+                              <Tooltip title="Documento PER/DCOMP completo (5+ páginas)">
+                                <IconButton size="small" component="a"
+                                  href={ecacService.perdcompDocumentos.documentoPdfUrl(doc.id)}
+                                  target="_blank" rel="noopener noreferrer"
+                                  sx={{ color: '#7c3aed' }}>
+                                  <PictureAsPdf fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            ) : doc.documento_indisponivel ? (
+                              <Tooltip title="Documento indisponível — entregue pelo programa desktop antigo da Receita (pré-2018).">
+                                <DoNotDisturbAlt fontSize="small" sx={{ color: '#94a3b8', opacity: 0.6 }} />
+                              </Tooltip>
+                            ) : (
+                              <Tooltip title="Documento ainda não baixado">
                                 <FileDownload fontSize="small" sx={{ color: T.textSecond, opacity: 0.4 }} />
                               </Tooltip>
                             )}
@@ -774,7 +968,7 @@ export default function DocumentosPage() {
 
                         {/* Linha expandida com detalhes do recibo + débitos */}
                         <TableRow>
-                          <TableCell colSpan={9} sx={{ p: 0, borderBottom: isExpanded ? '1px solid rgba(0,0,0,0.06)' : 'none' }}>
+                          <TableCell colSpan={10} sx={{ p: 0, borderBottom: isExpanded ? '1px solid rgba(0,0,0,0.06)' : 'none' }}>
                             <Collapse in={isExpanded} unmountOnExit>
                               <Box sx={{ p: 3, bgcolor: '#fafbfc' }}>
                                 {/* Bloco de informações do recibo */}
@@ -906,7 +1100,7 @@ export default function DocumentosPage() {
 
                                 {!doc.tem_recibo && (
                                   <Alert severity="info" sx={{ mt: 1 }}>
-                                    Recibo PDF ainda não baixado. Use o botão "Baixar Recibos PDF" no topo para extrair os detalhes financeiros e a lista de débitos compensados.
+                                    Recibo PDF ainda não baixado. Use o botão "Baixar Recibos" no topo para extrair os detalhes financeiros e a lista de débitos compensados.
                                   </Alert>
                                 )}
                                 {doc.tem_recibo && doc.recibo_parse_status === 'ERRO' && (

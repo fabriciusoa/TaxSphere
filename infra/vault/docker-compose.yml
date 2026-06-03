@@ -1,0 +1,30 @@
+# HashiCorp Vault em modo dev para desenvolvimento local.
+#
+# ATENÇÃO: este compose é APENAS para dev/test:
+#   - Vault está em "dev mode" → unseal automático, dados em memória, root token fixo.
+#   - NÃO USAR em produção.
+#
+# Para produção: usar Vault em modo prod com storage Raft/Consul + auto-unseal
+# via AWS KMS/GCP KMS/Azure Key Vault. Ver README.md neste diretório.
+#
+# Uso local:
+#   docker compose -f infra/vault/docker-compose.yml up -d
+#   # depois rode o bootstrap.sh para criar Transit + policy + AppRole
+#   bash infra/vault/bootstrap.sh
+services:
+  vault:
+    image: hashicorp/vault:1.18
+    container_name: taxsphere-vault-dev
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-root-token-only-for-local
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 6

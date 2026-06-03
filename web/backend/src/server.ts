@@ -8,6 +8,9 @@ import cron from 'node-cron';
 import routes from './routes';
 import './database/connection';
 import { ensurePerdcompSchema } from './database/ensurePerdcompSchema';
+import { ensureDctfwebSchema } from './database/ensureDctfwebSchema';
+import { runQuery as runQueryForBootCleanup } from './database/connection';
+import { recarregarAgendamentoAutomacao } from './services/perdcompAutomacaoScheduler';
 import notificacoesController from './controllers/notificacoesController';
 import { getParametro } from './utils/parametrosHelper';
 import { log } from './utils/logger';
@@ -82,6 +85,24 @@ app.use((req, res, next) => {
   next();
 });
 
+// Log de respostas não-2xx (monitoramento preventivo).
+// 4xx → WARN  | 5xx → ERROR. Inclui status, método, path, tempo, usuário (se houver).
+// Evita rotas de polling/streaming que não devem ruidar (/health, SSE).
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  const skipPaths = new Set(['/health', '/api/health', '/api/auth/me']);
+  res.on('finish', () => {
+    if (res.statusCode < 400) return;
+    if (skipPaths.has(req.path) || req.path.startsWith('/api/stream/')) return;
+    const dt = Date.now() - t0;
+    const userId = (req as any).user?.id ?? '-';
+    const msg = `HTTP ${res.statusCode} ${req.method} ${req.path} (${dt}ms, user=${userId})`;
+    if (res.statusCode >= 500) log.error(msg);
+    else log.warn(msg);
+  });
+  next();
+});
+
 // Rotas
 app.use('/api', routes);
 
@@ -120,8 +141,32 @@ app.listen(PORT, async () => {
   try {
     await ensurePerdcompSchema();
     log.info('[PERDCOMP] Schema garantido com sucesso');
+    await ensureDctfwebSchema();
+    // Limpeza de pipelines DCTFweb órfãos: marca como erro tudo que ficou
+    // em 'em_andamento' no banco mas não tem mais processo rodando (restart
+    // do backend, crash, kill -9). Sem isso a UI mostra empresas eternamente
+    // "atualizando" e usuário não consegue disparar nova execução.
+    try {
+      const r = await runQueryForBootCleanup(
+        `UPDATE dctfweb_automacao_config
+            SET ultima_execucao_status = 'erro',
+                ultima_execucao_msg    = COALESCE(NULLIF(ultima_execucao_msg, ''), '') || ' | Backend reiniciado — pipeline interrompido',
+                atualizado_em          = NOW()
+          WHERE ultima_execucao_status = 'em_andamento'`
+      );
+      if (r.changes > 0) log.warn(`[DCTFweb] Limpeza de boot: ${r.changes} pipeline(s) órfão(s) marcado(s) como erro`);
+    } catch (e: any) {
+      log.warn(`[DCTFweb] Limpeza de boot falhou: ${e.message}`);
+    }
   } catch (error: any) {
     log.error(`[PERDCOMP] Falha ao garantir schema: ${error.message}`);
+  }
+
+  // Boot do agendador de automações do e-CAC (lê config_global e instala cron)
+  try {
+    await recarregarAgendamentoAutomacao();
+  } catch (error: any) {
+    log.error(`[PERDCOMP/Automacao] Falha ao iniciar scheduler: ${error.message}`);
   }
 
   log.info(`Servidor rodando na porta ${PORT}`);

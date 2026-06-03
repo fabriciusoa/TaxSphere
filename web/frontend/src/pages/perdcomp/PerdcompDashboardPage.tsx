@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useEmpresa } from '../../contexts/EmpresaContext';
 import {
@@ -17,6 +17,7 @@ import {
   Button,
   Stack,
   Tooltip,
+  LinearProgress,
 } from '@mui/material';
 import {
   AccountBalanceWallet as WalletIcon,
@@ -32,6 +33,7 @@ import {
   VpnKey as AuthIcon,
   Article as EcacDocsIcon,
 } from '@mui/icons-material';
+import { PerdcompProgressBanner } from '../../components/PerdcompProgressBanner';
 import { perdcompService } from '../../services/perdcompService';
 import { ecacService, type SincronizacaoStatus } from '../../services/ecacService';
 import type { PerdcompDashboardData } from '../../types/perdcomp';
@@ -96,11 +98,64 @@ interface EcacSyncCardProps {
   sync: SincronizacaoStatus | null;
   syncing: boolean;
   empresaSelecionada: boolean;
+  /** Timestamp do último update do `sync` (para mostrar "atualizado há Xs"). */
+  ultimaAtualizacaoTs?: number | null;
   onImportar: () => void;
+  onCancelar?: (syncId: number) => Promise<void>;
 }
 
-const EcacSyncCard: React.FC<EcacSyncCardProps> = ({ sync, syncing, empresaSelecionada, onImportar }) => {
+const EcacSyncCard: React.FC<EcacSyncCardProps> = ({ sync, syncing, empresaSelecionada, ultimaAtualizacaoTs, onImportar, onCancelar }) => {
   const cfg = sync ? (syncStatusMap[sync.status] ?? syncStatusMap.pendente) : null;
+
+  // Está em progresso ativo: usuário clicou (`syncing`) OU backend ainda marca "em_andamento".
+  const emProgresso = syncing || sync?.status === 'em_andamento';
+
+  // Detecta sync TRAVADA: status="em_andamento" há mais de 5 min sem mudança no progresso.
+  const minutosDesdeInicio = sync?.iniciado_em
+    ? (Date.now() - new Date(sync.iniciado_em).getTime()) / 60000
+    : 0;
+  const syncTravada = sync?.status === 'em_andamento' && minutosDesdeInicio > 5 && !syncing;
+
+  // ── Dados brutos do backend ──────────────────────────────────────────────
+  const progresso = sync?.detalhes?.progresso;
+  const mensagemEtapa = sync?.detalhes?.mensagem;
+  const docsImportados = sync?.detalhes?.importados ?? 0;
+  const docsAtualizados = sync?.detalhes?.atualizados ?? 0;
+  const docsIgnorados = sync?.detalhes?.ignorados ?? 0;
+
+  // Backend só popula `documentos_extraidos` no FIM. Durante coleta, parseia da mensagem.
+  const matchSubProgresso = mensagemEtapa?.match(/\((\d+)\s*\/\s*(\d+)\)/);
+  const matchAcumulados = mensagemEtapa?.match(/\((\d+)\s+documentos?\s+acumulados?\)/i);
+  const matchPagina = mensagemEtapa?.match(/[Pp]ágina\s+(\d+)/);
+  const subAtual = matchSubProgresso ? Number(matchSubProgresso[1]) : null;
+  const subTotal = matchSubProgresso ? Number(matchSubProgresso[2]) : null;
+  const acumulados = matchAcumulados ? Number(matchAcumulados[1]) : null;
+  const paginaAtual = matchPagina ? Number(matchPagina[1]) : null;
+
+  const docsExtraidos = subAtual ?? acumulados ?? sync?.detalhes?.documentos_extraidos ?? 0;
+  const labelEtapa = mensagemEtapa
+    ? mensagemEtapa
+        .replace(/\s*\(\d+\s*\/\s*\d+\)\s*$/, '')
+        .replace(/\s*\(\d+\s+documentos?\s+acumulados?\)\s*$/i, '')
+        .trim()
+    : 'Sincronizando…';
+
+  // ── BARRA 1: Consulta no e-CAC (autenticação + navegação + listagem) ─────
+  // Mapeia o progresso geral 0-95 para 0-100 da barra 1 (após 95% começa gravação)
+  const barra1Pct = progresso != null
+    ? Math.min(100, (progresso / 95) * 100)
+    : null;
+  const consultaConcluida = progresso != null && progresso >= 95;
+
+  // ── BARRA 2: Gravação no banco de dados (importação + atualização) ───────
+  // Total a gravar = documentos extraídos (ou já gravados, no final).
+  // Já gravado = importados + atualizados (vem do backend).
+  const totalAGravar = sync?.detalhes?.documentos_extraidos ?? docsExtraidos ?? 0;
+  const jaGravado = docsImportados + docsAtualizados;
+  const barra2Pct = totalAGravar > 0
+    ? Math.min(100, (jaGravado / totalAGravar) * 100)
+    : 0;
+  const gravacaoIniciou = jaGravado > 0 || consultaConcluida;
 
   return (
     <Paper sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: '#00c8f020', bgcolor: '#f0fdff', mb: 3 }}>
@@ -135,28 +190,111 @@ const EcacSyncCard: React.FC<EcacSyncCardProps> = ({ sync, syncing, empresaSelec
           </Box>
         </Stack>
 
-        <Stack direction="row" alignItems="center" gap={1}>
-          {syncing && (
-            <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-              Aguardando resposta do e-CAC (~30s)…
-            </Typography>
-          )}
-          <Tooltip title={!empresaSelecionada ? 'Selecione uma empresa primeiro' : 'Busca créditos e débitos do e-CAC usando o certificado digital configurado'}>
-            <span>
-              <Button
-                variant="contained"
-                size="small"
-                startIcon={syncing ? <CircularProgress size={16} sx={{ color: 'white' }} /> : <RefreshIcon />}
-                onClick={onImportar}
-                disabled={!empresaSelecionada || syncing}
-                sx={{ bgcolor: '#00c8f0', '&:hover': { bgcolor: '#00b0d8' }, borderRadius: '8px', textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap' }}
-              >
-                {syncing ? 'Importando...' : 'Buscar no e-CAC'}
-              </Button>
-            </span>
-          </Tooltip>
-        </Stack>
+        <Tooltip title={
+          !empresaSelecionada
+            ? 'Selecione uma empresa primeiro'
+            : emProgresso
+              ? 'Sincronização em andamento — aguarde a conclusão'
+              : sync
+                ? 'Atualiza os dados do e-CAC para esta empresa (upsert: novos documentos são adicionados, existentes são atualizados)'
+                : 'Carrega os documentos PER/DCOMP do e-CAC pela primeira vez para esta empresa'
+        }>
+          <span>
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={emProgresso ? <CircularProgress size={16} sx={{ color: 'white' }} /> : <RefreshIcon />}
+              onClick={onImportar}
+              disabled={!empresaSelecionada || emProgresso}
+              sx={{ bgcolor: '#00c8f0', '&:hover': { bgcolor: '#00b0d8' }, borderRadius: '8px', textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap' }}
+            >
+              {emProgresso ? 'Sincronizando...' : 'Sincronizar e-CAC'}
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
+
+      {/* Banner padronizado de progresso (visual unificado do módulo PERDCOMP). */}
+      {emProgresso && (() => {
+        // Progresso global combinado: consulta pesa 70% (parte longa), gravação 30%.
+        const pesoConsulta = 70, pesoGravacao = 30;
+        const fracConsulta = barra1Pct != null ? Math.min(1, barra1Pct / 100) : 0;
+        const fracGravacao = totalAGravar > 0 ? Math.min(1, jaGravado / totalAGravar) : 0;
+        const pctGlobal = Math.round(fracConsulta * pesoConsulta + fracGravacao * pesoGravacao);
+        // Etapa em curso e mensagem
+        const etapaAtual = !consultaConcluida ? 'Consulta no e-CAC' : 'Gravação no banco';
+        const detalhe = !consultaConcluida
+          ? `${labelEtapa}${paginaAtual ? ` · Página ${paginaAtual}` : ''}${subTotal ? ` (${subAtual}/${subTotal})` : ''}`
+          : barra2Pct >= 100 ? 'concluída' : `${jaGravado} de ${totalAGravar} processado(s)`;
+        return (
+          <Box sx={{ mt: 2 }}>
+            <PerdcompProgressBanner
+              titulo={`Integração e-CAC · ${etapaAtual}`}
+              mensagem={detalhe}
+              progresso={pctGlobal}
+              totalEtapas={2}
+              etapasConcluidas={consultaConcluida ? (barra2Pct >= 100 ? 2 : 1) : 0}
+              corDestaque={consultaConcluida ? '#a78bfa' : '#00c8f0'}
+              sticky={false}
+              rodape={
+                <Stack direction="row" gap={2} flexWrap="wrap">
+                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.85)' }}>
+                    📥 <strong>{docsExtraidos}</strong> documento(s) extraído(s)
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#22c55e' }}>
+                    ➕ <strong>{docsImportados}</strong> novo(s)
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#60a5fa' }}>
+                    🔄 <strong>{docsAtualizados}</strong> atualizado(s)
+                  </Typography>
+                  {docsIgnorados > 0 && (
+                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                      ⊘ <strong>{docsIgnorados}</strong> ignorado(s)
+                    </Typography>
+                  )}
+                  <Box flex={1} />
+                  {ultimaAtualizacaoTs && (
+                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' }}>
+                      Atualizado {fromNow(new Date(ultimaAtualizacaoTs).toISOString())}
+                    </Typography>
+                  )}
+                </Stack>
+              }
+            />
+          </Box>
+        );
+      })()}
+
+      {/* Alerta: sync provavelmente travada (em andamento há > 5min) */}
+      {syncTravada && sync && (
+        <Alert
+          severity="warning"
+          action={
+            <Stack direction="row" gap={1}>
+              {onCancelar && (
+                <Button
+                  size="small" color="warning" variant="outlined"
+                  onClick={() => onCancelar(sync.id)}
+                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                >
+                  Cancelar
+                </Button>
+              )}
+              <Button
+                size="small" color="warning" variant="contained"
+                onClick={onImportar}
+                sx={{ textTransform: 'none', fontWeight: 600 }}
+              >
+                Tentar de novo
+              </Button>
+            </Stack>
+          }
+          sx={{ mt: 1.5, borderRadius: 2, py: 0.5 }}
+        >
+          <strong>Sincronização parece travada</strong> — está em andamento há {Math.round(minutosDesdeInicio)} minuto(s) sem atualização.
+          Pode ser que o processo no servidor parou ou o e-CAC não respondeu.
+        </Alert>
+      )}
 
       {sync?.erro_mensagem && (
         <Alert
@@ -183,8 +321,20 @@ const PerdcompDashboardPage: React.FC = () => {
   // e-CAC sync
   const [ultimoSync, setUltimoSync] = useState<SincronizacaoStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // Timestamp do último update bem-sucedido do status.
+  const [ultimaAtualizacaoTs, setUltimaAtualizacaoTs] = useState<number | null>(null);
+  // Guard global: garante que NUNCA temos 2 polls do mesmo sync rodando ao mesmo tempo.
+  // Resolve race condition de StrictMode (dev) + handler manual + useEffect on-mount.
+  const pollingAtivoRef = useRef(false);
+  // Tick para "fromNow" recalcular — a cada 5s (não precisa precisão milimétrica).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!ultimoSync || ultimoSync.status !== 'em_andamento') return;
+    const id = setInterval(() => setTick(t => t + 1), 5000);
+    return () => clearInterval(id);
+  }, [ultimoSync]);
 
-  // ── Carrega dashboard ──────────────────────────────────────────────────────
+  // ── Carrega dashboard (com retry em 429) ───────────────────────────────────
   const carregarDashboard = useCallback(async () => {
     try {
       setLoading(true);
@@ -194,7 +344,12 @@ const PerdcompDashboardPage: React.FC = () => {
       setData(dashData);
     } catch (error: any) {
       logger.error('Erro ao carregar dashboard:', error);
-      setErro(error.response?.data?.erro || 'Erro ao carregar dados do dashboard');
+      // 429 = Too Many Requests. Mostra mensagem clara e não polui logs.
+      if (error.response?.status === 429) {
+        setErro('Limite de requisições atingido. Aguarde alguns minutos e tente recarregar.');
+      } else {
+        setErro(error.response?.data?.erro || error.response?.data?.error || 'Erro ao carregar dados do dashboard');
+      }
     } finally {
       setLoading(false);
     }
@@ -206,66 +361,101 @@ const PerdcompDashboardPage: React.FC = () => {
     try {
       const syncs = await ecacService.sincronizacao.historico(selectedEmpresaId as number);
       setUltimoSync(syncs[0] ?? null);
+      setUltimaAtualizacaoTs(Date.now());
     } catch {
+      // Silencioso — não bloqueia o dashboard se historico falhar.
       setUltimoSync(null);
     }
   }, [selectedEmpresaId]);
 
-  // ── Importação automática do e-CAC (com polling de status) ───────────────
+  // ── Função única de polling (compartilhada entre handler manual e auto-detect)
+  // Garante que NUNCA temos 2 polls concorrentes para o mesmo sync.
+  // Polling a cada 5s (rate limit safe: 200 req/15min = 1 req cada 4.5s).
+  const pollarSyncAteConcluir = useCallback(async (syncId: number) => {
+    if (pollingAtivoRef.current) return; // já tem alguém polling
+    pollingAtivoRef.current = true;
+    try {
+      const maxTentativas = 60; // 60 × 5s = 5 minutos
+      let consecutivos429 = 0;
+      for (let i = 0; i < maxTentativas; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        try {
+          const status = await ecacService.sincronizacao.status(syncId);
+          consecutivos429 = 0;
+          setUltimoSync(status);
+          setUltimaAtualizacaoTs(Date.now());
+          if (status.status === 'concluido') {
+            const docs = status.detalhes?.documentos_extraidos ?? status.creditos_importados;
+            setSucesso(`e-CAC sincronizado: ${docs} documento(s) PER/DCOMP processado(s).`);
+            await carregarDashboard();
+            return;
+          }
+          if (status.status === 'erro' || status.status === 'cancelado') {
+            const erroMsg = status.erro_mensagem || 'erro desconhecido';
+            if (erroMsg.includes('Sessão') || erroMsg.includes('sessão') || erroMsg.includes('expirada')) {
+              setSemSessao(true);
+            } else {
+              setErro(`Falha na sincronização e-CAC: ${erroMsg}`);
+            }
+            return;
+          }
+        } catch (error: any) {
+          // Backoff exponencial em 429: dobra o tempo de espera (10s, 20s, 40s…)
+          if (error?.response?.status === 429) {
+            consecutivos429 += 1;
+            await new Promise(r => setTimeout(r, Math.min(60000, 5000 * Math.pow(2, consecutivos429))));
+          }
+          // Outros erros transitórios → ignora e tenta de novo
+        }
+      }
+    } finally {
+      pollingAtivoRef.current = false;
+    }
+  }, [carregarDashboard]);
+
+  // ── Auto-poll se a página carregar com sync já em andamento ────────────────
+  useEffect(() => {
+    if (ultimoSync && ultimoSync.status === 'em_andamento' && !syncing) {
+      pollarSyncAteConcluir(ultimoSync.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ultimoSync?.id, ultimoSync?.status]);
+
+  // ── Disparo manual da sincronização ──────────────────────────────────────
   const handleImportarEcac = async () => {
     if (!selectedEmpresaId) return;
     setSyncing(true);
     setErro('');
     setSucesso('');
     setSemSessao(false);
-
-    let syncId: number | null = null;
-
     try {
       const result = await ecacService.sincronizacao.importarAutomatico(selectedEmpresaId as number);
-      syncId = result.sync_id;
+      // Inicia o polling via função compartilhada (re-entrada protegida por pollingAtivoRef).
+      await pollarSyncAteConcluir(result.sync_id);
     } catch (error: any) {
       const codigo = error.response?.data?.codigo;
       if (codigo === 'SESSAO_NAO_ENCONTRADA') {
         setSemSessao(true);
+      } else if (error.response?.status === 429) {
+        setErro('Limite de requisições atingido. Aguarde alguns minutos antes de tentar de novo.');
       } else {
-        const msg = error.response?.data?.error || 'Erro ao iniciar importação do e-CAC';
-        setErro(msg);
+        setErro(error.response?.data?.error || 'Erro ao iniciar importação do e-CAC');
       }
+    } finally {
       setSyncing(false);
-      return;
     }
-
-    // Polling: aguarda conclusão (max 3 min, intervalo de 4s)
-    const maxTentativas = 45;
-    for (let i = 0; i < maxTentativas; i++) {
-      await new Promise(r => setTimeout(r, 4000));
-      try {
-        const status = await ecacService.sincronizacao.status(syncId!);
-        setUltimoSync(status as any);
-
-        if (status.status === 'concluido') {
-          const docs = status.detalhes?.documentos_extraidos ?? status.creditos_importados;
-          setSucesso(`e-CAC sincronizado: ${docs} documento(s) PER/DCOMP importado(s).`);
-          carregarDashboard();
-          break;
-        }
-        if (status.status === 'erro') {
-          const erroMsg = status.erro_mensagem || 'erro desconhecido';
-          if (erroMsg.includes('Sessão') || erroMsg.includes('sessão') || erroMsg.includes('expirada')) {
-            setSemSessao(true);
-          } else {
-            setErro(`Falha na sincronização e-CAC: ${erroMsg}`);
-          }
-          break;
-        }
-      } catch {
-        // ignora erros de polling temporários
-      }
-    }
-
-    setSyncing(false);
   };
+
+  // ── Cancela uma sincronização (usado quando detectamos sync travada) ──────
+  const handleCancelarSync = useCallback(async (syncId: number) => {
+    try {
+      await ecacService.sincronizacao.cancelar(syncId);
+      setSucesso('Sincronização cancelada.');
+      await carregarUltimoSync();
+    } catch (error: any) {
+      setErro(error.response?.data?.error || 'Erro ao cancelar sincronização');
+    }
+  }, [carregarUltimoSync]);
 
   useEffect(() => { carregarDashboard(); }, [carregarDashboard]);
   useEffect(() => { carregarUltimoSync(); }, [carregarUltimoSync]);
@@ -311,7 +501,9 @@ const PerdcompDashboardPage: React.FC = () => {
         sync={ultimoSync}
         syncing={syncing}
         empresaSelecionada={!!selectedEmpresaId}
+        ultimaAtualizacaoTs={ultimaAtualizacaoTs}
         onImportar={handleImportarEcac}
+        onCancelar={handleCancelarSync}
       />
 
       {loading ? (

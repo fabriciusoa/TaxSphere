@@ -100,6 +100,10 @@ export default function RelatoriosPage() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  useEffect(() => {
+    if (tab === 0) setExportAnchor(null);
+  }, [tab]);
+
   // ─── Monta payload de export para o tab atual ──────────────────────────────
   const construirReportData = (): ReportData => {
     const empresaNome = empresaId
@@ -108,147 +112,261 @@ export default function RelatoriosPage() {
     const geradoEm = new Date().toLocaleString('pt-BR');
     const tituloBase = 'Relatório PER/DCOMP';
 
+    const STATUS_ATENCAO_LABELS: Record<string, string> = {
+      PRESCRITO:  'Prescrito',
+      URGENTE_6M: '< 6 meses',
+      ATENCAO_1A: '< 1 ano',
+      AVISO_2A:   '< 2 anos',
+      OK:         '> 2 anos',
+    };
+
+    // ── Tab 0: Visão Geral ────────────────────────────────────────────────────
     if (tab === 0 && dashboard) {
       return {
         titulo: `${tituloBase} — Visão Geral`,
         subtitulo: 'Indicadores consolidados de créditos, prescrição, retrabalho e compensações em risco',
         empresa: empresaNome, geradoEm,
         secoes: [{
-          title: 'Indicadores',
+          title: 'Indicadores Gerais',
           kpis: [
-            { label: 'Saldos Ativos', value: dashboard.saldos.ativos },
-            { label: 'Saldo Total Disponível', value: fmt(dashboard.saldos.total_disponivel) },
-            { label: 'Próximos da Prescrição', value: dashboard.prescricao.criticos_30d + dashboard.prescricao.urgentes_90d },
-            { label: 'Índice de Retrabalho', value: `${dashboard.retrabalho.indice_pct}%` },
-            { label: 'Compensações em Risco', value: dashboard.em_risco.quantidade },
+            { label: 'Saldos Ativos',           value: dashboard.saldos.ativos,           sublabel: `${dashboard.saldos.quantidade} créditos`, color: '22c55e' },
+            { label: 'Saldo Total Disponível',   value: fmt(dashboard.saldos.total_disponivel), sublabel: `Atualizado: ${fmt(dashboard.saldos.total_atualizado)}`, color: '22c55e' },
+            { label: 'Próximos da Prescrição',   value: dashboard.prescricao.criticos_30d + dashboard.prescricao.urgentes_90d, sublabel: `Valor crítico 90d: ${fmt(dashboard.prescricao.valor_critico_90d)}`, color: 'f59e0b' },
+            { label: 'Índice de Retrabalho',     value: `${dashboard.retrabalho.indice_pct}%`, sublabel: `${dashboard.retrabalho.retificadores} retific. / ${dashboard.retrabalho.total} docs`, color: '8b5cf6' },
+            { label: 'Compensações em Risco',    value: dashboard.em_risco.quantidade,    sublabel: fmt(dashboard.em_risco.valor), color: 'ef4444' },
           ],
           note: 'Critério de prescrição: prazo de 5 anos a partir da data do pagamento original.',
+        }, {
+          title: 'Documentos por Status (e-CAC normalizado)',
+          headers: ['Status', 'Quantidade', 'Valor (Crédito Atualizado)'],
+          colAligns: ['left', 'right', 'right'],
+          rows: dashboard.documentos_por_status.map(s => [
+            STATUS_LABELS[s.status as StatusNormalizado] || s.label || s.status,
+            s.quantidade,
+            fmt(s.valor),
+          ]),
         }],
       };
     }
+
+    // ── Tab 1: Controle Consolidado ───────────────────────────────────────────
     if (tab === 1 && consolidado) {
+      // Replica a mesma filtragem local da tabela da UI
+      const exportFiltered = consolidado.creditos.filter(c => {
+        if (filtroPerdcomp     && c.perdcomp_inicial !== filtroPerdcomp)     return false;
+        if (filtroTipoCredito  && c.tipo_credito     !== filtroTipoCredito)  return false;
+        if (filtroAnoBase      && c.ano_base         !== filtroAnoBase)      return false;
+        if (filtroStatusAtencao && c.status_atencao  !== filtroStatusAtencao) return false;
+        return true;
+      });
+      const totais = exportFiltered.reduce((acc, c) => ({
+        valor_credito_inicial:    acc.valor_credito_inicial    + Number(c.valor_credito_inicial    || 0),
+        valor_credito_utilizado:  acc.valor_credito_utilizado  + Number(c.valor_credito_utilizado  || 0),
+        saldo_credito:            acc.saldo_credito            + Number(c.saldo_credito            || 0),
+        saldo_credito_atualizado: acc.saldo_credito_atualizado + Number(c.saldo_credito_atualizado || 0),
+        total_debitos:            acc.total_debitos            + Number(c.total_debitos            || 0),
+        qtd_perdcomps:            acc.qtd_perdcomps            + Number(c.qtd_perdcomps            || 0),
+      }), { valor_credito_inicial: 0, valor_credito_utilizado: 0, saldo_credito: 0, saldo_credito_atualizado: 0, total_debitos: 0, qtd_perdcomps: 0 });
+
       return {
         titulo: `${tituloBase} — Controle Consolidado`,
-        subtitulo: 'Detalhamento por PER/DCOMP origem (modelo da planilha Controle de Créditos)',
+        subtitulo: 'Detalhamento por PER/DCOMP inicial: saldos atualizados por SELIC, debições por imposto e alertas de prescrição',
         empresa: empresaNome, geradoEm,
+        landscape: true,
         secoes: [{
+          title: 'Indicadores',
+          kpis: [
+            { label: 'Créditos',           value: exportFiltered.length,                  color: '00c8f0' },
+            { label: 'Saldo Atualizado',   value: fmt(totais.saldo_credito_atualizado),   color: '22c55e' },
+            { label: 'Total Utilizado',    value: fmt(totais.valor_credito_utilizado),    color: 'ef4444' },
+            { label: 'Total Débitos Comp.', value: fmt(totais.total_debitos),             color: 'd97706' },
+            { label: 'Nº PER/DCOMPs',      value: totais.qtd_perdcomps,                  color: '8b5cf6' },
+          ],
+        }, {
           title: 'Créditos consolidados',
-          headers: ['PER/DCOMP inicial', 'Empresa', 'Tipo', 'Competência', 'Valor Original', 'SELIC %', 'Atualizado', 'Utilizado', 'Saldo', 'Prescrição', 'Status'],
-          rows: consolidado.creditos.map(c => [
+          headers: [
+            'PER/DCOMP Inicial', 'Empresa', 'Ano Base', 'Tipo Crédito', 'Prescrição', 'Status',
+            'Inicial', 'Utilizado', 'Saldo', 'SELIC %', 'Saldo Atualiz.',
+            'IRPJ', 'CSLL', 'COFINS', 'PIS', 'INSS', 'Total Déb.', 'Nº DCOMPs',
+          ],
+          colAligns: ['left','left','center','left','center','center','right','right','right','right','right','right','right','right','right','right','right','center'],
+          rows: exportFiltered.map(c => [
             c.perdcomp_inicial || '—',
             c.empresa || '—',
-            c.tipo_credito,
-            c.competencia || '—',
+            c.ano_base || '—',
+            c.tipo_credito || '—',
+            fmtDate(c.data_prescricao),
+            STATUS_ATENCAO_LABELS[c.status_atencao] || c.status_atencao || '—',
             fmt(c.valor_credito_inicial),
-            `${(c.selic_acumulada_pct || 0).toFixed(2)}%`,
-            fmt(c.saldo_credito_atualizado),
             fmt(c.valor_credito_utilizado),
             fmt(c.saldo_credito),
-            fmtDate(c.data_prescricao),
-            c.status_atencao || '—',
+            `${(Number(c.selic_acumulada_pct) || 0).toFixed(2)}%`,
+            fmt(c.saldo_credito_atualizado),
+            Number(c.deb_irpj)   > 0 ? fmt(c.deb_irpj)   : '—',
+            Number(c.deb_csll)   > 0 ? fmt(c.deb_csll)   : '—',
+            Number(c.deb_cofins) > 0 ? fmt(c.deb_cofins) : '—',
+            Number(c.deb_pis)    > 0 ? fmt(c.deb_pis)    : '—',
+            Number(c.deb_inss)   > 0 ? fmt(c.deb_inss)   : '—',
+            fmt(c.total_debitos),
+            String(c.qtd_perdcomps ?? 0),
           ]),
-          note: `Totalizadores: Valor Original ${fmt(consolidado.totais.valor_credito_inicial)} · Atualizado ${fmt(consolidado.totais.saldo_credito_atualizado)} · Saldo ${fmt(consolidado.totais.saldo_credito)}`,
+          totaisRow: [
+            'TOTAIS', '', '', '', '', '',
+            fmt(totais.valor_credito_inicial),
+            fmt(totais.valor_credito_utilizado),
+            fmt(totais.saldo_credito),
+            '',
+            fmt(totais.saldo_credito_atualizado),
+            '—', '—', '—', '—', '—',
+            fmt(totais.total_debitos),
+            String(totais.qtd_perdcomps),
+          ],
+          note: filtroStatusAtencao || filtroTipoCredito || filtroAnoBase || filtroPerdcomp
+            ? 'Dados filtrados conforme seleção ativa na tela. Remova os filtros para exportar a lista completa.'
+            : undefined,
         }],
       };
     }
+
+    // ── Tab 2: Saldos Disponíveis ─────────────────────────────────────────────
     if (tab === 2) {
       return {
         titulo: `${tituloBase} — Saldos Disponíveis`,
-        subtitulo: `${saldos.length} crédito(s) com saldo > 0`,
+        subtitulo: `${saldos.length} crédito(s) com saldo disponível`,
         empresa: empresaNome, geradoEm,
+        landscape: true,
         secoes: [{
           title: 'Saldos por crédito',
-          headers: ['PER/DCOMP', 'Tipo', 'Período', 'Saldo Disponível', 'Prescrição', 'Dias Restantes'],
+          headers: [
+            'Nº PER/DCOMP Origem', 'Empresa', 'Tipo Crédito', 'Exercício', 'Status',
+            'Crédito Atualizado', 'Utilizado', 'Saldo', '% Util.', 'Prescrição', 'Dias Rest.', 'Origem',
+          ],
+          colAligns: ['left','left','left','center','center','right','right','right','right','center','center','center'],
           rows: saldos.map(s => [
             s.numero_perdcomp_origem || '—',
-            s.tipo_credito,
-            s.periodo_apuracao || '—',
+            s.razao_social || '—',
+            s.tipo_credito || '—',
+            s.exercicio || '—',
+            STATUS_LABELS[s.status_normalizado] || s.status_normalizado || '—',
+            fmt(s.credito_atualizado),
+            fmt(s.total_utilizado),
             fmt(s.saldo_disponivel),
+            `${s.percentual_utilizado ?? 0}%`,
             fmtDate(s.data_prescricao),
-            String(s.dias_para_prescricao ?? '—'),
+            s.dias_para_prescricao != null
+              ? (Number(s.dias_para_prescricao) <= 0 ? 'PRESCRITO' : `${s.dias_para_prescricao} dias`)
+              : '—',
+            s.origem || '—',
           ]),
         }],
       };
     }
+
+    // ── Tab 3: Prescrição ─────────────────────────────────────────────────────
     if (tab === 3 && prescricao) {
       return {
         titulo: `${tituloBase} — Prescrição`,
-        subtitulo: 'Créditos próximos ou já prescritos',
+        subtitulo: 'Créditos próximos ou já prescritos — prazo legal: 5 anos da data do pagamento',
         empresa: empresaNome, geradoEm,
         secoes: [{
           title: 'Distribuição por urgência',
           kpis: [
-            { label: 'Prescritos', value: prescricao.buckets.prescritos.quantidade },
-            { label: 'Críticos (≤ 30d)', value: prescricao.buckets.critico_30.quantidade },
-            { label: 'Urgentes (≤ 90d)', value: prescricao.buckets.urgente_90.quantidade },
-            { label: 'Atenção (≤ 180d)', value: prescricao.buckets.atencao_180.quantidade },
-            { label: 'Próximos (≤ 365d)', value: prescricao.buckets.proximo_365.quantidade },
+            { label: 'Prescritos',       value: prescricao.buckets.prescritos.quantidade,   sublabel: fmt(prescricao.buckets.prescritos.valor),   color: 'dc2626' },
+            { label: 'Crítico (≤30d)',   value: prescricao.buckets.critico_30.quantidade,   sublabel: fmt(prescricao.buckets.critico_30.valor),   color: 'ef4444' },
+            { label: 'Urgente (31-90d)', value: prescricao.buckets.urgente_90.quantidade,   sublabel: fmt(prescricao.buckets.urgente_90.valor),   color: 'f59e0b' },
+            { label: 'Atenção (91-180d)',value: prescricao.buckets.atencao_180.quantidade,  sublabel: fmt(prescricao.buckets.atencao_180.valor),  color: 'facc15' },
+            { label: 'Próximo (181-365d)',value: prescricao.buckets.proximo_365.quantidade, sublabel: fmt(prescricao.buckets.proximo_365.valor),  color: '22c55e' },
           ],
-          note: `Valor total em risco: ${fmt(prescricao.totais.valor)} em ${prescricao.totais.quantidade} crédito(s).`,
+          note: `Total em risco de prescrição: ${fmt(prescricao.totais.valor)} em ${prescricao.totais.quantidade} crédito(s).`,
         }, {
-          title: 'Detalhamento',
-          headers: ['PER/DCOMP', 'Tipo', 'Saldo', 'Prescrição', 'Dias restantes'],
-          rows: (prescricao.itens || []).map((i: any) => [
+          title: 'Detalhamento de créditos por prazo',
+          headers: ['Nº Crédito', 'Empresa', 'Tipo', 'Saldo Disponível', 'Data Entrega', 'Data Prescrição', 'Dias Restantes'],
+          colAligns: ['left', 'left', 'left', 'right', 'center', 'center', 'center'],
+          rows: prescricao.itens.map((i: any) => [
             i.numero_perdcomp_origem || i.perdcomp_inicial || '—',
+            i.razao_social || '—',
             i.tipo_credito || '—',
             fmt(i.saldo_disponivel ?? i.saldo_credito),
+            fmtDate(i.data_entrega_pedido),
             fmtDate(i.data_prescricao),
-            String(i.dias_para_prescricao ?? '—'),
+            i.dias_para_prescricao != null
+              ? (Number(i.dias_para_prescricao) <= 0 ? 'PRESCRITO' : `${i.dias_para_prescricao} dias`)
+              : '—',
           ]),
         }],
       };
     }
+
+    // ── Tab 4: Retrabalho ─────────────────────────────────────────────────────
     if (tab === 4 && retrabalho) {
       return {
         titulo: `${tituloBase} — Retrabalho`,
-        subtitulo: 'Índice de retificações e PER/DCOMPs problemáticos',
+        subtitulo: 'Índice de retificações e PER/DCOMPs com histórico de reenvio ao e-CAC',
         empresa: empresaNome, geradoEm,
         secoes: [{
           title: 'Indicadores',
           kpis: [
-            { label: 'Índice de Retrabalho', value: `${retrabalho.resumo.indice_retrabalho_pct}%` },
-            { label: 'Total de Documentos', value: retrabalho.resumo.total_documentos },
-            { label: 'Retificadores', value: retrabalho.resumo.total_retificadores },
-            { label: 'Originais Retificados', value: retrabalho.resumo.documentos_originais_retificados },
+            { label: 'Total de Documentos',    value: retrabalho.resumo.total_documentos,                 color: '00c8f0' },
+            { label: 'Retificadores',          value: retrabalho.resumo.total_retificadores,              color: '8b5cf6' },
+            { label: 'Originais Retificados',  value: retrabalho.resumo.documentos_originais_retificados, color: 'f59e0b' },
+            { label: 'Índice de Retrabalho',   value: `${retrabalho.resumo.indice_retrabalho_pct}%`,      color: 'dc2626' },
           ],
         }, {
           title: 'Retrabalho por empresa',
-          headers: ['Empresa', 'CNPJ', 'Total docs', 'Retificadores', 'Índice (%)'],
-          rows: (retrabalho.por_empresa || []).map(e => [
+          headers: ['Empresa', 'CNPJ', 'Total Docs', 'Retificadores', 'Índice (%)'],
+          colAligns: ['left', 'center', 'right', 'right', 'center'],
+          rows: retrabalho.por_empresa.map(e => [
             e.razao_social, e.cnpj, e.total, e.retificadores, `${e.indice_retrabalho_pct}%`,
           ]),
         }, {
-          title: 'Detalhamento',
-          headers: ['PER/DCOMP', 'Tipo', 'Status', 'Data entrega'],
-          rows: (retrabalho.detalhamento || []).map((i: any) => [
-            i.numero || '—', i.tipo_documento || '—', i.status_normalizado || '—',
-            fmtDate(i.data_entrega),
+          title: 'Detalhamento — últimos 200 retificadores',
+          headers: ['Retificador', 'Documento Original', 'Empresa', 'Tipo Crédito', 'Data Original', 'Data Retific.', 'Status'],
+          colAligns: ['left', 'left', 'left', 'left', 'center', 'center', 'center'],
+          rows: retrabalho.detalhamento.map((d: any) => [
+            d.numero || '—',
+            d.numero_original || d.numero_perdcomp_inicial || '—',
+            d.razao_social || '—',
+            d.tipo_credito || '—',
+            fmtDate(d.data_entrega_original),
+            fmtDate(d.data_entrega),
+            STATUS_LABELS[d.status_normalizado as StatusNormalizado] || d.status_ecac || '—',
           ]),
         }],
       };
     }
+
+    // ── Tab 5: Compensações em Risco ──────────────────────────────────────────
     if (tab === 5 && risco) {
       return {
         titulo: `${tituloBase} — Compensações em Risco`,
-        subtitulo: 'Compensações cujo crédito já foi consumido e podem ser perdidas',
+        subtitulo: 'Compensações transmitidas cujo crédito pode ter sido perdido (indeferido / cancelado / não homologado)',
         empresa: empresaNome, geradoEm,
         secoes: [{
           title: 'Resumo',
+          alertText: 'Compensações já transmitidas e cujo status no e-CAC indica que o crédito pode ter sido perdido. O crédito já foi consumido na transmissão — há risco de cobrança do débito original com multa e juros.',
           kpis: [
-            { label: 'Quantidade', value: risco.totais.quantidade },
-            { label: 'Valor Total em Risco', value: fmt(risco.totais.valor_em_risco) },
+            { label: 'Compensações em Risco', value: risco.totais.quantidade,         color: 'dc2626' },
+            { label: 'Valor Total em Risco',  value: fmt(risco.totais.valor_em_risco), color: 'dc2626' },
           ],
         }, {
-          title: 'Detalhamento',
-          headers: ['PER/DCOMP', 'Tipo', 'Status', 'Valor', 'Data entrega'],
-          rows: (risco.itens || []).map((i: any) => [
-            i.numero || '—', i.tipo_documento || '—', i.status_normalizado || '—',
-            fmt(i.valor || i.valor_pedido), fmtDate(i.data_entrega),
+          title: 'Detalhamento das compensações em risco',
+          headers: ['Nº DComp', 'Crédito Origem', 'Empresa', 'Tipo Crédito', 'Data Entrega', 'Valor Compensado', 'Total Débitos', 'Status'],
+          colAligns: ['left', 'left', 'left', 'left', 'center', 'right', 'right', 'center'],
+          rows: risco.itens.map((i: any) => [
+            i.numero || '—',
+            i.numero_perdcomp_inicial || '—',
+            i.razao_social || '—',
+            i.tipo_credito || '—',
+            fmtDate(i.data_entrega),
+            fmt(i.credito_original_utilizado),
+            fmt(i.total_debitos_dcomp),
+            STATUS_LABELS[i.status_normalizado as StatusNormalizado] || i.status_ecac || '—',
           ]),
-          note: 'Compensações já transmitidas cujo status no e-CAC indica que o crédito pode ter sido perdido (indeferido / não homologado / cancelado).',
+          note: 'Ação recomendada: consultar o advogado tributarista para avaliar a necessidade de regularização e provisão do passivo fiscal.',
         }],
       };
     }
+
     return { titulo: tituloBase, empresa: empresaNome, geradoEm, secoes: [] };
   };
 
@@ -273,33 +391,37 @@ export default function RelatoriosPage() {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Box>
-          <Typography variant="h4" fontWeight={700} color={T.navy}>Relatórios PER/DCOMP</Typography>
+          <Typography variant="h4" fontWeight={700} color={T.navy}>Relatórios</Typography>
           <Typography variant="body2" color="text.secondary">
             Visão consolidada dos créditos, prescrição, retrabalho e compensações em risco
           </Typography>
         </Box>
         <Stack direction="row" spacing={2} alignItems="center" justifyContent="flex-end">
-          <Tooltip title="Exportar relatório atual">
-            <Button
-              variant="outlined"
-              startIcon={exportando ? <CircularProgress size={16} /> : <DownloadIcon />}
-              onClick={(e) => setExportAnchor(e.currentTarget)}
-              disabled={exportando || loading}
-              sx={{ textTransform: 'none', fontWeight: 600, borderRadius: 2 }}>
-              Exportar
-            </Button>
-          </Tooltip>
-          <Menu anchorEl={exportAnchor} open={!!exportAnchor} onClose={() => setExportAnchor(null)}>
-            <MenuItem onClick={() => handleExport('pdf')}>
-              <PictureAsPdf sx={{ mr: 1, color: '#e53935' }} fontSize="small" /> Exportar como PDF
-            </MenuItem>
-            <MenuItem onClick={() => handleExport('docx')}>
-              <DocIcon sx={{ mr: 1, color: '#1976d2' }} fontSize="small" /> Exportar como Word (.docx)
-            </MenuItem>
-            <MenuItem onClick={() => handleExport('xlsx')}>
-              <TableView sx={{ mr: 1, color: '#2e7d32' }} fontSize="small" /> Exportar como Excel (.xlsx)
-            </MenuItem>
-          </Menu>
+          {tab > 0 && (
+            <>
+              <Tooltip title="Exportar relatório atual">
+                <Button
+                  variant="outlined"
+                  startIcon={exportando ? <CircularProgress size={16} /> : <DownloadIcon />}
+                  onClick={(e) => setExportAnchor(e.currentTarget)}
+                  disabled={exportando || loading}
+                  sx={{ textTransform: 'none', fontWeight: 600, borderRadius: 2 }}>
+                  Exportar
+                </Button>
+              </Tooltip>
+              <Menu anchorEl={exportAnchor} open={!!exportAnchor} onClose={() => setExportAnchor(null)}>
+                <MenuItem onClick={() => handleExport('pdf')}>
+                  <PictureAsPdf sx={{ mr: 1, color: '#e53935' }} fontSize="small" /> Exportar como PDF
+                </MenuItem>
+                <MenuItem onClick={() => handleExport('docx')}>
+                  <DocIcon sx={{ mr: 1, color: '#1976d2' }} fontSize="small" /> Exportar como Word (.docx)
+                </MenuItem>
+                <MenuItem onClick={() => handleExport('xlsx')}>
+                  <TableView sx={{ mr: 1, color: '#2e7d32' }} fontSize="small" /> Exportar como Excel (.xlsx)
+                </MenuItem>
+              </Menu>
+            </>
+          )}
           <IconButton onClick={carregar} sx={{ color: T.cyan }}>
             <Refresh />
           </IconButton>

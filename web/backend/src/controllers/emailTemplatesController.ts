@@ -103,7 +103,11 @@ export const emailTemplatesController = {
         });
 
       } catch (dbError: any) {
-        log.error(`Erro ao buscar template do banco, usando fallback: ${dbError.message}`);
+        // 42P01 = tabela ainda não provisionada — esperado em ambientes novos.
+        // Não logamos como ERROR para evitar ruído; só real erro de DB gera WARN.
+        if (dbError?.code !== '42P01') {
+          log.warn(`Erro ao buscar template do banco, usando fallback: ${dbError.message}`);
+        }
         
         // Fallback para templates hardcoded em caso de erro no banco
         return res.json({
@@ -276,7 +280,11 @@ export const emailTemplatesController = {
           [userId]
         );
       } catch (dbError: any) {
-        log.error(`Erro ao buscar template do banco, usando fallback: ${dbError.message}`);
+        // 42P01 = tabela ainda não provisionada — esperado em ambientes novos.
+        // Não logamos como ERROR para evitar ruído; só real erro de DB gera WARN.
+        if (dbError?.code !== '42P01') {
+          log.warn(`Erro ao buscar template do banco, usando fallback: ${dbError.message}`);
+        }
       }
 
       // Usar template do banco ou fallback

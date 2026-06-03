@@ -151,10 +151,10 @@ export function adaptiveLoginGuard(req: Request, res: Response, next: NextFuncti
 
 // ─── Middleware 2: Rate limit tiered para rotas autenticadas ───────────────────
 
-// Admin: 600 req / 15 min → ~40 req/min (uso intenso do painel)
+// Admin: 2000 req / 15 min → ~133 req/min (uso intenso do painel + polling de sync)
 const limiterAdmin = rateLimit({
   windowMs: 15 * 60_000,
-  max: 600,
+  max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
   // skip garante req.user sempre definido quando keyGenerator executa
@@ -163,10 +163,11 @@ const limiterAdmin = rateLimit({
   skip: (req: any) => !req.user
 });
 
-// Usuário padrão: 200 req / 15 min → ~13 req/min (uso clínico normal)
+// Usuário padrão: 750 req / 15 min → ~50 req/min (acomoda polling de sincronização
+// e múltiplas abas/sessões em desenvolvimento sem disparar 429).
 const limiterUser = rateLimit({
   windowMs: 15 * 60_000,
-  max: 200,
+  max: 750,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req: any) => `user:${req.user.id}`,

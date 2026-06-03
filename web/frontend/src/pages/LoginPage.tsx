@@ -98,7 +98,7 @@ const SLIDES = [
     icon: Psychology,
     line1: 'Gestão fiscal inteligente,',
     line2: 'sem complicações.',
-    body: 'PERD/Comp, recuperação de PIS/COFINS, DCTF Web, gestão de CNDs e reclassificação de NCM — tudo integrado em um único ambiente.',
+    body: 'PER/DCOMP, recuperação de PIS/COFINS, DCTF Web, gestão de CNDs e reclassificação de NCM — tudo integrado em um único ambiente.',
     badges: ['Conforme LGPD', 'Suporte dedicado', 'Módulos fiscais'],
   },
   {
@@ -106,7 +106,7 @@ const SLIDES = [
     line1: 'Recupere créditos tributários',
     line2: 'com precisão.',
     body: 'Identifique oportunidades de compensação de PIS, COFINS e IRPJ que passam despercebidas — maximize seus créditos fiscais automaticamente.',
-    badges: ['PIS & COFINS', 'PERD/Comp', 'MIT'],
+    badges: ['PIS & COFINS', 'PER/DCOMP', 'MIT'],
   },
   {
     icon: Shield,

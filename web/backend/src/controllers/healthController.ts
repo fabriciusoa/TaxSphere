@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { runQuery, getAll } from '../database/connection';
-import { log } from '../utils/logger'; 
+import { log } from '../utils/logger';
+import { vaultHealth, VAULT_ENABLED } from '../services/vaultService';
 
 interface CronStatus {
   job_name: string;
@@ -214,15 +215,16 @@ export const healthCheck = async (req: Request, res: Response) => {
     const startTime = Date.now();
     
     // Executar verificações em paralelo
-    const [database, cron, notifications] = await Promise.all([
+    const [database, cron, notifications, vault] = await Promise.all([
       checkDatabase(),
       checkCronJobs(),
-      checkNotifications()
+      checkNotifications(),
+      vaultHealth(),
     ]);
-    
+
     // Determinar status geral
     let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
-    
+
     if (database.status === 'disconnected') {
       overallStatus = 'unhealthy';
     } else if (cron.status === 'critical' || notifications.status === 'critical') {
@@ -230,13 +232,16 @@ export const healthCheck = async (req: Request, res: Response) => {
     } else if (cron.status === 'warning' || notifications.status === 'warning') {
       overallStatus = 'degraded';
     }
-    
-    const result: HealthCheckResult = {
+    // Vault: se habilitado e não ok, degrada (não derruba — temos fallback opcional)
+    if (VAULT_ENABLED && !vault.ok) overallStatus = overallStatus === 'unhealthy' ? 'unhealthy' : 'degraded';
+
+    const result: HealthCheckResult & { vault: typeof vault } = {
       status: overallStatus,
       timestamp: new Date().toISOString(),
       database,
       cron,
       notifications,
+      vault,
       uptime: process.uptime()
     };
     

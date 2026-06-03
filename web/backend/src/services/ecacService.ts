@@ -295,6 +295,49 @@ export class EcacService {
     this.sessaoInjetada = true;
   }
 
+  /**
+   * API pública para outros módulos (DCTFweb, eventualmente outros) reutilizarem
+   * a infraestrutura mTLS + injeção de cookies + estabelecimento de sessão e-CAC
+   * que já temos pronta. Retorna a Page autenticada navegada até o portal e-CAC,
+   * pronta para o crawler do módulo invocar `goto(<URL específica>)`.
+   *
+   * Se a sessão estiver expirada, lança erro com `sessaoExpirada=true` no objeto
+   * para o caller orientar o usuário a re-autenticar pelo fluxo de certificados.
+   */
+  async prepararSessaoAutenticada(pfxBuffer: Buffer, passphrase: string, sessaoCookies: string | null): Promise<Page> {
+    if (!this.context) {
+      this.progress('Inicializando navegador com certificado digital...', 5);
+      await this.initBrowser(pfxBuffer, passphrase, sessaoCookies);
+    }
+    if (!this.page) throw new Error('Página não inicializada após initBrowser');
+
+    this.progress('Estabelecendo sessão no portal e-CAC...', 20);
+    await this.page.goto('https://cav.receita.fazenda.gov.br/ecac/', { waitUntil: 'load', timeout: 60000 });
+    await this.page.waitForTimeout(2000);
+
+    const url = this.page.url().toLowerCase();
+    if (url.includes('autenticacao') || url.includes('login') || url.includes('sso.acesso.gov.br')) {
+      const err: any = new Error('Sessão e-CAC expirada. Re-autentique o certificado na aba Certificados.');
+      err.sessaoExpirada = true;
+      throw err;
+    }
+    await this.waitForLoading();
+    return this.page;
+  }
+
+  /** Wait helper exposto para módulos reutilizarem o spinner aware do e-CAC. */
+  async aguardarCarregamento(): Promise<void> {
+    return this.waitForLoading();
+  }
+
+  /** Encerra browser de forma segura — chamável pelos consumidores externos. */
+  async encerrar(): Promise<void> {
+    try { await this.browser?.close(); } catch { /* ignore */ }
+    this.browser = null; this.context = null; this.page = null;
+    for (const f of this.tempPemFiles) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+    this.tempPemFiles = [];
+  }
+
   private assertTimeWindow(isBatch: boolean) {
     const hora = new Date().getHours();
     if (hora < ECAC_BUSINESS_START_HOUR) {
@@ -1443,6 +1486,329 @@ export class EcacService {
     }
 
     return result;
+  }
+
+  /**
+   * Baixa o PDF completo do DOCUMENTO PER/DCOMP (não o recibo) clicando no
+   * ícone "Imprimir" da última coluna da lista de Documentos Entregues.
+   *
+   * Diferença pro recibo:
+   *   • Recibo  → expandir linha (+) → "Imprimir Recibo" no painel
+   *   • Documento → click direto no ícone de impressora na coluna "Imprimir"
+   * O PDF é maior (~5 páginas com todos os dados do PER/DCOMP).
+   */
+  async baixarDocumentos(
+    pfxBuffer: Buffer,
+    passphrase: string,
+    sessaoCookies: string | null,
+    numeros: string[],
+    isBatch = false,
+    onProgress?: (numero: string, idx: number, total: number, ok: boolean) => void,
+    control?: { cancel: boolean; pause: boolean },
+    onDocumento?: (numero: string, pdfBuffer: Buffer) => Promise<void>,
+  ): Promise<{ documentos: Map<string, Buffer>; sessaoExpirada?: boolean; errors: string[]; cancelado?: boolean }> {
+    const result = {
+      documentos: new Map<string, Buffer>(),
+      sessaoExpirada: false,
+      errors: [] as string[],
+    };
+
+    try { this.assertTimeWindow(isBatch); }
+    catch (e: any) { result.errors.push(e.message); return result; }
+
+    try {
+      if (!this.context) {
+        this.progress('Inicializando navegador para baixar documentos...', 5);
+        await this.initBrowser(pfxBuffer, passphrase, sessaoCookies);
+      } else {
+        this.progress('Reutilizando sessão autenticada para baixar documentos...', 5);
+      }
+      if (!this.page || !this.context) throw new Error('Página não inicializada');
+
+      await this.page.goto('https://cav.receita.fazenda.gov.br/ecac/', { waitUntil: 'load', timeout: 60000 });
+      await this.page.waitForTimeout(3000);
+      const portalUrl = this.page.url().toLowerCase();
+      if (portalUrl.includes('autenticacao') || portalUrl.includes('login') || portalUrl.includes('sso.acesso.gov.br')) {
+        result.sessaoExpirada = true;
+        throw new Error('Sessão e-CAC expirada. Renove a autenticação.');
+      }
+      await this.waitForLoading();
+
+      this.progress('Carregando PER/DCOMP Web...', 15);
+      const PERDCOMP_WEB_BASE = 'https://www3.cav.receita.fazenda.gov.br/perdcomp-web/';
+      await this.page.goto(PERDCOMP_WEB_BASE, { waitUntil: 'load', timeout: 90000 });
+      await this.page.waitForTimeout(5000);
+      await this.waitForLoading();
+
+      // Clicar em "Visualizar Documentos" (sidebar)
+      const vizSelectors = [
+        'a:has-text("Visualizar Documentos")', 'button:has-text("Visualizar Documentos")',
+        '[class*="menu"] a:has-text("Visualizar")', '[class*="sidebar"] a:has-text("Visualizar")',
+        '[class*="nav"] a:has-text("Visualizar")', 'li a:has-text("Visualizar")',
+      ];
+      for (const sel of vizSelectors) {
+        try {
+          const loc = this.page.locator(sel).first();
+          if (await loc.count() > 0) {
+            await loc.click({ timeout: 6000 });
+            await this.page.waitForTimeout(3000);
+            await this.waitForLoading();
+            break;
+          }
+        } catch { /* try next */ }
+      }
+
+      // Clicar na aba "Documentos Entregues"
+      const entregueSelectors = [
+        'a:has-text("Documentos Entregues")', 'button:has-text("Documentos Entregues")',
+        '[role="tab"]:has-text("Documentos Entregues")', '[class*="tab"]:has-text("Entregues")',
+      ];
+      for (const sel of entregueSelectors) {
+        try {
+          const loc = this.page.locator(sel).first();
+          if (await loc.count() > 0) {
+            await loc.click({ timeout: 6000 });
+            await this.page.waitForTimeout(3000);
+            await this.waitForLoading();
+            break;
+          }
+        } catch { /* try next */ }
+      }
+
+      // Aguarda tabela ter números PER/DCOMP visíveis
+      try {
+        await this.page.waitForFunction(() => {
+          return /\d{1,5}\.\d{1,5}\.\d{6}\.\d{1,2}\.\d{1,2}\.\d{1,3}-\d{4}/.test(document.body.innerText);
+        }, { timeout: 20000 });
+      } catch {
+        log.warn('[eCAC/Documento] Timeout aguardando lista — prosseguindo');
+      }
+
+      await this.tryIncreasePageSize();
+
+      // Cruza linhas da grade com pendentes (mesma lógica do baixarRecibos)
+      let pageNum = 1;
+      const MAX_PAGES = 50;
+      const pendentesPorNorm = new Map<string, string>();
+      for (const n of numeros) {
+        const norm = normalizePerdcompNumero(n) || n;
+        pendentesPorNorm.set(norm, n);
+      }
+      const totalPendentesIni = pendentesPorNorm.size;
+
+      while (pageNum <= MAX_PAGES && pendentesPorNorm.size > 0) {
+        const rowInfos = await this.page.evaluate(() => {
+          const flexRe = /(\d{1,5})\.(\d{1,5})\.(\d{6})\.(\d{1,2})\.(\d{1,2})\.(\d{1,3})-(\d{4})/;
+          const norm = (m: RegExpMatchArray) => {
+            const a = m[1].padStart(5, '0');
+            const b = m[2].padStart(5, '0');
+            const f = m[6].padStart(2, '0');
+            return `${a}.${b}.${m[3]}.${m[4]}.${m[5]}.${f}-${m[7]}`;
+          };
+          const out: { normalized: string; rawSubstring: string }[] = [];
+          const rows = document.querySelectorAll('datatable-body-row, table tbody tr, [class*="row" i]:not(body):not(div.row)');
+          for (const row of Array.from(rows)) {
+            const text = (row as HTMLElement).innerText || '';
+            const m = text.replace(/ /g, ' ').match(flexRe);
+            if (m) out.push({ normalized: norm(m), rawSubstring: m[0] });
+          }
+          return out;
+        });
+
+        log.info(`[eCAC/Documento] Página ${pageNum}: ${rowInfos.length} linha(s)`);
+
+        for (const { normalized, rawSubstring } of rowInfos) {
+          if (control?.cancel) { (result as any).cancelado = true; return result; }
+          if (control?.pause) {
+            const pctAtual = 15 + Math.floor(((totalPendentesIni - pendentesPorNorm.size) / numeros.length) * 80);
+            this.progress('Pausado pelo usuário', pctAtual);
+            while (control?.pause && !control?.cancel) {
+              await this.page.waitForTimeout(1000);
+            }
+          }
+          if (control?.cancel) { (result as any).cancelado = true; return result; }
+
+          const original = pendentesPorNorm.get(normalized);
+          if (!original) continue;
+
+          const ok = await this.baixarDocumentoParaNumero(original, result.documentos, rawSubstring);
+          pendentesPorNorm.delete(normalized);
+          const done = totalPendentesIni - pendentesPorNorm.size;
+          onProgress?.(original, done, numeros.length, ok);
+          this.progress(
+            `Documento ${done}/${numeros.length} (${original})`,
+            15 + Math.floor((done / numeros.length) * 80),
+          );
+          if (ok && onDocumento) {
+            const pdf = result.documentos.get(original);
+            if (pdf) {
+              try { await onDocumento(original, pdf); }
+              catch (e: any) { log.warn(`[eCAC/Documento] onDocumento callback falhou para ${original}: ${e.message}`); }
+            }
+          }
+          if (!ok) result.errors.push(`Falha ao baixar documento de ${original}`);
+        }
+
+        if (pendentesPorNorm.size === 0) break;
+        if (control?.cancel) { (result as any).cancelado = true; return result; }
+        const hasNext = await this.goNextPage(pageNum);
+        if (!hasNext) {
+          log.info(`[eCAC/Documento] Última página atingida (${pageNum}); ${pendentesPorNorm.size} pendente(s)`);
+          break;
+        }
+        await this.page.waitForTimeout(2500);
+        await this.waitForLoading();
+        pageNum++;
+      }
+
+      if (pendentesPorNorm.size > 0) {
+        const amostra = Array.from(pendentesPorNorm.values()).slice(0, 5).join(', ');
+        result.errors.push(
+          `${pendentesPorNorm.size} documento(s) só existem no programa antigo da Receita ` +
+          `(pré-PERDCOMP Web), PDFs não disponíveis para download automático. Amostra: ${amostra}`,
+        );
+      }
+
+      this.progress(`Concluído: ${result.documentos.size} documento(s) baixado(s)`, 95);
+    } catch (err: any) {
+      log.error(`[eCAC/Documento] Erro: ${err.message}`);
+      result.errors.push(err.message);
+    } finally {
+      await this.fechar();
+      this.progress('Processo finalizado', 100);
+    }
+
+    return result;
+  }
+
+  /**
+   * Baixa o PDF completo de UM documento clicando no ícone "Imprimir" da
+   * última coluna da linha correspondente ao `numero` na grade atual.
+   *
+   * O ícone fica na coluna "Imprimir" (última coluna visível); a página dispara
+   * um download/response application/pdf via SERPRO ao clicar.
+   */
+  private async baixarDocumentoParaNumero(
+    numero: string,
+    out: Map<string, Buffer>,
+    rawSubstring: string,
+  ): Promise<boolean> {
+    if (!this.page || !this.context) return false;
+
+    let captured: Buffer | null = null;
+
+    const onDownload = async (download: any) => {
+      if (captured) return;
+      try {
+        const p = await download.path();
+        if (p) {
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 100) captured = buf;
+        }
+      } catch { /* ignore */ }
+    };
+
+    const onResponse = async (response: any) => {
+      if (captured) return;
+      try {
+        const ct = (response.headers()['content-type'] || '').toLowerCase();
+        if (ct.includes('application/pdf')) {
+          const buf = await response.body();
+          if (buf && buf.length > 100) captured = buf;
+        }
+      } catch { /* ignore */ }
+    };
+
+    const onPopup = async (popup: any) => {
+      if (captured) return;
+      try {
+        await popup.waitForLoadState('load', { timeout: 15000 }).catch(() => null);
+        // Se o popup é PDF direto
+        const popupUrl = popup.url();
+        if (popupUrl.endsWith('.pdf') || popupUrl.startsWith('blob:')) {
+          const buf = await popup.evaluate(async () => {
+            const r = await fetch(location.href);
+            const b = await r.arrayBuffer();
+            return Array.from(new Uint8Array(b));
+          }).catch(() => null);
+          if (buf) captured = Buffer.from(buf);
+        }
+      } catch { /* ignore */ }
+    };
+
+    this.page.on('download', onDownload);
+    this.page.on('response', onResponse);
+    this.context.on('page', onPopup);
+    const onContextResponse = (resp: any) => { void onResponse(resp); };
+    this.context.on('response', onContextResponse);
+
+    try {
+      // Marca a linha pelo número no DOM, então acha o botão/ícone "Imprimir" mais próximo
+      // dela e clica. A coluna "Imprimir" é a última, e o elemento clicável é uma
+      // <a>/<button> com class contendo "imprimir" ou um <img> com src de impressora.
+      const clicked = await this.page.evaluate((numStr: string) => {
+        // Encontra a linha que contém o número
+        const rows = document.querySelectorAll('datatable-body-row, table tbody tr, [class*="row" i]:not(body):not(div.row)');
+        let targetRow: HTMLElement | null = null;
+        for (const row of Array.from(rows)) {
+          if ((row as HTMLElement).innerText.includes(numStr)) {
+            targetRow = row as HTMLElement;
+            break;
+          }
+        }
+        if (!targetRow) return false;
+
+        // Procura na linha pelo ícone/link de "Imprimir" — geralmente é o último elemento
+        // clicável e tem cor laranja (printer icon).
+        const candidatos = targetRow.querySelectorAll('a, button, [role="button"], img[src*="print" i], [class*="print" i], [class*="imprimir" i], i.fa-print, [title*="Imprimir" i], [aria-label*="Imprimir" i]');
+        // Filtra: pega o último elemento que parece "imprimir" (mais à direita visualmente)
+        let alvo: HTMLElement | null = null;
+        for (const el of Array.from(candidatos)) {
+          const e = el as HTMLElement;
+          const txt = (e.textContent || '').toLowerCase();
+          const title = (e.getAttribute('title') || '').toLowerCase();
+          const aria = (e.getAttribute('aria-label') || '').toLowerCase();
+          const cls = (e.className || '').toString().toLowerCase();
+          const src = ((e as HTMLImageElement).src || '').toLowerCase();
+          if (txt.includes('imprimir') || title.includes('imprimir') || aria.includes('imprimir') ||
+              cls.includes('print') || cls.includes('imprimir') || src.includes('print')) {
+            alvo = e;
+          }
+        }
+        if (!alvo) {
+          // Fallback: o último elemento clicável da linha (geralmente é o printer icon)
+          const all = targetRow.querySelectorAll('a, button, [role="button"]');
+          if (all.length > 0) alvo = all[all.length - 1] as HTMLElement;
+        }
+        if (!alvo) return false;
+        alvo.scrollIntoView({ block: 'center' });
+        alvo.click();
+        return true;
+      }, rawSubstring);
+
+      if (!clicked) {
+        log.warn(`[eCAC/Documento] Botão Imprimir não encontrado para ${numero}`);
+        return false;
+      }
+
+      // Aguarda captura (max 25s — Documento maior que recibo, demora um pouco mais)
+      for (let i = 0; i < 50 && !captured; i++) {
+        await this.page.waitForTimeout(500);
+      }
+
+      if (captured) {
+        out.set(numero, captured);
+        log.info(`[eCAC/Documento] PDF capturado para ${numero} (${(captured as Buffer).length} bytes)`);
+        return true;
+      }
+      log.warn(`[eCAC/Documento] Timeout aguardando PDF para ${numero}`);
+      return false;
+    } finally {
+      this.page.off('download', onDownload);
+      this.page.off('response', onResponse);
+      this.context.off('page', onPopup);
+      this.context.off('response', onContextResponse);
+    }
   }
 
   /**

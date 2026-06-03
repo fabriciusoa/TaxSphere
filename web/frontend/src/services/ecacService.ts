@@ -101,6 +101,13 @@ export interface EcacPerdcompDocumento {
   recibo_parse_status: 'OK' | 'ERRO' | null;
   recibo_parse_erro: string | null;
   tem_recibo: boolean;
+  // Documento PDF completo (5+ páginas) — clicado via ícone "Imprimir" na lista do e-CAC.
+  documento_baixado_em: string | null;
+  tem_documento: boolean;
+  // True quando o doc foi entregue pelo programa desktop antigo (< 2018) e o PDF não
+  // está disponível para download automático no SERPRO. Não adianta tentar baixar.
+  recibo_indisponivel?: boolean;
+  documento_indisponivel?: boolean;
   // Etapas C/D/E
   status_normalizado: string | null;
   id_documento_retificado: number | null;
@@ -197,6 +204,50 @@ export const ecacService = {
       const { data } = await api.get(`/ecac/certificados/${id}/sessao`);
       return data;
     },
+
+    /**
+     * Reporta ao backend que o usuário viu a página "BOT support ID" — escala o backoff
+     * e devolve o novo tempo de cool-down para a próxima auth.
+     */
+    reportarWafBlock: async (detalhe?: string): Promise<{ aguardar_segundos: number; backoff_multiplier: number }> => {
+      const { data } = await api.post('/ecac/waf-block-reportar', { detalhe: detalhe || '' });
+      return data;
+    },
+
+    /**
+     * Reseta o backoff manualmente (admin). Útil em troubleshooting ou após manutenção do WAF.
+     */
+    resetarBackoffWaf: async (): Promise<{ ok: boolean }> => {
+      const { data } = await api.post('/ecac/waf-block-reset');
+      return data;
+    },
+  },
+
+  /**
+   * Gestor de sessões e-CAC — lista TODAS as sessões com classificação de idade.
+   * Status: FRESCA (<6h), USAVEL (6-24h), ENVELHECIDA (24-72h), EXPIRADA (>72h ou ausente),
+   * FALHOU (RPA detectou cookies inválidos).
+   */
+  sessoes: {
+    listar: async (): Promise<{
+      sessoes: Array<{
+        id: number; id_empresa: number | null; cn: string; nome: string;
+        razao_social: string | null; cnpj: string | null;
+        sessao_presente: boolean; sessao_capturada_em: string | null;
+        sessao_falha_em: string | null; sessao_falha_motivo: string | null;
+        ultimo_uso: string | null; idade_segundos: number;
+        status_sessao: 'FRESCA' | 'USAVEL' | 'ENVELHECIDA' | 'EXPIRADA' | 'FALHOU';
+      }>;
+      resumo: Record<string, number>;
+      total: number;
+    }> => {
+      const { data } = await api.get('/ecac/sessoes');
+      return data;
+    },
+    marcarFalha: async (certId: number, motivo: string): Promise<{ ok: boolean }> => {
+      const { data } = await api.post(`/ecac/certificados/${certId}/sessao/falha`, { motivo });
+      return data;
+    },
   },
 
   sincronizacao: {
@@ -271,9 +322,21 @@ export const ecacService = {
     /** URL para abrir o PDF do recibo no navegador (em nova aba). */
     reciboPdfUrl: (id: number): string => `/api/ecac/perdcomp-documentos/${id}/recibo.pdf`,
 
+    /** URL para abrir o PDF do documento completo (5+ páginas) no navegador. */
+    documentoPdfUrl: (id: number): string => `/api/ecac/perdcomp-documentos/${id}/documento.pdf`,
+
     /** Inicia o download em lote dos PDFs de recibo (background). */
     baixarRecibos: async (idEmpresa: number, somentePendentes = true): Promise<{ sync_id: number; total: number; message: string }> => {
       const { data } = await api.post('/ecac/baixar-recibos', {
+        id_empresa: idEmpresa,
+        somente_pendentes: somentePendentes,
+      });
+      return data;
+    },
+
+    /** Inicia o download em lote dos PDFs de documento completo (background). */
+    baixarDocumentos: async (idEmpresa: number, somentePendentes = true): Promise<{ sync_id: number; total: number; message: string }> => {
+      const { data } = await api.post('/ecac/baixar-documentos', {
         id_empresa: idEmpresa,
         somente_pendentes: somentePendentes,
       });

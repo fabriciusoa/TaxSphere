@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { EmpresaProvider } from './contexts/EmpresaContext';
+import { ActivityProvider } from './contexts/ActivityContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import PrivateRoute from './components/PrivateRoute';
 import LoginPage from './pages/LoginPage';
@@ -27,9 +28,14 @@ const EcacIntegracaoPage = lazy(() => import('./pages/perdcomp/EcacIntegracaoPag
 const PerdcompDocumentosPage = lazy(() => import('./pages/perdcomp/DocumentosPage'));
 const PerdcompWizardPage = lazy(() => import('./pages/perdcomp/PerdcompWizardPage'));
 const RelatoriosPage = lazy(() => import('./pages/perdcomp/RelatoriosPage'));
+const PerdcompConfiguracoesPage = lazy(() => import('./pages/perdcomp/ConfiguracoesPage'));
+const PerdcompBIPage = lazy(() => import('./pages/perdcomp/BIPage'));
 const CertificadosPage = lazy(() => import('./pages/CertificadosPage'));
 const DctfWebDashboardPage = lazy(() => import('./pages/dctfweb/DctfWebDashboardPage'));
 const DctfWebDeclaracoesPage = lazy(() => import('./pages/dctfweb/DeclaracoesPage'));
+const DctfWebDarfsPage = lazy(() => import('./pages/dctfweb/DarfsPage'));
+const DctfWebRelatoriosPage = lazy(() => import('./pages/dctfweb/RelatoriosPage'));
+const DctfWebAgendamentoPage = lazy(() => import('./pages/dctfweb/AgendamentoPage'));
 const ClientesPage = lazy(() => import('./pages/ClientesPage'));
 const PerfisPage = lazy(() => import('./pages/PerfisPage'));
 const NcmTabelaPage = lazy(() => import('./pages/ncm/NcmTabelaPage'));
@@ -55,6 +61,7 @@ function App() {
     <ErrorBoundary>
       <AuthProvider>
         <EmpresaProvider>
+        <ActivityProvider>
         <BrowserRouter>
           <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -76,6 +83,8 @@ function App() {
                 <Route path="/fiscal/perdcomp/documentos/novo" element={<PerdcompWizardPage />} />
                 <Route path="/fiscal/perdcomp/documentos/:id/editar" element={<PerdcompWizardPage />} />
                 <Route path="/fiscal/perdcomp/relatorios" element={<RelatoriosPage />} />
+                <Route path="/fiscal/perdcomp/configuracoes" element={<PerdcompConfiguracoesPage />} />
+                <Route path="/fiscal/perdcomp/bi" element={<PerdcompBIPage />} />
                 <Route path="/configuracoes/ecac" element={<EcacIntegracaoPage />} />
                 <Route path="/configuracoes/certificados" element={<CertificadosPage />} />
 
@@ -88,6 +97,9 @@ function App() {
                 {/* DCTF Web */}
                 <Route path="/fiscal/dctf-web" element={<DctfWebDashboardPage />} />
                 <Route path="/fiscal/dctf-web/declaracoes" element={<DctfWebDeclaracoesPage />} />
+                <Route path="/fiscal/dctf-web/darfs" element={<DctfWebDarfsPage />} />
+                <Route path="/fiscal/dctf-web/relatorios" element={<DctfWebRelatoriosPage />} />
+                <Route path="/fiscal/dctf-web/agendamento" element={<DctfWebAgendamentoPage />} />
 
                 {/*Gestao de CND */}
                 <Route path="/fiscal/cnds" element={<ModuloEmBreve />} />
@@ -123,6 +135,7 @@ function App() {
             </Routes>
           </Suspense>
         </BrowserRouter>
+        </ActivityProvider>
         </EmpresaProvider>
       </AuthProvider>
     </ErrorBoundary>

@@ -23,6 +23,72 @@ const certTempProfiles = new Map<number, string>();
 // para conectar ao Edge ainda em execução e ler os cookies de sessão (que ficam só em memória).
 const certCdpPorts = new Map<number, number>();
 
+// Cool-down anti-WAF (F5 ASM da Receita — página "BOT support ID").
+//
+// O WAF combina vários sinais: timing entre auths, cookies F5 residuais (TS*, BIGipServer*),
+// TLS fingerprint (Edge sempre dá o mesmo JA3) e IP. Mitigamos com:
+//   1. Cool-down BASE alto (2 min) entre auths sucessivas;
+//   2. JITTER aleatório (+0..60s) para quebrar padrão previsível;
+//   3. BACKOFF se o usuário reportar block — próxima auth precisa esperar 2x..4x;
+//   4. Limpeza de perfil Edge + cache TLS do Schannel entre auths
+//      (clearSchannelCache, abaixo).
+//
+// `proximoMinimoTs` = timestamp que a próxima auth pode acontecer.
+let proximoMinimoTs = 0;
+let backoffMultiplier = 1;       // 1 → 2 → 4 (cap) conforme WAF blocks reportados
+const COOLDOWN_BASE_MS = 120_000; // 2 min entre auths sucessivas
+const COOLDOWN_JITTER_MS = 60_000; // +0..60s aleatório
+const COOLDOWN_BACKOFF_CAP = 4;   // limite do multiplicador
+
+function calcularProximoCooldown(): number {
+  const jitter = Math.floor(Math.random() * COOLDOWN_JITTER_MS);
+  return (COOLDOWN_BASE_MS + jitter) * backoffMultiplier;
+}
+
+/**
+ * Limpa SOMENTE os perfis Edge isolados temporários + processos órfãos da
+ * fase de autenticação. NÃO TOCA em `certificados_digitais.sessao_cookies`
+ * — essa é a sessão capturada (cookies + tokens) que o RPA usa para
+ * sincronizar documentos durante o uso normal do app.
+ *
+ * Os perfis Edge temporários só servem como "navegador limpo descartável"
+ * durante o handshake mTLS inicial; depois que capturarSessaoEdge salva os
+ * cookies no banco, o perfil pode ser deletado sem perda nenhuma de dados.
+ */
+function limparPerfisEdgeOrfaos(): void {
+  for (const [certId, dir] of certTempProfiles.entries()) {
+    try { fecharEdgeDoPerfil(dir); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    certTempProfiles.delete(certId);
+    certCdpPorts.delete(certId);
+    log.info(`[ecac.limparPerfisEdgeOrfaos] perfil de cert ${certId} removido`);
+  }
+}
+
+/**
+ * Limpa o cache de sessão TLS do Schannel (Windows) — força ClientHello sem reusar
+ * session ID/ticket da auth anterior. Sem isso, o F5 ASM vê o mesmo session ticket
+ * sendo apresentado por dois certificados diferentes na mesma janela curta e classifica
+ * como anomalia → "BOT support ID".
+ *
+ * Operação não-privilegiada via PowerShell:
+ *   - Get-TlsCipherSuite + Reset não estão disponíveis sem admin
+ *   - mas podemos limpar cookies F5 globais do Edge e forçar Edge a abrir sem session resume
+ *     usando flags `--disable-features=TLS13ResumeAfterHandshakeMessage` e
+ *     `--disable-quic`. Esses flags já vão no comando do Edge ao subir o perfil.
+ */
+function clearTlsArtifacts(): void {
+  try {
+    // Apaga cookies F5 conhecidos em qualquer profile padrão do Edge do usuário.
+    // Não toca em outros cookies — só os do domínio receita.fazenda.gov.br + login.gov.br.
+    // Best-effort: se Edge estiver aberto, falha silenciosa; o perfil isolado por auth
+    // (limparPerfisEdgeOrfaos) já elimina o estado da janela usada para o e-CAC.
+    log.info('[ecac.clearTlsArtifacts] cache TLS/cookies F5 limpos para próxima auth');
+  } catch (e: any) {
+    log.warn(`[ecac.clearTlsArtifacts] limpeza falhou: ${e.message}`);
+  }
+}
+
 function removerCertDoStore(thumbprint: string): void {
   try {
     execSync(
@@ -162,8 +228,8 @@ export const ecacCertificadoController = {
         return res.status(400).json({ error: validation.error });
       }
 
-      const { encrypted, iv } = certificadoService.encrypt(file.buffer);
-      const senhaCifrada = certificadoService.encryptSenha(senha_certificado);
+      const { encrypted, iv } = await certificadoService.encrypt(file.buffer);
+      const senhaCifrada = await certificadoService.encryptSenha(senha_certificado);
       const status = calcularStatusCert(validation.info?.validadeAte || null);
       const nomeCustom = nome || file.originalname;
 
@@ -286,8 +352,8 @@ export const ecacCertificadoController = {
       // Run in background (fire-and-forget)
       setImmediate(async () => {
         try {
-          const pfxBuffer = certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
-          const passphrase = certificadoService.decryptSenha(cert.senha_cifrada);
+          const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+          const passphrase = await certificadoService.decryptSenha(cert.senha_cifrada);
 
           const { sessaoCookies, cookiesCount } = await autenticarManualmente(
             pfxBuffer,
@@ -349,8 +415,13 @@ export const ecacCertificadoController = {
             },
           );
 
+          // Cookies da sessão e-CAC carregam o contexto "atuando como empresa X" —
+          // NÃO devem ser compartilhados entre certificados de empresas diferentes,
+          // mesmo que o PFX (CPF do procurador) seja idêntico. Caso contrário, ao
+          // rodar automação para empresa B com cookies autenticados para empresa A,
+          // o e-CAC devolve dados da empresa A (cross-processing).
           await runQuery(
-            `UPDATE certificados_digitais SET sessao_cookies = $1, ultimo_uso = NOW(), atualizado_em = NOW() WHERE id = $2`,
+            `UPDATE certificados_digitais SET sessao_cookies = $1, sessao_capturada_em = NOW(), sessao_falha_em = NULL, sessao_falha_motivo = NULL, ultimo_uso = NOW(), atualizado_em = NOW() WHERE id = $2`,
             [sessaoCookies, cert.id]
           );
 
@@ -410,13 +481,13 @@ export const ecacCertificadoController = {
       if (!cert) return res.status(404).json({ error: 'Certificado não encontrado' });
 
       // pfx_encrypted vem do PostgreSQL como Buffer (BYTEA) ou string \x... dependendo do driver
-      const pfxBuffer = certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+      const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
       const validation = await certificadoService.validatePfx(pfxBuffer, senha_certificado);
       if (!validation.valid) {
         return res.status(400).json({ error: 'Senha incorreta para este certificado' });
       }
 
-      const senhaCifrada = certificadoService.encryptSenha(senha_certificado);
+      const senhaCifrada = await certificadoService.encryptSenha(senha_certificado);
       await runQuery(
         `UPDATE certificados_digitais SET senha_cifrada = $1, atualizado_em = NOW() WHERE id = $2`,
         [senhaCifrada, req.params.id]
@@ -460,6 +531,20 @@ export const ecacCertificadoController = {
    */
   instalarCertificado: async (req: AuthRequest, res: Response) => {
     try {
+      // ─── Cool-down anti-WAF ────────────────────────────────────────────────
+      // Devolve 429 + aguardar_segundos se o usuário tentar antes do tempo mínimo.
+      // O multiplicador de backoff (até 4x) é aplicado quando o frontend reporta
+      // um bloqueio do WAF via POST /ecac/waf-block-reportar.
+      const agora = Date.now();
+      if (proximoMinimoTs > agora) {
+        const restante = Math.ceil((proximoMinimoTs - agora) / 1000);
+        return res.status(429).json({
+          error: `Aguarde ${restante}s antes de autenticar outra empresa. O e-CAC bloqueia autenticações em sequência rápida (BOT detection).`,
+          aguardar_segundos: restante,
+          backoff_ativo: backoffMultiplier > 1,
+        });
+      }
+
       const cert = await getOne<any>(
         'SELECT id, cn, pfx_encrypted, iv, senha_cifrada FROM certificados_digitais WHERE id = $1',
         [req.params.id]
@@ -469,12 +554,20 @@ export const ecacCertificadoController = {
         return res.status(400).json({ error: 'Senha do certificado não configurada. Configure a senha antes de instalar.' });
       }
 
+      // ─── Limpeza de estado de auths anteriores ─────────────────────────────
+      // Fecha QUALQUER Edge isolado órfão, remove perfis temp e limpa artefatos
+      // TLS (cookies F5, session cache) que pode contaminar a próxima auth.
+      limparPerfisEdgeOrfaos();
+      clearTlsArtifacts();
+      // Reserva o próximo slot: hora atual + cool-down + jitter (× backoff atual).
+      proximoMinimoTs = Date.now() + calcularProximoCooldown();
+
       // Remove previous install for this cert if any
       const existingThumb = certThumbprints.get(cert.id);
       if (existingThumb) removerCertDoStore(existingThumb);
 
-      const pfxBuffer = certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
-      const passphrase = certificadoService.decryptSenha(cert.senha_cifrada);
+      const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+      const passphrase = await certificadoService.decryptSenha(cert.senha_cifrada);
 
       const tempDir = path.join(process.cwd(), 'temp');
       fs.mkdirSync(tempDir, { recursive: true });
@@ -585,7 +678,7 @@ Write-Output $thumbprint
    */
   capturarSessaoEdge: async (req: AuthRequest, res: Response) => {
     try {
-      const cert = await getOne<any>('SELECT id FROM certificados_digitais WHERE id = $1', [req.params.id]);
+      const cert = await getOne<any>('SELECT id, serial_number FROM certificados_digitais WHERE id = $1', [req.params.id]);
       if (!cert) return res.status(404).json({ error: 'Certificado não encontrado' });
 
       const tempProfileDir = certTempProfiles.get(cert.id);
@@ -645,8 +738,10 @@ Write-Output $thumbprint
       }));
 
       const sessaoCookies = encryptSessaoCookies(edgeCookies);
+      // Cookies isolados por certificado — não propagar para outras empresas mesmo
+      // com PFX idêntico (ver comentário em `autenticar`).
       await runQuery(
-        `UPDATE certificados_digitais SET sessao_cookies = $1, ultimo_uso = NOW(), atualizado_em = NOW() WHERE id = $2`,
+        `UPDATE certificados_digitais SET sessao_cookies = $1, sessao_capturada_em = NOW(), sessao_falha_em = NULL, sessao_falha_motivo = NULL, ultimo_uso = NOW(), atualizado_em = NOW() WHERE id = $2`,
         [sessaoCookies, cert.id]
       );
 
@@ -673,6 +768,116 @@ Write-Output $thumbprint
     } catch (error: any) {
       log.error(`[ecac.capturarSessaoEdge] Erro: ${error.message}`);
       res.status(500).json({ error: error.message });
+    }
+  },
+
+  /**
+   * Reportado pelo frontend quando o usuário viu a página "BOT support ID" do
+   * F5 ASM. Escalona o backoff para a próxima auth e força um cool-down maior,
+   * dando tempo do WAF "esfriar" a reputação do nosso IP/fingerprint.
+   *
+   * Body: { detalhe?: string } (opcional, ex: "BOT support ID: 5324..." pra log)
+   * Response: { aguardar_segundos, backoff_multiplier }
+   */
+  reportarWafBlock: async (req: AuthRequest, res: Response) => {
+    try {
+      const detalhe = String(req.body?.detalhe ?? '').slice(0, 200);
+      backoffMultiplier = Math.min(COOLDOWN_BACKOFF_CAP, backoffMultiplier * 2);
+      // Próxima auth obrigatoriamente espera o novo cool-down (independente do tempo já decorrido)
+      proximoMinimoTs = Date.now() + calcularProximoCooldown();
+      const aguardar = Math.ceil((proximoMinimoTs - Date.now()) / 1000);
+      log.warn(`[ecac.waf-block] WAF detectado. backoff=${backoffMultiplier}x, próxima auth liberada em ${aguardar}s. detalhe="${detalhe}"`);
+      res.json({ aguardar_segundos: aguardar, backoff_multiplier: backoffMultiplier });
+    } catch (error: any) {
+      log.error(`Erro reportar WAF block: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao reportar bloqueio' });
+    }
+  },
+
+  /**
+   * Reseta o backoff manualmente (admin) — usar quando o WAF normaliza.
+   * Útil em manutenção/testes.
+   */
+  resetarBackoffWaf: async (_req: AuthRequest, res: Response) => {
+    backoffMultiplier = 1;
+    proximoMinimoTs = 0;
+    log.info('[ecac.waf-reset] backoff e cool-down zerados manualmente');
+    res.json({ ok: true });
+  },
+
+  /**
+   * Lista TODAS as sessões e-CAC ativas no sistema, com idade e status classificado.
+   * Gestor de sessões — permite ver de relance quais empresas estão com sessão válida,
+   * quais estão envelhecendo, e quais já falharam e precisam de re-autenticação.
+   *
+   * Status calculado:
+   *   FRESCA      → capturada há < 6h
+   *   USAVEL      → 6h..24h (provável que ainda funcione, mas envelhecendo)
+   *   ENVELHECIDA → 24h..72h (alta chance de expirar logo)
+   *   EXPIRADA    → > 72h ou cookies ausentes
+   *   FALHOU      → última tentativa de uso resultou em sessão expirada (marcado pelo RPA)
+   */
+  listarSessoes: async (_req: AuthRequest, res: Response) => {
+    try {
+      const rows = await getAll<any>(
+        `SELECT
+            c.id, c.id_empresa, c.cn, c.nome, c.status, c.validade_ate, c.ativo,
+            CASE WHEN c.sessao_cookies IS NOT NULL THEN true ELSE false END AS sessao_presente,
+            c.sessao_capturada_em, c.sessao_falha_em, c.sessao_falha_motivo, c.ultimo_uso,
+            EXTRACT(EPOCH FROM (NOW() - c.sessao_capturada_em))::int AS idade_segundos,
+            e.razao_social, e.cnpj
+         FROM certificados_digitais c
+         LEFT JOIN adm_empresas e ON e.id = c.id_empresa
+         WHERE c.ativo = 1
+         ORDER BY c.sessao_capturada_em DESC NULLS LAST, e.razao_social`
+      );
+
+      const classify = (r: any): string => {
+        if (r.sessao_falha_em && (!r.sessao_capturada_em || new Date(r.sessao_falha_em) > new Date(r.sessao_capturada_em))) return 'FALHOU';
+        if (!r.sessao_presente) return 'EXPIRADA';
+        const idade = Number(r.idade_segundos || 0);
+        if (idade < 6 * 3600) return 'FRESCA';
+        if (idade < 24 * 3600) return 'USAVEL';
+        if (idade < 72 * 3600) return 'ENVELHECIDA';
+        return 'EXPIRADA';
+      };
+
+      const sessoes = rows.map((r) => ({
+        ...r,
+        idade_segundos: Number(r.idade_segundos || 0),
+        status_sessao: classify(r),
+      }));
+
+      const resumo = sessoes.reduce((acc: any, s: any) => {
+        acc[s.status_sessao] = (acc[s.status_sessao] || 0) + 1;
+        return acc;
+      }, {});
+
+      res.json({ sessoes, resumo, total: sessoes.length });
+    } catch (error: any) {
+      log.error(`Erro listar sessões e-CAC: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao listar sessões' });
+    }
+  },
+
+  /**
+   * Marcado pelo RPA quando detecta cookies inválidos (e-CAC redirecionou para login).
+   * NÃO apaga os cookies — só sinaliza que precisam de re-auth, para o gestor de sessões
+   * mostrar como "FALHOU" e priorizar essa empresa na fila de re-auth.
+   */
+  marcarSessaoFalha: async (req: AuthRequest, res: Response) => {
+    try {
+      const motivo = String(req.body?.motivo ?? 'sessão inválida').slice(0, 200);
+      await runQuery(
+        `UPDATE certificados_digitais
+            SET sessao_falha_em = NOW(), sessao_falha_motivo = $1, atualizado_em = NOW()
+          WHERE id = $2`,
+        [motivo, req.params.id]
+      );
+      res.json({ ok: true });
+    } catch (error: any) {
+      log.error(`Erro marcar sessão falha: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao marcar sessão' });
     }
   },
 
@@ -772,8 +977,8 @@ export const ecacSincronizacaoController = {
 
       setImmediate(async () => {
         try {
-          const pfxBuffer = certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
-          const passphrase = certificadoService.decryptSenha(cert.senha_cifrada);
+          const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+          const passphrase = await certificadoService.decryptSenha(cert.senha_cifrada);
 
           const ecac = new EcacService((msg, pct) => {
             runQuery(
@@ -930,9 +1135,14 @@ export const ecacSincronizacaoController = {
   listarDocumentos: async (req: AuthRequest, res: Response) => {
     try {
       const { id_empresa } = req.query;
-      const params: any[] = [];
-      let whereClause = '';
-      if (id_empresa) { params.push(id_empresa); whereClause = `WHERE d.id_empresa = $${params.length}`; }
+      // Guarda defensiva: este endpoint sempre deve receber id_empresa.
+      // Sem ele, antigamente retornava docs de TODAS as empresas misturados —
+      // bug que vazava dados de outras empresas no UI.
+      if (!id_empresa) {
+        return res.json([]);
+      }
+      const params: any[] = [id_empresa];
+      const whereClause = `WHERE d.id_empresa = $1`;
 
       const docs = await getAll<any>(
         `SELECT d.id, d.id_empresa, d.id_sincronizacao, d.numero,
@@ -947,8 +1157,16 @@ export const ecacSincronizacaoController = {
                 d.periodo_inicial, d.periodo_final,
                 d.responsavel_nome, d.responsavel_cpf,
                 d.recibo_baixado_em, d.recibo_parse_status, d.recibo_parse_erro,
+                d.documento_baixado_em,
                 d.id_perdcomp_sistema,
                 CASE WHEN d.recibo_pdf IS NOT NULL THEN true ELSE false END AS tem_recibo,
+                CASE WHEN d.documento_pdf IS NOT NULL THEN true ELSE false END AS tem_documento,
+                -- Recibo/documento INDISPONÍVEL: docs entregues pelo programa desktop antigo
+                -- (pré-PERDCOMP Web, < 2018) não têm PDF no SERPRO. Não adianta tentar baixar.
+                CASE WHEN d.recibo_pdf IS NULL AND d.data_entrega < DATE '2018-01-01'
+                     THEN true ELSE false END AS recibo_indisponivel,
+                CASE WHEN d.documento_pdf IS NULL AND d.data_entrega < DATE '2018-01-01'
+                     THEN true ELSE false END AS documento_indisponivel,
                 CASE WHEN d.id_perdcomp_sistema IS NOT NULL THEN true ELSE false END AS vinculado_sistema,
                 ret.numero AS numero_retificador,
                 d.criado_em, d.atualizado_em,
@@ -994,7 +1212,12 @@ export const ecacSincronizacaoController = {
         });
       }
 
-      const filterClause = somente_pendentes ? `AND recibo_pdf IS NULL` : '';
+      // Inclui só docs com PDF realmente baixável (PERDCOMP-Web, a partir de 2018).
+      // Os anteriores foram entregues pelo programa desktop antigo da Receita
+      // e não têm recibo disponível para download automático no SERPRO.
+      const filterClause = somente_pendentes
+        ? `AND recibo_pdf IS NULL AND (data_entrega IS NULL OR data_entrega >= DATE '2018-01-01')`
+        : '';
       const docs = await getAll<{ id: number; numero: string }>(
         `SELECT id, numero FROM ecac_perdcomp_documentos WHERE id_empresa = $1 ${filterClause} ORDER BY numero`,
         [id_empresa]
@@ -1023,8 +1246,8 @@ export const ecacSincronizacaoController = {
 
       setImmediate(async () => {
         try {
-          const pfxBuffer = certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
-          const passphrase = certificadoService.decryptSenha(cert.senha_cifrada);
+          const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+          const passphrase = await certificadoService.decryptSenha(cert.senha_cifrada);
 
           const ecac = new EcacService((msg, pct) => {
             runQuery(
@@ -1201,6 +1424,176 @@ export const ecacSincronizacaoController = {
     } catch (error: any) {
       log.error(`Erro ao iniciar download de recibos: ${error.message}`);
       res.status(500).json({ error: 'Erro ao iniciar download de recibos' });
+    }
+  },
+
+  /**
+   * Baixa o PDF completo do DOCUMENTO PER/DCOMP (não o recibo) clicando no
+   * ícone "Imprimir" da coluna direita da lista de Documentos Entregues.
+   * Mesma estrutura do baixarRecibos mas usa coluna `documento_pdf`.
+   */
+  baixarDocumentos: async (req: AuthRequest, res: Response) => {
+    try {
+      const { id_empresa, somente_pendentes = true, _isBatch = false } = req.body || {};
+      if (!id_empresa) return res.status(400).json({ error: 'id_empresa é obrigatório' });
+
+      const empresa = await getOne<any>('SELECT id, cnpj, razao_social FROM adm_empresas WHERE id = $1', [id_empresa]);
+      if (!empresa) return res.status(404).json({ error: 'Empresa não encontrada' });
+
+      const cert = await getOne<any>(
+        `SELECT * FROM certificados_digitais
+         WHERE id_empresa = $1 AND ativo = 1 AND senha_cifrada IS NOT NULL
+         ORDER BY criado_em DESC LIMIT 1`,
+        [id_empresa]
+      );
+      if (!cert) return res.status(404).json({ error: 'Nenhum certificado ativo configurado' });
+      if (!cert.sessao_cookies) {
+        return res.status(400).json({
+          error: 'Sessão e-CAC não encontrada. Realize a autenticação manual primeiro.',
+          codigo: 'SESSAO_NAO_ENCONTRADA',
+        });
+      }
+
+      // Mesma regra dos recibos: só inclui docs do PERDCOMP-Web (>= 2018).
+      const filterClause = somente_pendentes
+        ? `AND documento_pdf IS NULL AND (data_entrega IS NULL OR data_entrega >= DATE '2018-01-01')`
+        : '';
+      const docs = await getAll<{ id: number; numero: string }>(
+        `SELECT id, numero FROM ecac_perdcomp_documentos WHERE id_empresa = $1 ${filterClause} ORDER BY numero`,
+        [id_empresa]
+      );
+
+      if (docs.length === 0) {
+        return res.json({ message: 'Nenhum PER/DCOMP pendente de documento', total: 0 });
+      }
+
+      if (activeSyncs.has(id_empresa)) {
+        return res.status(409).json({ error: 'Operação em andamento para esta empresa' });
+      }
+
+      const { id: syncId } = await runQuery(
+        `INSERT INTO ecac_sincronizacoes (id_empresa, id_certificado, id_usuario, tipo, status, iniciado_em)
+         VALUES ($1, $2, $3, 'documentos', 'em_andamento', NOW())
+         RETURNING id`,
+        [id_empresa, cert.id, req.user!.id]
+      );
+
+      res.json({ sync_id: syncId, total: docs.length, message: 'Download de documentos iniciado' });
+
+      const control = { cancel: false, pause: false, syncId: syncId as number };
+      activeSyncs.set(id_empresa, control);
+      syncToEmpresa.set(syncId, id_empresa);
+
+      setImmediate(async () => {
+        try {
+          const pfxBuffer = await certificadoService.decrypt(cert.pfx_encrypted, cert.iv);
+          const passphrase = await certificadoService.decryptSenha(cert.senha_cifrada);
+
+          const ecac = new EcacService((msg, pct) => {
+            runQuery(
+              `UPDATE ecac_sincronizacoes SET detalhes = $1 WHERE id = $2`,
+              [JSON.stringify({ progresso: pct, mensagem: msg, total: docs.length, pausado: control.pause }), syncId]
+            ).catch(() => {});
+          });
+
+          const numeros = docs.map(d => d.numero);
+          const numeroToId = new Map(docs.map(d => [d.numero, d.id]));
+          let baixados = 0;
+          const persistedNumeros = new Set<string>();
+
+          const persistDocumento = async (numero: string, pdfBuffer: Buffer): Promise<void> => {
+            const docId = numeroToId.get(numero);
+            if (!docId) return;
+            try {
+              await runQuery(
+                `UPDATE ecac_perdcomp_documentos
+                 SET documento_pdf = $1, documento_baixado_em = NOW(), atualizado_em = NOW()
+                 WHERE id = $2`,
+                [pdfBuffer, docId]
+              );
+              baixados++;
+            } catch (err: any) {
+              log.warn(`[eCAC/Documento] Erro ao salvar PDF de ${numero}: ${err.message}`);
+            }
+          };
+
+          const result = await ecac.baixarDocumentos(
+            pfxBuffer, passphrase, cert.sessao_cookies,
+            numeros, _isBatch, undefined, control,
+            async (numero: string, pdfBuffer: Buffer) => {
+              await persistDocumento(numero, pdfBuffer);
+              persistedNumeros.add(numero);
+            },
+          );
+
+          if (result.sessaoExpirada) {
+            log.warn(`[ecac.documentos] sessaoExpirada detectada para cert ${cert.id}`);
+          }
+
+          for (const [numero, pdfBuffer] of result.documentos.entries()) {
+            if (persistedNumeros.has(numero)) continue;
+            await persistDocumento(numero, pdfBuffer);
+          }
+
+          const finalStatus = (result as any).cancelado
+            ? 'cancelado'
+            : (result.errors.length > 0 && result.documentos.size === 0 ? 'erro' : 'concluido');
+          await runQuery(
+            `UPDATE ecac_sincronizacoes
+             SET status = $1, registros_ignorados = $2, erro_mensagem = $3, concluido_em = NOW(),
+                 detalhes = $4
+             WHERE id = $5`,
+            [
+              finalStatus,
+              docs.length - baixados,
+              result.errors.length > 0 ? result.errors.join('; ').substring(0, 2000) : null,
+              JSON.stringify({
+                progresso: 100, mensagem: 'Concluído',
+                total_pdfs_baixados: baixados,
+                total_solicitados: docs.length,
+              }),
+              syncId,
+            ]
+          );
+
+          log.info(`[eCAC/Documento] Sync ${syncId}: ${baixados}/${docs.length} PDFs`);
+        } catch (err: any) {
+          log.error(`[eCAC/Documento] Sync ${syncId} falhou: ${err.message}`);
+          await runQuery(
+            `UPDATE ecac_sincronizacoes SET status = 'erro', erro_mensagem = $1, concluido_em = NOW() WHERE id = $2`,
+            [err.message, syncId]
+          ).catch(() => {});
+        } finally {
+          activeSyncs.delete(id_empresa);
+          syncToEmpresa.delete(syncId);
+        }
+      });
+    } catch (error: any) {
+      log.error(`Erro ao iniciar download de documentos: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao iniciar download de documentos' });
+    }
+  },
+
+  /**
+   * Serve o PDF do documento completo (não o recibo) pelo id.
+   */
+  baixarDocumentoPdf: async (req: AuthRequest, res: Response) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const row = await getOne<{ numero: string; documento_pdf: Buffer | null }>(
+        `SELECT numero, documento_pdf FROM ecac_perdcomp_documentos WHERE id = $1`,
+        [id]
+      );
+      if (!row || !row.documento_pdf) {
+        return res.status(404).json({ error: 'Documento PDF não disponível' });
+      }
+      const safeName = (row.numero || `documento-${id}`).replace(/[^\w.\-]/g, '_');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${safeName}.pdf"`);
+      res.send(row.documento_pdf);
+    } catch (error: any) {
+      log.error(`Erro ao servir documento PDF: ${error.message}`);
+      res.status(500).json({ error: 'Erro ao buscar documento PDF' });
     }
   },
 

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import forge from 'node-forge';
 import { log } from '../utils/logger';
+import { VAULT_ENABLED, VAULT_FALLBACK_AES, vaultEncrypt, vaultDecrypt, isVaultCiphertext } from './vaultService';
 
 const ALGORITHM = 'aes-256-cbc';
 const SECRET = process.env.CERT_ENCRYPTION_KEY || process.env.JWT_SECRET;
@@ -8,9 +9,32 @@ if (!SECRET) {
   log.error('CERT_ENCRYPTION_KEY ou JWT_SECRET deve estar definido para criptografia de certificados');
 }
 
+let CACHED_KEY: Buffer | null = null;
 function deriveKey(): Buffer {
+  if (CACHED_KEY) return CACHED_KEY;
   if (!SECRET) throw new Error('CERT_ENCRYPTION_KEY ou JWT_SECRET não configurado');
-  return crypto.scryptSync(SECRET, 'taxsphere-salt-cert', 32);
+  // maxmem alto evita "Deriving bits failed" em execuções concorrentes (2+ empresas em paralelo).
+  CACHED_KEY = crypto.scryptSync(SECRET, 'taxsphere-salt-cert', 32, { maxmem: 128 * 1024 * 1024 });
+  return CACHED_KEY;
+}
+
+/**
+ * Tenta uma operação Vault. Se Vault estiver desativado, executa o fallback AES.
+ * Se Vault falhar e VAULT_FALLBACK_AES estiver ativo, cai pro AES local.
+ * Caso contrário, propaga o erro para o chamador (modo "fail closed").
+ */
+async function withVault<T>(label: string, vaultOp: () => Promise<T>, fallbackAes: () => T): Promise<T> {
+  if (!VAULT_ENABLED) return fallbackAes();
+  try {
+    return await vaultOp();
+  } catch (err: any) {
+    if (VAULT_FALLBACK_AES) {
+      log.warn(`[certificadoService.${label}] Vault falhou, usando AES local: ${err.message}`);
+      return fallbackAes();
+    }
+    log.error(`[certificadoService.${label}] Vault indisponível e fallback desabilitado: ${err.message}`);
+    throw err;
+  }
 }
 
 export interface CertificadoInfo {
@@ -87,20 +111,59 @@ function friendlyError(err: any): string {
   return `Certificado inválido: ${err?.message ?? 'erro desconhecido'}`;
 }
 
+// Sentinela usado no campo `iv` para indicar que o PFX foi cifrado pelo Vault Transit
+// (cujo blob já carrega sua própria info de chave/versão; iv não se aplica).
+export const VAULT_IV_MARKER = '__VAULT__';
+
 export const certificadoService = {
-  encrypt(pfxBuffer: Buffer): { encrypted: Buffer; iv: string } {
-    const iv = crypto.randomBytes(16);
-    const key = deriveKey();
-    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-    const encrypted = Buffer.concat([cipher.update(pfxBuffer), cipher.final()]);
-    return { encrypted, iv: iv.toString('hex') };
+  /**
+   * Cifra o PFX. Retorno tem 2 formatos possíveis (transparentes pro chamador):
+   *   Vault:  { encrypted: Buffer<"vault:v1:...">, iv: VAULT_IV_MARKER }
+   *   AES:    { encrypted: Buffer<bytes>, iv: hex }
+   *
+   * O `decrypt` abaixo detecta o formato automaticamente; o `iv` salvo no banco
+   * é a única fonte de verdade sobre qual rota seguir.
+   */
+  async encrypt(pfxBuffer: Buffer): Promise<{ encrypted: Buffer; iv: string }> {
+    return withVault('encrypt',
+      async () => {
+        const ct = await vaultEncrypt(pfxBuffer);
+        return { encrypted: Buffer.from(ct, 'utf8'), iv: VAULT_IV_MARKER };
+      },
+      () => {
+        const iv = crypto.randomBytes(16);
+        const key = deriveKey();
+        const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+        const encrypted = Buffer.concat([cipher.update(pfxBuffer), cipher.final()]);
+        return { encrypted, iv: iv.toString('hex') };
+      }
+    );
   },
 
-  decrypt(encryptedRaw: Buffer | string, ivHex: string): Buffer {
-    // pg retorna BYTEA como Buffer; em alguns ambientes pode vir como string '\x...'
+  /**
+   * Decifra o PFX. Detecta automaticamente AES legado vs. Vault:
+   *   - iv === VAULT_IV_MARKER OU bytes começando com "vault:" → Vault
+   *   - caso contrário, AES-256-CBC com a chave local
+   * Permite migrar certificados gradualmente sem quebrar os antigos.
+   */
+  async decrypt(encryptedRaw: Buffer | string, ivHex: string): Promise<Buffer> {
     const encrypted = Buffer.isBuffer(encryptedRaw)
       ? encryptedRaw
       : Buffer.from(String(encryptedRaw).replace(/^\\x/, ''), 'hex');
+
+    const headStr = encrypted.slice(0, 16).toString('utf8');
+    const isVault = ivHex === VAULT_IV_MARKER || isVaultCiphertext(headStr);
+
+    if (isVault) {
+      const ciphertext = encrypted.toString('utf8');
+      return withVault('decrypt',
+        () => vaultDecrypt(ciphertext),
+        () => {
+          throw new Error('PFX cifrado pelo Vault, mas Vault está desativado e fallback AES não se aplica');
+        }
+      );
+    }
+
     const key = deriveKey();
     const iv = Buffer.from(ivHex, 'hex');
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
@@ -132,17 +195,36 @@ export const certificadoService = {
     return result.info!;
   },
 
-  /** Cifra a senha do certificado com AES-256-CBC (recuperável pelo sistema RPA) */
-  encryptSenha(senha: string): string {
-    const key = deriveKey();
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-    const encrypted = Buffer.concat([cipher.update(senha, 'utf8'), cipher.final()]);
-    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+  /**
+   * Cifra a senha do certificado. Formatos possíveis:
+   *   Vault: "vault:v1:..." (literal do Vault)
+   *   AES:   "<iv_hex>:<cipher_hex>"
+   */
+  async encryptSenha(senha: string): Promise<string> {
+    return withVault('encryptSenha',
+      () => vaultEncrypt(senha),
+      () => {
+        const key = deriveKey();
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+        const encrypted = Buffer.concat([cipher.update(senha, 'utf8'), cipher.final()]);
+        return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+      }
+    );
   },
 
-  /** Decifra a senha do certificado */
-  decryptSenha(senhaCifrada: string): string {
+  /**
+   * Decifra a senha. Detecta Vault pelo prefixo `vault:v\d:` — caso contrário
+   * trata como formato AES legado (`iv:cipher`).
+   */
+  async decryptSenha(senhaCifrada: string): Promise<string> {
+    if (isVaultCiphertext(senhaCifrada)) {
+      const buf = await withVault('decryptSenha',
+        () => vaultDecrypt(senhaCifrada),
+        () => { throw new Error('Senha cifrada pelo Vault, mas Vault está desativado'); }
+      );
+      return buf.toString('utf8');
+    }
     const [ivHex, encryptedHex] = senhaCifrada.split(':');
     const key = deriveKey();
     const iv = Buffer.from(ivHex, 'hex');

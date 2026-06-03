@@ -28,6 +28,8 @@ import {
   responsavelPreenchimentoController, recibosController,
 } from '../controllers/perdcompDocumentosController';
 import { perdcompRelatoriosController } from '../controllers/perdcompRelatoriosController';
+import { perdcompAutomacaoController } from '../controllers/perdcompAutomacaoController';
+import { perdcompBIController } from '../controllers/perdcompBIController';
 import { dctfwebController } from '../controllers/dctfwebController';
 import { log } from '../utils/logger';
 import { empresasController } from '../controllers/empresasController';
@@ -152,7 +154,13 @@ const upload = multer({
 
 // Rotas públicas - Autenticação
 // adaptiveLoginGuard: bloqueia IPs com muitas falhas consecutivas (credential stuffing)
-router.post('/auth/login', adaptiveLoginGuard, applyLimiterGeral, authController.login);
+// Em dev, pulamos o limiterGeral em /auth/login (10/h por IP) porque scripts de
+// teste/QA saturam rápido demais; o adaptiveLoginGuard (que bloqueia após N
+// falhas consecutivas) continua ativo nos dois ambientes.
+const loginRateGuards = process.env.NODE_ENV === 'production'
+  ? [adaptiveLoginGuard, applyLimiterGeral]
+  : [adaptiveLoginGuard];
+router.post('/auth/login', ...loginRateGuards, authController.login);
 router.post('/auth/validate_reset', applyLimiterGeral, authController.validate_reset);
 router.post('/auth/reset-password', applyLimiterGeral, authController.reset_password);
 
@@ -161,7 +169,11 @@ router.post('/auth/reset-password', applyLimiterGeral, authController.reset_pass
 if (process.env.NODE_ENV !== 'production') {
   router.post('/test/reset-rate-limits', (_req, res) => {
     clearAllIpFailures();
-    log.info('Rate limit state cleared');
+    // Também reseta os stores dos limiters express-rate-limit (limiterGeral + limiterToken)
+    try { (limiterGeral as any)?.resetKey && Object.keys((limiterGeral as any).store?.hits || {}).forEach(k => (limiterGeral as any).resetKey(k)); } catch {}
+    try { (limiterGeral as any)?.store?.resetAll && (limiterGeral as any).store.resetAll(); } catch {}
+    try { (limiterToken as any)?.store?.resetAll && (limiterToken as any).store.resetAll(); } catch {}
+    log.info('Rate limit state cleared (adaptive + express-rate-limit)');
     res.json({ ok: true, message: 'Rate limit state cleared' });
   });
 }
@@ -169,23 +181,20 @@ if (process.env.NODE_ENV !== 'production') {
 router.post('/logs/frontend-error', applyLimiterGeral, frontendLogController.logError);
 
 // Rota pública - Health Check (monitoramento de cron jobs)
-// TODO: 03 Criar dashboard frontend para visualizar estatísticas
+// Se a tabela cron_execucoes não existir ainda (deploy novo / migration pendente),
+// devolve estrutura vazia em vez de 500 — evita ruído no monitoramento.
 router.get('/health/cron', async (req, res) => {
   try {
     const ultimasExecucoes = await getAll(
-      `SELECT *
-       FROM cron_execucoes 
-       ORDER BY executado_em DESC 
-       LIMIT 10`
+      `SELECT * FROM cron_execucoes ORDER BY executado_em DESC LIMIT 10`
     );
-    //buscar estatísticas das últimas 48 horas
     const estatisticas = await getOne(
-      `SELECT 
+      `SELECT
         COUNT(*) as total_execucoes,
         SUM(CASE WHEN sucesso = 1 THEN 1 ELSE 0 END) as total_sucessos,
         SUM(CASE WHEN sucesso = 0 THEN 1 ELSE 0 END) as total_falhas,
         AVG(duracao_ms) as duracao_media_ms
-       FROM cron_execucoes 
+       FROM cron_execucoes
        WHERE executado_em >= NOW() - INTERVAL '48 hours'`
     );
 
@@ -193,14 +202,22 @@ router.get('/health/cron', async (req, res) => {
       status: 'ok',
       timestamp: new Date().toISOString(),
       ultimas_execucoes: ultimasExecucoes,
-      estatisticas_48h: estatisticas
+      estatisticas_48h: estatisticas,
     });
-  } catch (error) {
-    log.error(`Erro ao buscar estatísticas de cron jobs: ${error}`);
-    res.status(500).json({ 
-      status: 'error', 
-      message: 'Erro ao buscar estatísticas de cron jobs' 
-    });
+  } catch (error: any) {
+    // 42P01 = undefined_table no PostgreSQL — tabela não existe é estado esperado
+    // em ambientes onde o cron_log ainda não foi provisionado, não é erro.
+    if (error?.code === '42P01') {
+      return res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        ultimas_execucoes: [],
+        estatisticas_48h: null,
+        warning: 'tabela cron_execucoes ainda não provisionada',
+      });
+    }
+    log.error(`Erro ao buscar estatísticas de cron jobs: ${error.message}`);
+    res.status(500).json({ status: 'error', message: 'Erro ao buscar estatísticas de cron jobs' });
   }
 });
 
@@ -274,6 +291,32 @@ router.get('/chamados/anexos/:id', authenticateToken, chamadosController.getAnex
 
 // Rotas de Health Check
 router.get('/health', healthCheckSimple); // Público — monitoramento externo (uptime, load balancers)
+
+// Stats de processamento em tempo real para o monitor QA (consumido via SSE).
+// Devolve contagens das tabelas relevantes para que o painel mostre "linhas inseridas
+// nos últimos 60s" sem precisar de auth/admin (são apenas COUNTs, não vazam dados).
+router.get('/monitor/db-stats', async (_req, res) => {
+  try {
+    const stats = await getOne<any>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM ecac_perdcomp_documentos) AS perdcomp_documentos,
+         (SELECT COUNT(*)::int FROM ecac_perdcomp_documentos WHERE atualizado_em > NOW() - INTERVAL '1 minute') AS perdcomp_documentos_1min,
+         (SELECT COUNT(*)::int FROM dctfweb_declaracoes) AS dctfweb_declaracoes,
+         (SELECT COUNT(*)::int FROM dctfweb_declaracoes WHERE atualizado_em > NOW() - INTERVAL '1 minute') AS dctfweb_declaracoes_1min,
+         (SELECT COUNT(*)::int FROM dctfweb_darfs) AS dctfweb_darfs,
+         (SELECT COUNT(*)::int FROM dctfweb_darfs WHERE atualizado_em > NOW() - INTERVAL '1 minute') AS dctfweb_darfs_1min,
+         (SELECT COUNT(*)::int FROM dctfweb_automacao_config WHERE ultima_execucao_status = 'em_andamento') AS dctfweb_pipelines_ativos,
+         (SELECT COUNT(*)::int FROM ecac_automacao_config WHERE ultima_execucao_status = 'em_andamento') AS perdcomp_pipelines_ativos,
+         (SELECT MAX(atualizado_em) FROM dctfweb_declaracoes) AS dctfweb_last_decl_at,
+         (SELECT MAX(atualizado_em) FROM ecac_perdcomp_documentos) AS perdcomp_last_doc_at`
+    );
+    res.json({ at: new Date().toISOString(), ...stats });
+  } catch (e: any) {
+    // 42P01 = tabela ainda não criada
+    if (e?.code === '42P01') return res.json({ at: new Date().toISOString(), warning: 'tabelas ainda não provisionadas' });
+    res.status(500).json({ error: e.message });
+  }
+});
 router.get('/health/full', authenticateToken, requireAdmin, healthCheck); // Protegido — detalhes internos
 router.get('/health/dashboard', authenticateToken, requireAdmin, healthDashboard); // Protegido — dashboard HTML
 
@@ -337,6 +380,21 @@ router.delete('/perdcomp/debitos/:id', authenticateToken, perdcompDebitosControl
 // Dashboard
 router.get('/perdcomp/dashboard', authenticateToken, perdcompDashboardController.obter);
 
+// Configuração de Automações do e-CAC (Configurações do módulo PER/DCOMP)
+// IMPORTANTE: ações que disparam o pipeline e-CAC ou alteram config global são admin-only
+// (impediria IDOR + abuso de recursos por usuários autenticados não-privilegiados).
+router.get ('/perdcomp/automacao/config',                authenticateToken, perdcompAutomacaoController.obterConfig);
+router.put ('/perdcomp/automacao/global',                authenticateToken, requireAdmin, perdcompAutomacaoController.atualizarGlobal);
+router.put ('/perdcomp/automacao/empresa/:id',           authenticateToken, requireAdmin, perdcompAutomacaoController.atualizarEmpresa);
+router.post('/perdcomp/automacao/executar-agora',        authenticateToken, requireAdmin, perdcompAutomacaoController.executarAgora);
+router.post('/perdcomp/automacao/executar-agora/:id',    authenticateToken, requireAdmin, perdcompAutomacaoController.executarAgora);
+router.post('/perdcomp/automacao/pausar/:id',            authenticateToken, requireAdmin, perdcompAutomacaoController.pausar);
+router.post('/perdcomp/automacao/retomar/:id',           authenticateToken, requireAdmin, perdcompAutomacaoController.retomar);
+router.post('/perdcomp/automacao/cancelar/:id',          authenticateToken, requireAdmin, perdcompAutomacaoController.cancelar);
+
+// BI / KPIs do módulo PERDCOMP
+router.get('/perdcomp/bi/dashboard',                     authenticateToken, perdcompBIController.dashboard);
+
 // Simulador (Manual e Automático)
 router.post('/perdcomp/simulador',             authenticateToken, perdcompSimuladorController.simular);
 router.post('/perdcomp/simulador/automatico',  authenticateToken, perdcompSimuladorController.automatico);
@@ -344,14 +402,50 @@ router.get ('/perdcomp/simulador/historico',   authenticateToken, perdcompSimula
 router.post('/perdcomp/simulador/parse-texto', authenticateToken, perdcompSimuladorController.parseTexto);
 
 // ============ DCTF Web ============
-router.get('/dctfweb/dashboard', authenticateToken, dctfwebController.dashboard);
-router.get('/dctfweb/declaracoes', authenticateToken, dctfwebController.listar);
-router.get('/dctfweb/declaracoes/:id', authenticateToken, dctfwebController.buscarPorId);
-router.post('/dctfweb/declaracoes', authenticateToken, dctfwebController.criar);
-router.put('/dctfweb/declaracoes/:id', authenticateToken, dctfwebController.atualizar);
-router.delete('/dctfweb/declaracoes/:id', authenticateToken, dctfwebController.excluir);
-router.post('/dctfweb/declaracoes/:id/darf', authenticateToken, dctfwebController.gerarDarf);
-router.put('/dctfweb/declaracoes/:id/pago', authenticateToken, dctfwebController.marcarPago);
+// Dashboard + Declarações
+router.get   ('/dctfweb/dashboard',         authenticateToken, dctfwebController.dashboard);
+router.get   ('/dctfweb/declaracoes',       authenticateToken, dctfwebController.listar);
+router.get   ('/dctfweb/declaracoes/:id',   authenticateToken, dctfwebController.buscarPorId);
+router.post  ('/dctfweb/declaracoes',       authenticateToken, dctfwebController.criar);
+router.put   ('/dctfweb/declaracoes/:id',   authenticateToken, dctfwebController.atualizar);
+router.delete('/dctfweb/declaracoes/:id',   authenticateToken, dctfwebController.excluir);
+
+// DARFs
+router.get ('/dctfweb/darfs',                 authenticateToken, dctfwebController.listarDarfs);
+router.post('/dctfweb/darfs/:id/gerar',       authenticateToken, dctfwebController.gerarDarf);
+router.post('/dctfweb/darfs/:id/marcar-pago', authenticateToken, dctfwebController.marcarPago);
+
+// Relatórios
+router.get('/dctfweb/relatorios/vencimentos', authenticateToken, dctfwebController.relatorioVencimentos);
+router.get('/dctfweb/relatorios/atrasos',     authenticateToken, dctfwebController.relatorioAtrasos);
+router.get('/dctfweb/relatorios/projecao-caixa', authenticateToken, dctfwebController.projecaoCaixa);
+router.get('/dctfweb/relatorios/maed',           authenticateToken, dctfwebController.relatorioMaed);
+router.get('/dctfweb/relatorios/por-origem',     authenticateToken, dctfwebController.relatorioPorOrigem);
+router.get('/dctfweb/relatorios/prazos-legais',  authenticateToken, dctfwebController.relatorioPrazos);
+
+// Agendamento (config + executar)
+router.get ('/dctfweb/automacao/config',             authenticateToken, dctfwebController.obterConfig);
+router.put ('/dctfweb/automacao/global',             authenticateToken, requireAdmin, dctfwebController.atualizarGlobal);
+router.put ('/dctfweb/automacao/empresa/:id',        authenticateToken, requireAdmin, dctfwebController.atualizarEmpresa);
+router.post('/dctfweb/automacao/executar-agora',     authenticateToken, requireAdmin, dctfwebController.executarAgora);
+router.post('/dctfweb/automacao/executar-agora/:id', authenticateToken, requireAdmin, dctfwebController.executarAgora);
+router.post('/dctfweb/automacao/destravar/:id',       authenticateToken, requireAdmin, dctfwebController.destravar);
+router.post('/dctfweb/automacao/pausar/:id',          authenticateToken, requireAdmin, dctfwebController.pausar);
+router.post('/dctfweb/automacao/retomar/:id',         authenticateToken, requireAdmin, dctfwebController.retomar);
+router.post('/dctfweb/automacao/cancelar/:id',        authenticateToken, requireAdmin, dctfwebController.cancelar);
+
+// Importação de XML (eSocial S-1299, EFD-Reinf R-9000 ou recibo DCTFWeb).
+// Aceita .xml ou .zip (até 5 arquivos por upload).
+const uploadXmlDctfweb = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 5 },
+  fileFilter: (_req, file, cb) => {
+    const n = file.originalname.toLowerCase();
+    if (n.endsWith('.xml') || n.endsWith('.zip')) cb(null, true);
+    else cb(new Error('Apenas .xml ou .zip são aceitos'));
+  },
+});
+router.post('/dctfweb/importar-xml', authenticateToken, uploadXmlDctfweb.array('arquivos', 5), dctfwebController.importarXml);
 
 // ============ eCAC - Certificados Digitais ============
 const uploadCert = multer({
@@ -381,6 +475,14 @@ router.get('/ecac/certificados/:id/sessao', authenticateToken, ecacCertificadoCo
 router.post('/ecac/certificados/:id/instalar-certificado', authenticateToken, ecacCertificadoController.instalarCertificado);
 router.post('/ecac/certificados/:id/capturar-sessao-edge', authenticateToken, ecacCertificadoController.capturarSessaoEdge);
 
+// Anti-WAF: frontend reporta detecção de "BOT support ID" para escalar backoff.
+router.post('/ecac/waf-block-reportar', authenticateToken, ecacCertificadoController.reportarWafBlock);
+router.post('/ecac/waf-block-reset', authenticateToken, requireAdmin, ecacCertificadoController.resetarBackoffWaf);
+
+// Gestor de sessões e-CAC — lista todas com status (FRESCA/USAVEL/ENVELHECIDA/EXPIRADA/FALHOU).
+router.get ('/ecac/sessoes',                       authenticateToken, ecacCertificadoController.listarSessoes);
+router.post('/ecac/certificados/:id/sessao/falha', authenticateToken, ecacCertificadoController.marcarSessaoFalha);
+
 // eCAC - Sincronização
 router.post('/ecac/sincronizar', authenticateToken, ecacSincronizacaoController.sincronizar);
 // Importação automática usando sessão previamente autenticada (acionada pelo Dashboard)
@@ -396,6 +498,8 @@ router.get('/ecac/perdcomp-documentos', authenticateToken, ecacSincronizacaoCont
 router.get('/ecac/perdcomp-documentos/:id/recibo.pdf', authenticateToken, ecacSincronizacaoController.baixarReciboPdf);
 router.get('/ecac/perdcomp-documentos/:id/debitos', authenticateToken, ecacSincronizacaoController.listarDebitosCompensados);
 router.post('/ecac/baixar-recibos', authenticateToken, ecacSincronizacaoController.baixarRecibos);
+router.post('/ecac/baixar-documentos', authenticateToken, ecacSincronizacaoController.baixarDocumentos);
+router.get('/ecac/perdcomp-documentos/:id/documento.pdf', authenticateToken, ecacSincronizacaoController.baixarDocumentoPdf);
 router.post('/ecac/sincronizar-saldos', authenticateToken, ecacSincronizacaoController.sincronizarSaldos);
 
 // ============ PER/DCOMP — Documentos Oficiais (novo módulo) ============

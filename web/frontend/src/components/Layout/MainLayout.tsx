@@ -22,6 +22,8 @@ import {
   Menu as MenuIcon,
   Dashboard as DashboardIcon,
   Settings as SistemaIcon,
+  Update as AgendamentoIcon,
+
   ExpandLess,
   ExpandMore,
   Person as UsuariosIcon,
@@ -34,6 +36,7 @@ import {
   SupportAgent as SupportAgentIcon,
   MenuBook as MenuBookIcon,
   Assessment as AssessmentIcon,
+  ReceiptLong as ReceiptLongIcon,
   SupervisorAccount as SupervisorAccountIcon,
   SwitchAccount as SwitchAccountIcon,
   Build as BuildIcon,
@@ -43,6 +46,7 @@ import {
   VerifiedUser as VerifiedUserIcon,
   Inbox as InboxIcon,
   BarChart as BarChartIcon,
+  Insights as InsightsIcon,
   Gavel as GavelIcon,
   Business as BusinessIcon,
   AttachMoney as AttachMoneyIcon,
@@ -57,6 +61,7 @@ import {
 } from '@mui/icons-material';
 import { manutencaoService } from '../../services/manutencaoService';
 import { useAuth } from '../../contexts/AuthContext';
+import { useActivity } from '../../contexts/ActivityContext';
 import { logger } from '../../utils/logger';
 import { EmpresaAutocomplete } from '../EmpresaAutocomplete';
 
@@ -144,7 +149,22 @@ export default function MainLayout({ children }: Props) {
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
+  // Travamos o drawer ABERTO enquanto houver atividade em curso (fila de atualizações,
+  // sincronizações etc.). Evita "perder" o menu no meio de uma operação importante.
+  const { isAnyActive, active: activeJobs } = useActivity();
+  const activityLabel = Object.values(activeJobs).join(', ');
+
+  const handleDrawerToggle = () => {
+    if (isAnyActive && mobileOpen) {
+      // bloqueia o fechamento mobile durante atividade; abrir é permitido
+      return;
+    }
+    setMobileOpen(!mobileOpen);
+  };
+  // Garante drawer mobile aberto durante atividade
+  useEffect(() => {
+    if (isAnyActive) setMobileOpen(true);
+  }, [isAnyActive]);
 
   const handleMenuClick = (menu: string) => {
     setOpenMenus((prev) => ({ ...prev, [menu]: !prev[menu] }));
@@ -152,7 +172,8 @@ export default function MainLayout({ children }: Props) {
 
   const handleNavigate = (path: string) => {
     navigate(path);
-    setMobileOpen(false);
+    // Não fecha o drawer mobile se há atividade — mantém o user orientado.
+    if (!isAnyActive) setMobileOpen(false);
   };
 
   const handleUserMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
@@ -209,7 +230,7 @@ export default function MainLayout({ children }: Props) {
       submenu: [
         ...(hasModulo('PERD/Comp') ? [
           {
-            text: 'PERD/Comp', icon: <RequestQuoteIcon />, path: '/fiscal/perdcomp',
+            text: 'PER/DCOMP', icon: <RequestQuoteIcon />, path: '/fiscal/perdcomp',
             submenu: [
               ...(hasFuncionalidade('PERD/Comp', 'Painel') ? [
                 { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/perdcomp' },
@@ -221,12 +242,14 @@ export default function MainLayout({ children }: Props) {
                 { text: 'Débitos', icon: <MoneyOffIcon />, path: '/fiscal/perdcomp/debitos' },
               ] : []),
               ...(hasFuncionalidade('PERD/Comp', 'Documentos') ? [
-                { text: 'Documentos PER/DCOMP', icon: <AssignmentIcon />, path: '/fiscal/perdcomp/documentos' },
+                { text: 'Documentos', icon: <AssignmentIcon />, path: '/fiscal/perdcomp/documentos' },
               ] : []),
               ...(hasFuncionalidade('PERD/Comp', 'Simulador') ? [
                 { text: 'Simulador', icon: <CalculateIcon />, path: '/fiscal/perdcomp/simulador' },
               ] : []),
-              { text: 'Relatórios PER/DCOMP', icon: <AssessmentIcon />, path: '/fiscal/perdcomp/relatorios' },
+              { text: 'Relatórios', icon: <AssessmentIcon />, path: '/fiscal/perdcomp/relatorios' },
+              { text: 'BI', icon: <InsightsIcon />, path: '/fiscal/perdcomp/bi' },
+              { text: 'Agendamento/Atualização', icon: <AgendamentoIcon />, path: '/fiscal/perdcomp/configuracoes' },
             ],
           }
         ] : []),
@@ -240,12 +263,11 @@ export default function MainLayout({ children }: Props) {
           {
             text: 'DCTF Web', icon: <BarChartIcon />, path: '/fiscal/dctf-web',
             submenu: [
-              ...(hasFuncionalidade('DCTF Web', 'Painel') ? [
-                { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/dctf-web' },
-              ] : []),
-              ...(hasFuncionalidade('DCTF Web', 'Declarações') ? [
-                { text: 'Declarações', icon: <DescriptionIcon />, path: '/fiscal/dctf-web/declaracoes' },
-              ] : []),
+              { text: 'Painel', icon: <SpaceDashboardIcon />, path: '/fiscal/dctf-web' },
+              { text: 'Declarações', icon: <DescriptionIcon />, path: '/fiscal/dctf-web/declaracoes' },
+              { text: 'DARFs', icon: <ReceiptLongIcon />, path: '/fiscal/dctf-web/darfs' },
+              { text: 'Relatórios', icon: <AssessmentIcon />, path: '/fiscal/dctf-web/relatorios' },
+              { text: 'Agendamento/Atualização', icon: <AgendamentoIcon />, path: '/fiscal/dctf-web/agendamento' },
             ],
           }
         ] : []),
@@ -405,6 +427,33 @@ export default function MainLayout({ children }: Props) {
 
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: S.navy }}>
+
+      {/* Banner de atividade em curso — fixo no topo do drawer enquanto algo está rodando */}
+      {isAnyActive && (
+        <Box sx={{
+          flexShrink: 0,
+          mx: 1.5, mt: 1.5,
+          px: 1.5, py: 1,
+          borderRadius: '10px',
+          background: `linear-gradient(135deg, ${S.cyan}33, ${S.emerald}22)`,
+          border: `1px solid ${S.cyan}66`,
+          display: 'flex', alignItems: 'center', gap: 1,
+        }}
+        title={activityLabel}>
+          <Box sx={{
+            width: 8, height: 8, borderRadius: '50%', bgcolor: S.cyan,
+            animation: 'pulse 1.4s ease-in-out infinite',
+            '@keyframes pulse': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.3 } },
+          }} />
+          <Box sx={{ minWidth: 0 }}>
+            <Box sx={{ fontSize: 11, fontWeight: 700, color: S.cyan, letterSpacing: 0.4 }}>EM EXECUÇÃO</Box>
+            <Box sx={{
+              fontSize: 11, color: '#cbd5e1',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200,
+            }}>{activityLabel}</Box>
+          </Box>
+        </Box>
+      )}
 
       {/* Logo / Brand — fundo idêntico ao drawer; realce nas cores do logo */}
       <Box
@@ -585,6 +634,8 @@ export default function MainLayout({ children }: Props) {
           <IconButton
             edge="start"
             onClick={handleDrawerToggle}
+            disabled={isAnyActive && mobileOpen}
+            title={isAnyActive ? `Menu travado — ${activityLabel} em execução` : undefined}
             sx={{ mr: 2, display: { sm: 'none' }, color: S.textPrimary }}
           >
             <MenuIcon />
@@ -602,8 +653,16 @@ export default function MainLayout({ children }: Props) {
             </Typography>
           </Box>
 
-          {/* Seletor global de empresa — disponível em todas as páginas */}
-          {user && !location.pathname.startsWith('/login') && (
+          {/* Seletor global de empresa — disponível em todas as páginas, exceto
+              naquelas que já trazem seu próprio seletor (multi-select interno):
+                • /fiscal/perdcomp/bi — multi-select por análise
+                • /fiscal/perdcomp/configuracoes — agendamento perdcomp (multi-select + fila)
+                • /fiscal/dctf-web/agendamento — agendamento DCTFweb (multi-select + fila)
+              Ter dois seletores nessas telas causava confusão (qual está em uso?). */}
+          {user && !location.pathname.startsWith('/login')
+            && !location.pathname.startsWith('/fiscal/perdcomp/bi')
+            && location.pathname !== '/fiscal/perdcomp/configuracoes'
+            && location.pathname !== '/fiscal/dctf-web/agendamento' && (
             <Box sx={{
               mr: 2,
               display: { xs: 'none', md: 'block' },
@@ -703,8 +762,12 @@ export default function MainLayout({ children }: Props) {
         <Drawer
           variant="temporary"
           open={mobileOpen}
-          onClose={handleDrawerToggle}
-          ModalProps={{ keepMounted: true }}
+          // Bloqueia auto-close (backdrop click, ESC) enquanto há atividade em curso.
+          onClose={isAnyActive ? undefined : handleDrawerToggle}
+          ModalProps={{
+            keepMounted: true,
+            disableEscapeKeyDown: isAnyActive,
+          }}
           sx={{
             display: { xs: 'block', sm: 'none' },
             '& .MuiDrawer-paper': {
@@ -778,19 +841,24 @@ function getPageTitle(pathname: string): string {
 
     // Soluções Fiscais
     '/fiscal/classificacao-ncm': 'Classificação NCM',
-    '/fiscal/perdcomp': 'PERD/Comp - Painel',
-    '/fiscal/perdcomp/creditos': 'PERD/Comp - Créditos',
-    '/fiscal/perdcomp/debitos': 'PERD/Comp - Débitos',
+    '/fiscal/perdcomp': 'PER/DCOMP - Painel',
+    '/fiscal/perdcomp/creditos': 'PER/DCOMP - Créditos',
+    '/fiscal/perdcomp/debitos': 'PER/DCOMP - Débitos',
     '/fiscal/perdcomp/documentos': 'PER/DCOMP - Documentos',
     '/fiscal/perdcomp/documentos/novo': 'PER/DCOMP - Novo Documento',
     '/fiscal/perdcomp/simulador': 'PER/DCOMP - Simulador',
-    '/fiscal/perdcomp/relatorios': 'PER/DCOMP - Relatórios',
+    '/fiscal/perdcomp/relatorios': 'Relatórios',
+    '/fiscal/perdcomp/configuracoes': 'PER/DCOMP - Agendamento/Atualização',
+    '/fiscal/perdcomp/bi': 'PER/DCOMP - BI',
     '/configuracoes/certificados': 'Certificados Digitais',
     '/configuracoes/ecac': 'Integração eCAC',
     '/fiscal/pis-cofins': 'Recuperação PIS/COFINS',
     '/fiscal/mit': 'MIT',
     '/fiscal/dctf-web': 'DCTF Web - Painel',
     '/fiscal/dctf-web/declaracoes': 'DCTF Web - Declarações',
+    '/fiscal/dctf-web/darfs': 'DCTF Web - DARFs',
+    '/fiscal/dctf-web/relatorios': 'DCTF Web - Relatórios',
+    '/fiscal/dctf-web/agendamento': 'DCTF Web - Agendamento/Atualização',
     '/fiscal/cnds': 'Gestão de CNDs',
     '/fiscal/ecac': 'Caixa Postal eCac',
     //NCM
