@@ -174,7 +174,7 @@ export default function RelatoriosPage() {
                 { label: 'Entre 61 e 90 dias', value: projecao?.proximos_90d || 0, color: T.navy },
                 { label: 'Após 90 dias', value: projecao?.apos_90d || 0, color: T.emerald },
               ].map((b) => (
-                <Grid item xs={12} sm={6} md={2.4} key={b.label}>
+                <Grid size={{ xs: 12, sm: 6, md: 2.4 }} key={b.label}>
                   <Paper sx={{
                     p: 2.5, borderRadius: 3, borderLeft: `4px solid ${b.color}`,
                     bgcolor: b.warning && b.value > 0 ? `${b.color}0a` : 'white',
@@ -323,7 +323,7 @@ export default function RelatoriosPage() {
             </Stack>
             <Grid container spacing={2}>
               {porOrigem.origens.map((o: any) => (
-                <Grid item xs={12} sm={6} md={4} key={o.chave}>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }} key={o.chave}>
                   <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, borderLeft: `4px solid ${T.cyan}` }}>
                     <Typography variant="caption" sx={{ color: T.textSecond, fontWeight: 700, letterSpacing: 0.5 }}>{o.label.toUpperCase()}</Typography>
                     <Typography variant="h6" sx={{ fontWeight: 700, color: T.navy, mt: 0.5 }}>{brl(o.valor)}</Typography>

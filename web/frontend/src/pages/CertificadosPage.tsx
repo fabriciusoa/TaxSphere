@@ -122,6 +122,11 @@ export default function CertificadosPage() {
   const [autenticando, setAutenticando] = useState(false);
   const [autenticarResult, setAutenticarResult] = useState<string>('');
   const [autenticarStatus, setAutenticarStatus] = useState<'idle' | 'aguardando' | 'sucesso' | 'erro'>('idle');
+  // Plataforma do servidor: 'win32' usa Edge+Windows Store (2 passos); Mac/Linux
+  // usa Playwright clientCertificates (1 passo, captura automática). Default true
+  // mantém o fluxo legado até o /health responder.
+  const [serverIsWindows, setServerIsWindows] = useState(true);
+  const pollRef = useRef<number | null>(null);
   // Cooldown anti-WAF: timestamp em ms até quando o usuário precisa esperar.
   // null quando não há cooldown ativo. Re-render com setInterval enquanto contagem > 0.
   const [cooldownEnd, setCooldownEnd] = useState<number | null>(null);
@@ -157,6 +162,12 @@ export default function CertificadosPage() {
   useEffect(() => {
     if (sucesso) { const t = setTimeout(() => setSucesso(''), 5000); return () => clearTimeout(t); }
   }, [sucesso]);
+  // Descobre o SO do servidor (onde o RPA roda) para escolher o fluxo de autenticação.
+  useEffect(() => {
+    ecacService.getServerPlatform().then((p) => setServerIsWindows(p === 'win32')).catch(() => {});
+  }, []);
+  // Para o polling de sessão ao desmontar a página.
+  useEffect(() => () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } }, []);
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -213,6 +224,47 @@ export default function CertificadosPage() {
       setErro(err.response?.data?.error || 'Erro ao validar certificado');
     } finally {
       setValidandoId(null);
+    }
+  };
+
+  // ── Mac/Linux: fluxo Playwright de 1 passo ──────────────────────────────────
+  // O backend abre um browser visível, aguarda o login (até 5 min) e captura a
+  // sessão automaticamente. O frontend só verifica a sessão periodicamente.
+  const pararPoll = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+  const iniciarPollSessao = (id: number) => {
+    pararPoll();
+    const deadline = Date.now() + 6 * 60 * 1000; // login tem 5 min; damos folga
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const st = await ecacService.certificados.statusSessao(id);
+        if (st.sessao_ativa) {
+          pararPoll();
+          setAutenticarStatus('sucesso');
+          setAutenticarResult('Sessão e-CAC capturada com sucesso. O RPA pode sincronizar documentos sem precisar repetir o login.');
+          carregarDados();
+        } else if (Date.now() > deadline) {
+          pararPoll();
+          setAutenticarStatus('erro');
+          setAutenticarResult('Tempo esgotado aguardando o login. Tente novamente e conclua o login no navegador que abriu.');
+        }
+      } catch { /* mantém o polling — falhas transitórias são esperadas */ }
+    }, 4000);
+  };
+
+  const handleAutenticarPlaywright = async () => {
+    if (!autenticarCertId) return;
+    setAutenticando(true);
+    try {
+      await ecacService.certificados.autenticar(autenticarCertId);
+      setAutenticarStatus('aguardando');
+      iniciarPollSessao(autenticarCertId);
+    } catch (err: any) {
+      setAutenticarStatus('erro');
+      setAutenticarResult(err.response?.data?.error || 'Erro ao iniciar autenticação no e-CAC');
+    } finally {
+      setAutenticando(false);
     }
   };
 
@@ -599,6 +651,7 @@ export default function CertificadosPage() {
         open={autenticarOpen}
         onClose={() => {
           if (!autenticando) {
+            pararPoll();
             setAutenticarOpen(false);
             setAutenticarResult('');
             setAutenticarStatus('idle');
@@ -636,6 +689,7 @@ export default function CertificadosPage() {
               </Button>
             </Stack>
           ) : autenticarStatus === 'aguardando' ? (
+            serverIsWindows ? (
             <Stack spacing={2}>
               <Alert severity="success" icon={<CheckCircleIcon />} sx={{ borderRadius: 2 }}>
                 Certificado instalado. Uma janela do Edge foi aberta em perfil isolado.
@@ -658,16 +712,50 @@ export default function CertificadosPage() {
                 </Box>
               )}
             </Stack>
+            ) : (
+            <Stack spacing={2}>
+              <Alert severity="success" icon={<CheckCircleIcon />} sx={{ borderRadius: 2 }}>
+                Uma janela do navegador foi aberta já com o seu certificado digital.
+              </Alert>
+              <Alert severity="info" sx={{ borderRadius: 2 }}>
+                <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 2 }}>
+                  <li>Na janela que abriu, clique em <strong>"Gov.BR → Seu certificado digital"</strong>.</li>
+                  <li>Selecione o certificado quando o navegador solicitar.</li>
+                  <li>Aguarde carregar o portal do e-CAC (página verde).</li>
+                </ol>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  A sessão é capturada automaticamente assim que o login conclui — não precisa voltar aqui. Esta janela atualiza sozinha.
+                </Typography>
+              </Alert>
+              <Box display="flex" alignItems="center" gap={1}>
+                <CircularProgress size={20} sx={{ color: T.cyan }} />
+                <Typography variant="body2" color="text.secondary">Aguardando login e capturando a sessão automaticamente…</Typography>
+              </Box>
+            </Stack>
+            )
           ) : (
             <Stack spacing={2}>
               <Alert severity="info" icon={<SessionIcon />} sx={{ borderRadius: 2 }}>
-                <strong>Como funciona (sem bot detector):</strong>
-                <ol style={{ margin: '8px 0 0', paddingLeft: 20, lineHeight: 1.9 }}>
-                  <li>Clique em <strong>"Abrir e-CAC neste browser"</strong> — instala o certificado e abre o Edge em perfil isolado.</li>
-                  <li>Faça login: <strong>Gov.BR → Usar Certificado Digital</strong> → selecione o certificado.</li>
-                  <li>Volte aqui e clique em <strong>"Sessão concluída — capturar"</strong>.</li>
-                  <li>O servidor lê os cookies do Edge e salva a sessão.</li>
-                </ol>
+                {serverIsWindows ? (
+                  <>
+                    <strong>Como funciona (sem bot detector):</strong>
+                    <ol style={{ margin: '8px 0 0', paddingLeft: 20, lineHeight: 1.9 }}>
+                      <li>Clique em <strong>"Abrir e-CAC neste browser"</strong> — instala o certificado e abre o Edge em perfil isolado.</li>
+                      <li>Faça login: <strong>Gov.BR → Usar Certificado Digital</strong> → selecione o certificado.</li>
+                      <li>Volte aqui e clique em <strong>"Sessão concluída — capturar"</strong>.</li>
+                      <li>O servidor lê os cookies do Edge e salva a sessão.</li>
+                    </ol>
+                  </>
+                ) : (
+                  <>
+                    <strong>Como funciona:</strong>
+                    <ol style={{ margin: '8px 0 0', paddingLeft: 20, lineHeight: 1.9 }}>
+                      <li>Clique em <strong>"Abrir e-CAC neste navegador"</strong> — abre uma janela já com o seu certificado digital carregado.</li>
+                      <li>Faça login: <strong>Gov.BR → Seu certificado digital</strong> → selecione o certificado.</li>
+                      <li>Pronto: a sessão é capturada <strong>automaticamente</strong> ao concluir o login.</li>
+                    </ol>
+                  </>
+                )}
               </Alert>
             </Stack>
           )}
@@ -675,6 +763,7 @@ export default function CertificadosPage() {
         <DialogActions sx={{ px: 3, py: 2, gap: 1 }}>
           <Button
             onClick={() => {
+              pararPoll();
               setAutenticarOpen(false);
               setAutenticarResult('');
               setAutenticarStatus('idle');
@@ -683,13 +772,15 @@ export default function CertificadosPage() {
             {autenticarStatus === 'sucesso' || autenticarStatus === 'erro' ? 'Fechar' : 'Cancelar'}
           </Button>
           {autenticarStatus === 'idle' && (
-            <Button variant="outlined" onClick={handleAbrirEcacNoEdge} disabled={autenticando}
+            <Button variant="outlined" onClick={serverIsWindows ? handleAbrirEcacNoEdge : handleAutenticarPlaywright} disabled={autenticando}
               startIcon={autenticando ? <CircularProgress size={16} /> : <VerifiedIcon />}
               sx={{ borderRadius: '10px' }}>
-              {autenticando ? 'Instalando certificado...' : 'Abrir e-CAC neste browser'}
+              {autenticando
+                ? (serverIsWindows ? 'Instalando certificado...' : 'Abrindo navegador...')
+                : (serverIsWindows ? 'Abrir e-CAC neste browser' : 'Abrir e-CAC neste navegador')}
             </Button>
           )}
-          {autenticarStatus === 'aguardando' && (
+          {autenticarStatus === 'aguardando' && serverIsWindows && (
             <>
               <Button variant="outlined" onClick={handleAbrirEcacNoEdge} sx={{ borderRadius: '10px' }}>
                 Reabrir e-CAC

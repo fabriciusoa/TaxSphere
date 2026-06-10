@@ -200,7 +200,7 @@ export const dctfwebService = {
   listarDarfs: async (filtros: { id_empresa?: number; status?: 'pago' | 'pendente' | 'vencido'; page?: number; limit?: number } = {}):
     Promise<{ data: DctfwebDarf[]; pagination: { total: number; page: number; limit: number; totalPages: number } }> => {
     const params = new URLSearchParams();
-    Object.entries(filtros).forEach(([k, v]) => { if (v !== undefined && v !== '') params.append(k, String(v)); });
+    Object.entries(filtros).forEach(([k, v]) => { if (v !== undefined) params.append(k, String(v)); });
     const { data } = await api.get(`/dctfweb/darfs?${params}`);
     return data;
   },

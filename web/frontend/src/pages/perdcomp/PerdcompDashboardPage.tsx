@@ -17,7 +17,6 @@ import {
   Button,
   Stack,
   Tooltip,
-  LinearProgress,
 } from '@mui/material';
 import {
   AccountBalanceWallet as WalletIcon,
@@ -155,8 +154,6 @@ const EcacSyncCard: React.FC<EcacSyncCardProps> = ({ sync, syncing, empresaSelec
   const barra2Pct = totalAGravar > 0
     ? Math.min(100, (jaGravado / totalAGravar) * 100)
     : 0;
-  const gravacaoIniciou = jaGravado > 0 || consultaConcluida;
-
   return (
     <Paper sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: '#00c8f020', bgcolor: '#f0fdff', mb: 3 }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2}>

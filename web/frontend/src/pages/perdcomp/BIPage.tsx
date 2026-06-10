@@ -41,7 +41,7 @@ const fmtMoedaFull = (v?: number | null) =>
   v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const fmtPct = (v?: number | null) => v == null ? '—' : `${v.toFixed(1)}%`;
 const fmtInt = (v?: number | null) => v == null ? '—' : v.toLocaleString('pt-BR');
-const fmtMes = (m: string) => {
+const fmtMes = (m: any): string => {
   // "2025-03" → "mar/25"
   const [a, mes] = m.split('-');
   const nomes = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];

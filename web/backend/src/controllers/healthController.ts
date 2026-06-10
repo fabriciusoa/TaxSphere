@@ -272,7 +272,9 @@ export const healthCheckSimple = async (req: Request, res: Response) => {
   try {
     // Apenas verificar conexão com banco
     await runQuery('SELECT 1');
-    res.status(200).json({ status: 'ok' });
+    // `platform` permite ao frontend escolher o fluxo de autenticação e-CAC correto:
+    // 'win32' usa o Edge + Windows Cert Store; demais usam Playwright clientCertificates.
+    res.status(200).json({ status: 'ok', platform: process.platform });
   } catch (error: any) {
     log.error(`Health check simple failed: ${error.message}`);
     res.status(503).json({ status: 'error' });

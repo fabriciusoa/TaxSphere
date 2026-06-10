@@ -84,23 +84,23 @@ export default function DctfWebDashboardPage() {
       )}
 
       <Grid container spacing={2} mb={3}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard label="Declarações totais" value={String(k.total_declaracoes)} hint={`${k.taxa_transmissao}% transmitidas`} icon={<ReceiptIcon />} color={T.cyan} />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard label="Total a pagar" value={brl(k.total_a_pagar)} hint="soma dos saldos a pagar" icon={<BankIcon />} color={T.navy} />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard label="DARFs vencidos" value={String(k.darfs_vencidos)} hint={brl(k.valor_vencidos)} icon={<ErrIcon />} color={T.red} warning={k.darfs_vencidos > 0} />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard label="Divergências (eSocial/Reinf)" value={String(k.declaracoes_com_divergencia)} hint="declarações p/ revisar" icon={<WarningIcon />} color={T.amber} warning={k.declaracoes_com_divergencia > 0} />
         </Grid>
       </Grid>
 
       {/* ═══ KPIs do manual: Em andamento + Impede CND + MAED pendente ═══ */}
       <Grid container spacing={2} mb={3}>
-        <Grid item xs={12} sm={4}>
+        <Grid size={{ xs: 12, sm: 4 }}>
           <KpiCard
             label="Em andamento (não transmitidas)"
             value={String(k.declaracoes_em_andamento || 0)}
@@ -110,7 +110,7 @@ export default function DctfWebDashboardPage() {
             warning={(k.declaracoes_em_andamento || 0) > 0}
           />
         </Grid>
-        <Grid item xs={12} sm={4}>
+        <Grid size={{ xs: 12, sm: 4 }}>
           <KpiCard
             label="Impedem emissão de CND"
             value={String(k.declaracoes_impedem_cnd || 0)}
@@ -120,7 +120,7 @@ export default function DctfWebDashboardPage() {
             warning={(k.declaracoes_impedem_cnd || 0) > 0}
           />
         </Grid>
-        <Grid item xs={12} sm={4}>
+        <Grid size={{ xs: 12, sm: 4 }}>
           <KpiCard
             label="MAED pendente"
             value={brl(k.valor_maed_pendente || 0)}
@@ -170,7 +170,7 @@ export default function DctfWebDashboardPage() {
           </Stack>
           <Grid container spacing={2}>
             {data.por_origem.map((o) => (
-              <Grid item xs={12} sm={6} md={4} key={o.chave}>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }} key={o.chave}>
                 <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
                   <Typography variant="caption" sx={{ color: T.textSecond, fontWeight: 700, letterSpacing: 0.5 }}>{o.label.toUpperCase()}</Typography>
                   <Typography variant="h6" sx={{ fontWeight: 700, color: T.navy, mt: 0.5 }}>{brl(o.valor)}</Typography>
@@ -260,15 +260,15 @@ export default function DctfWebDashboardPage() {
           </Box>
         </Stack>
         <Grid container spacing={2}>
-          <Grid item xs={6} sm={3}><KpiCard label="vence em 7 dias" value={String(k.darfs_a_vencer_7d)} hint={brl(k.valor_a_vencer_7d)} color={T.red} warning={k.darfs_a_vencer_7d > 0} /></Grid>
-          <Grid item xs={6} sm={3}><KpiCard label="vence em 15 dias" value={String(k.darfs_a_vencer_15d)} hint={brl(k.valor_a_vencer_15d)} color={T.amber} /></Grid>
-          <Grid item xs={6} sm={3}><KpiCard label="vence em 30 dias" value={String(k.darfs_a_vencer_30d)} hint={brl(k.valor_a_vencer_30d)} color={T.cyan} /></Grid>
-          <Grid item xs={6} sm={3}><KpiCard label="DARFs vencidos" value={String(k.darfs_vencidos)} hint={brl(k.valor_vencidos)} color={T.red} warning={k.darfs_vencidos > 0} /></Grid>
+          <Grid size={{ xs: 6, sm: 3 }}><KpiCard label="vence em 7 dias" value={String(k.darfs_a_vencer_7d)} hint={brl(k.valor_a_vencer_7d)} color={T.red} warning={k.darfs_a_vencer_7d > 0} /></Grid>
+          <Grid size={{ xs: 6, sm: 3 }}><KpiCard label="vence em 15 dias" value={String(k.darfs_a_vencer_15d)} hint={brl(k.valor_a_vencer_15d)} color={T.amber} /></Grid>
+          <Grid size={{ xs: 6, sm: 3 }}><KpiCard label="vence em 30 dias" value={String(k.darfs_a_vencer_30d)} hint={brl(k.valor_a_vencer_30d)} color={T.cyan} /></Grid>
+          <Grid size={{ xs: 6, sm: 3 }}><KpiCard label="DARFs vencidos" value={String(k.darfs_vencidos)} hint={brl(k.valor_vencidos)} color={T.red} warning={k.darfs_vencidos > 0} /></Grid>
         </Grid>
       </Paper>
 
       <Grid container spacing={2}>
-        <Grid item xs={12} md={6}>
+        <Grid size={{ xs: 12, md: 6 }}>
           <Paper sx={{ p: 3, borderRadius: 3, height: '100%' }}>
             <Stack direction="row" alignItems="center" gap={1.5} mb={2}>
               <TrendingIcon sx={{ color: T.cyan }} />
@@ -295,7 +295,7 @@ export default function DctfWebDashboardPage() {
             )}
           </Paper>
         </Grid>
-        <Grid item xs={12} md={6}>
+        <Grid size={{ xs: 12, md: 6 }}>
           <Paper sx={{ p: 3, borderRadius: 3, height: '100%' }}>
             <Stack direction="row" alignItems="center" gap={1.5} mb={2}>
               <BankIcon sx={{ color: T.cyan }} />
@@ -322,7 +322,7 @@ export default function DctfWebDashboardPage() {
           </Paper>
         </Grid>
 
-        <Grid item xs={12}>
+        <Grid size={{ xs: 12 }}>
           <Paper sx={{ p: 3, borderRadius: 3 }}>
             <Stack direction="row" alignItems="center" gap={1.5} mb={2}>
               <ClockIcon sx={{ color: T.cyan }} />

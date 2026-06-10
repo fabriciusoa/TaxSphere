@@ -112,7 +112,7 @@ export default function PerdcompWizardPage() {
       } else {
         if (!gerais.id_empresa) { setErro('Selecione uma empresa'); return; }
         const novo = await perdcompDocumentosService.criar({
-          ...gerais, credito, debitos: debitos as any[], responsavel,
+          ...(gerais as any), credito, debitos: debitos as any[], responsavel,
         });
         setSucesso('Documento criado com sucesso!');
         navigate(`/fiscal/perdcomp/documentos/${novo.id}/editar`, { replace: true });
@@ -222,7 +222,7 @@ export default function PerdcompWizardPage() {
         <Paper sx={{ borderRadius: 3, p: 3 }}>
           <Typography variant="h6" fontWeight={600} color={T.navy} mb={2}>Dados Gerais</Typography>
           <Grid container spacing={2.5}>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth required>
                 <InputLabel>Empresa</InputLabel>
                 <Select value={gerais.id_empresa} label="Empresa"
@@ -233,7 +233,7 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth>
                 <InputLabel>Certificado Digital</InputLabel>
                 <Select value={gerais.id_certificado} label="Certificado Digital"
@@ -249,7 +249,7 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth required>
                 <InputLabel>Tipo de Documento</InputLabel>
                 <Select value={gerais.tipo_documento} label="Tipo de Documento"
@@ -258,7 +258,7 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth required>
                 <InputLabel>Tipo de Crédito</InputLabel>
                 <Select value={gerais.tipo_credito} label="Tipo de Crédito"
@@ -267,7 +267,7 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth>
                 <InputLabel>Titularidade</InputLabel>
                 <Select value={gerais.titularidade} label="Titularidade"
@@ -277,7 +277,7 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12}>
+            <Grid size={{ xs: 12 }}>
               <TextField fullWidth multiline rows={3} label="Observações"
                 value={gerais.observacoes}
                 onChange={e => setGerais(p => ({ ...p, observacoes: e.target.value }))} />
@@ -291,49 +291,49 @@ export default function PerdcompWizardPage() {
         <Paper sx={{ borderRadius: 3, p: 3 }}>
           <Typography variant="h6" fontWeight={600} color={T.navy} mb={2}>Crédito Tributário</Typography>
           <Grid container spacing={2.5}>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <TextField fullWidth label="CNPJ Detentor do Crédito" value={credito.cnpj_detentor || ''}
                 onChange={e => setCredito(p => ({ ...p, cnpj_detentor: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid size={{ xs: 12, md: 3 }}>
               <TextField fullWidth label="Código da Receita" value={credito.codigo_receita || ''}
                 onChange={e => setCredito(p => ({ ...p, codigo_receita: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid size={{ xs: 12, md: 3 }}>
               <TextField fullWidth label="Período de Apuração (MM/AAAA)" value={credito.periodo_apuracao || ''}
                 onChange={e => setCredito(p => ({ ...p, periodo_apuracao: e.target.value }))}
                 placeholder="01/2024" />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <TextField fullWidth label="Denominação da Receita" value={credito.denominacao_receita || ''}
                 onChange={e => setCredito(p => ({ ...p, denominacao_receita: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid size={{ xs: 12, md: 3 }}>
               <TextField fullWidth type="date" label="Data de Arrecadação"
                 InputLabelProps={{ shrink: true }}
                 value={credito.data_arrecadacao ? String(credito.data_arrecadacao).substring(0, 10) : ''}
                 onChange={e => setCredito(p => ({ ...p, data_arrecadacao: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid size={{ xs: 12, md: 3 }}>
               <TextField fullWidth type="date" label="Data de Vencimento"
                 InputLabelProps={{ shrink: true }}
                 value={credito.data_vencimento ? String(credito.data_vencimento).substring(0, 10) : ''}
                 onChange={e => setCredito(p => ({ ...p, data_vencimento: e.target.value }))} />
             </Grid>
-            <Grid item xs={12}><Divider /></Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12 }}><Divider /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth type="number" label="Valor Original Inicial"
                 InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }}
                 value={credito.valor_original_inicial || ''}
                 onChange={e => setCredito(p => ({ ...p, valor_original_inicial: Number(e.target.value) }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth type="number" label="Valor Principal"
                 InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }}
                 value={credito.valor_principal || ''}
                 onChange={e => setCredito(p => ({ ...p, valor_principal: Number(e.target.value) }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth type="number" label="SELIC Acumulada (%)"
                 value={credito.selic_acumulada || ''}
                 onChange={e => setCredito(p => ({
@@ -342,7 +342,7 @@ export default function PerdcompWizardPage() {
                   credito_atualizado: (p.valor_principal || 0) * (1 + Number(e.target.value) / 100),
                 }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth type="number" label="Crédito Atualizado"
                 InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }}
                 value={credito.credito_atualizado || ''}
@@ -421,31 +421,31 @@ export default function PerdcompWizardPage() {
         <Paper sx={{ borderRadius: 3, p: 3 }}>
           <Typography variant="h6" fontWeight={600} color={T.navy} mb={2}>Responsável pelo Preenchimento</Typography>
           <Grid container spacing={2.5}>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="CPF" value={responsavel.cpf || ''}
                 onChange={e => setResponsavel(p => ({ ...p, cpf: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={8}>
+            <Grid size={{ xs: 12, md: 8 }}>
               <TextField fullWidth label="Nome Completo" value={responsavel.nome || ''}
                 onChange={e => setResponsavel(p => ({ ...p, nome: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="Telefone Celular" value={responsavel.telefone_celular || ''}
                 onChange={e => setResponsavel(p => ({ ...p, telefone_celular: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="Telefone Fixo" value={responsavel.telefone_fixo || ''}
                 onChange={e => setResponsavel(p => ({ ...p, telefone_fixo: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="E-mail" type="email" value={responsavel.email || ''}
                 onChange={e => setResponsavel(p => ({ ...p, email: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="CRC" value={responsavel.crc || ''}
                 onChange={e => setResponsavel(p => ({ ...p, crc: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={2}>
+            <Grid size={{ xs: 12, md: 2 }}>
               <TextField fullWidth label="UF CRC" value={responsavel.uf_crc || ''}
                 onChange={e => setResponsavel(p => ({ ...p, uf_crc: e.target.value }))}
                 inputProps={{ maxLength: 2 }} />
@@ -459,62 +459,62 @@ export default function PerdcompWizardPage() {
         <Paper sx={{ borderRadius: 3, p: 3 }}>
           <Typography variant="h6" fontWeight={600} color={T.navy} mb={2}>Revisão do Documento</Typography>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Typography variant="subtitle2" color="text.secondary">Empresa</Typography>
               <Typography fontWeight={600}>
                 {empresas.find((e: any) => e.id === gerais.id_empresa)?.razao_social || '—'}
               </Typography>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Typography variant="subtitle2" color="text.secondary">Tipo de Documento</Typography>
               <Typography fontWeight={600}>
                 {TIPOS_DOCUMENTO.find(t => t.value === gerais.tipo_documento)?.label}
               </Typography>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Typography variant="subtitle2" color="text.secondary">Tipo de Crédito</Typography>
               <Typography fontWeight={600}>
                 {TIPOS_CREDITO.find(t => t.value === gerais.tipo_credito)?.label}
               </Typography>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Typography variant="subtitle2" color="text.secondary">Titularidade</Typography>
               <Typography fontWeight={600}>
                 {gerais.titularidade === 'PROPRIO_CONTRIBUINTE' ? 'Próprio Contribuinte' : 'Empresa Sucedida'}
               </Typography>
             </Grid>
-            <Grid item xs={12}><Divider /></Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12 }}><Divider /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">Valor do Crédito</Typography>
               <Typography fontWeight={700} color="#22c55e" fontSize="1.2rem">
                 {fmt(credito.credito_atualizado || credito.valor_principal)}
               </Typography>
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">Total de Débitos</Typography>
               <Typography fontWeight={700} color="#ef4444" fontSize="1.2rem">{fmt(totalDebitos)}</Typography>
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">Saldo</Typography>
               <Typography fontWeight={700} fontSize="1.2rem"
                 color={(credito.credito_atualizado || 0) - totalDebitos >= 0 ? '#22c55e' : '#ef4444'}>
                 {fmt((credito.credito_atualizado || credito.valor_principal || 0) - totalDebitos)}
               </Typography>
             </Grid>
-            <Grid item xs={12}><Divider /></Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12 }}><Divider /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">Débitos ({debitos.length})</Typography>
               {debitos.map((d, i) => (
                 <Typography key={i} variant="body2">{d.grupo_tributo} — {fmt((d.valor_principal || 0) + (d.multa || 0) + (d.juros || 0))}</Typography>
               ))}
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">Responsável</Typography>
               <Typography fontWeight={600}>{responsavel.nome || '—'}</Typography>
               <Typography variant="body2" color="text.secondary">{responsavel.cpf}</Typography>
             </Grid>
             {doc && (
-              <Grid item xs={12} md={4}>
+              <Grid size={{ xs: 12, md: 4 }}>
                 <Typography variant="subtitle2" color="text.secondary">Status</Typography>
                 {statusInfo && <Chip label={statusInfo.label} color={statusInfo.color} />}
               </Grid>
@@ -559,7 +559,7 @@ export default function PerdcompWizardPage() {
         <DialogTitle sx={{ fontWeight: 600, color: T.navy }}>Adicionar Débito</DialogTitle>
         <DialogContent>
           <Grid container spacing={2.5} pt={1}>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth required>
                 <InputLabel>Grupo de Tributo</InputLabel>
                 <Select value={novoDebito.grupo_tributo || ''} label="Grupo de Tributo"
@@ -568,7 +568,7 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <FormControl fullWidth>
                 <InputLabel>Tipo Débito</InputLabel>
                 <Select value={novoDebito.tipo_debito || ''} label="Tipo Débito"
@@ -578,36 +578,36 @@ export default function PerdcompWizardPage() {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="CNPJ Detentor" value={novoDebito.cnpj_detentor || ''}
                 onChange={e => setNovoDebito(p => ({ ...p, cnpj_detentor: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="Código da Receita" value={novoDebito.codigo_receita || ''}
                 onChange={e => setNovoDebito(p => ({ ...p, codigo_receita: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth label="Período (MM/AAAA)" value={novoDebito.periodo_apuracao || ''}
                 onChange={e => setNovoDebito(p => ({ ...p, periodo_apuracao: e.target.value }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth type="date" label="Vencimento" InputLabelProps={{ shrink: true }}
                 value={novoDebito.data_vencimento ? String(novoDebito.data_vencimento).substring(0, 10) : ''}
                 onChange={e => setNovoDebito(p => ({ ...p, data_vencimento: e.target.value as any }))} />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <TextField fullWidth type="number" label="Valor Principal"
                 InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }}
                 value={novoDebito.valor_principal || ''}
                 onChange={e => setNovoDebito(p => ({ ...p, valor_principal: Number(e.target.value) }))} />
             </Grid>
-            <Grid item xs={12} md={2}>
+            <Grid size={{ xs: 12, md: 2 }}>
               <TextField fullWidth type="number" label="Multa"
                 InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }}
                 value={novoDebito.multa || ''}
                 onChange={e => setNovoDebito(p => ({ ...p, multa: Number(e.target.value) }))} />
             </Grid>
-            <Grid item xs={12} md={2}>
+            <Grid size={{ xs: 12, md: 2 }}>
               <TextField fullWidth type="number" label="Juros"
                 InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }}
                 value={novoDebito.juros || ''}

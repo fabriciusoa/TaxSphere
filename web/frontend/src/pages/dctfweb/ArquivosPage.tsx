@@ -13,7 +13,7 @@ import {
   Code as XmlIcon, FilterAlt as FilterIcon, Storage as StorageIcon,
 } from '@mui/icons-material';
 import { dctfwebService, type ArquivoDctfweb } from '../../services/dctfwebService';
-import { empresaService } from '../../services/empresaService';
+import { empresasService } from '../../services/empresasService';
 
 const T = {
   navy: '#0f1d4a', cyan: '#1c98c5', emerald: '#10b981', amber: '#f59e0b',
@@ -45,7 +45,7 @@ export default function ArquivosPage() {
   const [erro, setErro] = useState('');
 
   useEffect(() => {
-    empresaService.listar().then(d => {
+    empresasService.listar().then((d: any) => {
       const lista = Array.isArray(d) ? d : ((d as any).data || []);
       setEmpresas(lista);
       if (lista.length > 0) setIdEmpresa(lista[0].id);
@@ -103,7 +103,7 @@ export default function ArquivosPage() {
 
       <Paper sx={{ p: 2, borderRadius: 3, mb: 2 }}>
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={4}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small">
               <InputLabel>Empresa</InputLabel>
               <Select label="Empresa" value={idEmpresa} onChange={e => setIdEmpresa(e.target.value as number)}>
@@ -113,7 +113,7 @@ export default function ArquivosPage() {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <FormControl fullWidth size="small">
               <InputLabel>Tipo</InputLabel>
               <Select label="Tipo" value={tipo} onChange={e => setTipo(e.target.value)}>
@@ -124,7 +124,7 @@ export default function ArquivosPage() {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={5}>
+          <Grid size={{ xs: 12, md: 5 }}>
             <TextField
               size="small" fullWidth label="Buscar por nº recibo, documento ou período"
               value={busca} onChange={e => setBusca(e.target.value)}

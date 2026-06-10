@@ -106,6 +106,60 @@ export function encryptSessaoCookies(cookies: any[]): string {
 // Opens a visible browser for the user to log in, captures session cookies.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Extrai cert + chave (PEM) de um PKCS#12 ICP-Brasil usando node-forge — que lida
+ * com a cifra legada (RC2/3DES) que BoringSSL/OpenSSL rejeitam. A chave sai em
+ * formato PKCS#1 ("BEGIN RSA PRIVATE KEY"), que o `security import` do macOS aceita.
+ */
+function extrairPemDoP12(pfxBuffer: Buffer, passphrase: string): { certPem: string; keyPem: string } {
+  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(pfxBuffer.toString('binary')), passphrase);
+  const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]?.[0];
+  const keyBag = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
+  return {
+    certPem: certBag?.cert ? forge.pki.certificateToPem(certBag.cert) : '',
+    keyPem: keyBag?.key ? forge.pki.privateKeyToPem(keyBag.key) : '',
+  };
+}
+
+/**
+ * macOS: importa cert+chave numa Keychain temporária adicionada à search list, para
+ * que um navegador real (Chrome/Edge) apresente o certificado via TLS nativo no login
+ * gov.br. NÃO usamos `clientCertificates` do Playwright no macOS porque o WAF (F5) do
+ * e-CAC derruba a conexão do proxy TLS interno do Playwright (ERR_CONNECTION_CLOSED).
+ * Retorna uma função de limpeza que restaura a search list e remove a keychain.
+ */
+function instalarCertNoKeychainMac(
+  certPem: string, keyPem: string, tempDir: string, ts: number, progress: (m: string) => void,
+): () => void {
+  const cPath = path.join(tempDir, `mac_cert_${ts}.pem`);
+  const kPath = path.join(tempDir, `mac_key_${ts}.pem`);
+  const kcPath = path.join(tempDir, `ecac_${ts}.keychain`);
+  const kcPass = 'taxsphere-ecac';
+  fs.writeFileSync(cPath, certPem, { mode: 0o600 });
+  fs.writeFileSync(kPath, keyPem, { mode: 0o600 });
+
+  // Search list atual (para restaurar na limpeza).
+  const orig = execSync('security list-keychains -d user', { timeout: 8000 })
+    .toString().split('\n').map((s) => s.replace(/["\s]/g, '')).filter(Boolean);
+  const origArgs = orig.map((o) => `"${o}"`).join(' ');
+
+  execSync(`security create-keychain -p "${kcPass}" "${kcPath}"`, { timeout: 8000 });
+  execSync(`security unlock-keychain -p "${kcPass}" "${kcPath}"`, { timeout: 8000 });
+  execSync(`security set-keychain-settings "${kcPath}"`, { timeout: 8000 }); // sem auto-lock por timeout
+  execSync(`security list-keychains -d user -s "${kcPath}" ${origArgs}`, { timeout: 8000 });
+  // -A: ACL aberta (sem prompt "permitir acesso") · -f openssl: PEM. Chave antes do cert.
+  execSync(`security import "${kPath}" -k "${kcPath}" -A -f openssl`, { timeout: 10000 });
+  execSync(`security import "${cPath}" -k "${kcPath}" -A -f openssl`, { timeout: 10000 });
+  progress('Certificado disponibilizado no Keychain do macOS (selecione-o no navegador)');
+
+  return () => {
+    try { execSync(`security list-keychains -d user -s ${origArgs}`, { timeout: 8000 }); } catch { /* ignore */ }
+    try { execSync(`security delete-keychain "${kcPath}"`, { timeout: 8000 }); } catch { /* ignore */ }
+    try { fs.unlinkSync(cPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(kPath); } catch { /* ignore */ }
+  };
+}
+
 export async function autenticarManualmente(
   pfxBuffer: Buffer,
   passphrase: string,
@@ -122,29 +176,74 @@ export async function autenticarManualmente(
   const tempPs1Path = path.join(tempDir, `install_cert_${ts}.ps1`);
   fs.writeFileSync(tempPfxPath, pfxBuffer, { mode: 0o600 });
 
-  // Install PFX into Windows Certificate Store so Chrome can use it for any domain
-  let thumbprint = '';
-  try {
-    const safePass = passphrase.replace(/"/g, '`"');
-    const pfxPathFwd = tempPfxPath.replace(/\\/g, '/');
-    const ps1 = [
-      `$pass = ConvertTo-SecureString -String "${safePass}" -Force -AsPlainText`,
-      `$cert = Import-PfxCertificate -FilePath "${pfxPathFwd}" -CertStoreLocation Cert:\\CurrentUser\\My -Password $pass`,
-      `Write-Output $cert.Thumbprint`,
-    ].join('\r\n');
-    fs.writeFileSync(tempPs1Path, ps1, 'utf-8');
-    const out = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${tempPs1Path}"`, { timeout: 15000 }).toString().trim();
-    thumbprint = out.split('\n').pop()?.trim() ?? '';
-    progress(`Certificado instalado no Windows Store (${thumbprint.substring(0, 8)}...)`);
-  } catch (e: any) {
-    log.warn(`[Auth] Falha ao instalar cert no Windows store: ${e.message}`);
+  const isWindows = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
+
+  // ── Estratégia de certificado de cliente, multi-plataforma ─────────────────
+  // Windows : PFX → Windows Cert Store (PowerShell); Chrome/Edge real apresenta.
+  // macOS   : PFX → Keychain temporária na search list; Chrome/Edge real apresenta
+  //           via TLS nativo. (clientCertificates do Playwright NÃO serve: o WAF
+  //           F5 do e-CAC derruba o proxy TLS interno — ERR_CONNECTION_CLOSED.)
+  // Linux   : sem store de SO acessível ao browser — clientCertificates (melhor
+  //           esforço; pode ser bloqueado pelo mesmo WAF).
+  let thumbprint = '';                                  // Windows
+  let certPemPath = '';                                  // Linux (clientCertificates)
+  let keyPemPath = '';
+  let macKeychainCleanup: (() => void) | null = null;    // macOS
+
+  if (isWindows) {
+    try {
+      const safePass = passphrase.replace(/"/g, '`"');
+      const pfxPathFwd = tempPfxPath.replace(/\\/g, '/');
+      const ps1 = [
+        `$pass = ConvertTo-SecureString -String "${safePass}" -Force -AsPlainText`,
+        `$cert = Import-PfxCertificate -FilePath "${pfxPathFwd}" -CertStoreLocation Cert:\\CurrentUser\\My -Password $pass`,
+        `Write-Output $cert.Thumbprint`,
+      ].join('\r\n');
+      fs.writeFileSync(tempPs1Path, ps1, 'utf-8');
+      const out = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${tempPs1Path}"`, { timeout: 15000 }).toString().trim();
+      thumbprint = out.split('\n').pop()?.trim() ?? '';
+      progress(`Certificado instalado no Windows Store (${thumbprint.substring(0, 8)}...)`);
+    } catch (e: any) {
+      log.warn(`[Auth] Falha ao instalar cert no Windows store: ${e.message}`);
+    }
+  } else if (isMac) {
+    try {
+      const { certPem, keyPem } = extrairPemDoP12(pfxBuffer, passphrase);
+      if (certPem && keyPem) {
+        macKeychainCleanup = instalarCertNoKeychainMac(certPem, keyPem, tempDir, ts, progress);
+      } else {
+        log.warn('[Auth] PEM incompleto extraído do PFX — não foi possível preparar o Keychain');
+      }
+    } catch (e: any) {
+      log.warn(`[Auth] Falha ao preparar Keychain do macOS: ${e.message}`);
+    }
+  } else {
+    // Linux: clientCertificates (Playwright lê os PEM lazily no handshake TLS).
+    try {
+      const { certPem, keyPem } = extrairPemDoP12(pfxBuffer, passphrase);
+      if (certPem && keyPem) {
+        certPemPath = path.join(tempDir, `auth_cert_${ts}.pem`);
+        keyPemPath = path.join(tempDir, `auth_key_${ts}.pem`);
+        fs.writeFileSync(certPemPath, certPem, { mode: 0o600 });
+        fs.writeFileSync(keyPemPath, keyPem, { mode: 0o600 });
+        progress('Certificado digital carregado (clientCertificates)');
+      } else {
+        log.warn('[Auth] PEM incompleto extraído do PFX — o login pode não conseguir apresentar o certificado');
+      }
+    } catch (e: any) {
+      log.warn(`[Auth] Falha ao extrair PEM do PFX: ${e.message}`);
+    }
   }
 
   let browser: Browser | undefined;
   let usandoChrome = false;
 
+  // Onde o navegador real lê o certificado: Keychain no macOS, Cert Store no Windows.
+  const storeNome = isMac ? 'Keychain do macOS' : isWindows ? 'Windows Certificate Store' : 'store do SO';
   try {
-    // Prefer real Chrome (reads Windows Certificate Store natively)
+    // Preferimos o Chrome/Edge real porque lê o certificado do store do SO nativamente
+    // (sem o proxy TLS do Playwright, que o WAF do e-CAC derruba).
     try {
       browser = await chromium.launch({
         channel: 'chrome',
@@ -152,7 +251,7 @@ export async function autenticarManualmente(
         args: ['--no-sandbox', '--ignore-certificate-errors', '--start-maximized', '--disable-blink-features=AutomationControlled'],
       });
       usandoChrome = true;
-      progress('Browser: Google Chrome (usa Windows Certificate Store)');
+      progress(`Browser: Google Chrome (usa ${storeNome})`);
     } catch {
       log.warn('[Auth] Google Chrome não encontrado — usando Playwright Chromium');
       browser = await chromium.launch({
@@ -167,6 +266,17 @@ export async function autenticarManualmente(
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      // Mac/Linux: o certificado é apresentado pelo próprio Playwright (não há
+      // Windows Store). gov.br pede o certificado em certificado.sso.acesso.gov.br;
+      // incluímos também os domínios e-CAC para o mTLS subsequente.
+      ...(certPemPath && keyPemPath ? {
+        clientCertificates: [
+          { origin: 'https://certificado.sso.acesso.gov.br', certPath: certPemPath, keyPath: keyPemPath },
+          { origin: 'https://sso.acesso.gov.br',             certPath: certPemPath, keyPath: keyPemPath },
+          { origin: 'https://cav.receita.fazenda.gov.br',    certPath: certPemPath, keyPath: keyPemPath },
+          { origin: 'https://www3.cav.receita.fazenda.gov.br', certPath: certPemPath, keyPath: keyPemPath },
+        ],
+      } : {}),
     });
 
     // Polyfill do helper __name injetado pelo esbuild/tsx — necessário para que
@@ -251,8 +361,12 @@ export async function autenticarManualmente(
       }
     }
 
+    macKeychainCleanup?.();
+
     try { fs.unlinkSync(tempPfxPath); } catch { /* ignore */ }
     try { fs.unlinkSync(tempPs1Path); } catch { /* ignore */ }
+    if (certPemPath) { try { fs.unlinkSync(certPemPath); } catch { /* ignore */ } }
+    if (keyPemPath) { try { fs.unlinkSync(keyPemPath); } catch { /* ignore */ } }
   }
 }
 

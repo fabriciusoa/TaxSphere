@@ -4,7 +4,7 @@ import {
   Box, Typography, Paper, Button, TextField, Chip, IconButton, Tooltip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Stack, FormControl, InputLabel, Select, MenuItem, CircularProgress, Alert,
-  InputAdornment, Tabs, Tab, Collapse, LinearProgress,
+  InputAdornment, Tabs, Tab, Collapse,
 } from '@mui/material';
 import {
   Add, Search, Refresh, Edit, Delete, Send, CloudDownload, PictureAsPdf,

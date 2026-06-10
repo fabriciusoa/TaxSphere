@@ -140,6 +140,20 @@ export interface EcacDebitoCompensado {
 }
 
 export const ecacService = {
+  /**
+   * Plataforma do SERVIDOR (onde o RPA roda), não do browser do usuário.
+   * 'win32' → fluxo Edge + Windows Cert Store (instalar + capturar).
+   * Demais ('darwin'/'linux') → fluxo Playwright clientCertificates (autenticar, 1 passo).
+   */
+  getServerPlatform: async (): Promise<string> => {
+    try {
+      const { data } = await api.get('/health');
+      return data?.platform || 'win32';
+    } catch {
+      return 'win32'; // fallback conservador: mantém o fluxo legado se /health falhar
+    }
+  },
+
   certificados: {
     listar: async (): Promise<CertificadoDigital[]> => {
       const { data } = await api.get('/ecac/certificados');

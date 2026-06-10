@@ -21,7 +21,6 @@ import {
 } from '../../services/perdcompAutomacaoService';
 import { useEmpresa } from '../../contexts/EmpresaContext';
 import { useActivity } from '../../contexts/ActivityContext';
-import { Business as BusinessIcon } from '@mui/icons-material';
 
 const T = { navy: '#0a1628', cyan: '#00c8f0', cyanHover: '#00b0d8', textSecond: '#64748b', emerald: '#22c55e' };
 
